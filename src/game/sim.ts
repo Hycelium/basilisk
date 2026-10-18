@@ -1367,7 +1367,11 @@ export class GameSim {
   private manageFoePeonDefense() {
     const team: Team = "foe";
     const keep = this.teamKeep(team);
-    const threats = this.enemiesThreateningKeep(team);
+    // React before attackers reach the siege line. The old 160-Y trigger gave
+    // distant workers too little time to reach the keep and garrison.
+    const threats = this.state.units
+      .filter((u) => u.team === "you" && u.pos.y <= FOE_SIEGE_Y + 170)
+      .sort((a, b) => dist(a.pos, keep.pos) - dist(b.pos, keep.pos));
     const peons = this.state.villagers.filter((v) => v.team === team && v.hp > 0);
 
     if (threats.length === 0) {
@@ -1806,17 +1810,40 @@ export class GameSim {
     return this.state.pads.filter((p) => p.team === team);
   }
 
-  placeAiBuilding(kind: BuildingKind) {
+  placeAiBuilding(kind: BuildingKind, reserve = AI_RESERVE) {
     const team: Team = "foe";
     const cost = BUILD_COST[kind];
-    if (this.state.gold[team] < cost.gold + AI_RESERVE) return false;
+    if (this.state.gold[team] < cost.gold + reserve) return false;
     if (this.state.wood[team] < cost.wood) return false;
     const pads = this.getPads(team);
     const occ = new Set(this.getBuildings(team).map((b) => b.padId));
     const wantZone = kind === "house" ? "eco" : "combat";
+    const laneDefense = [0, 0];
+    for (const building of this.getBuildings(team)) {
+      if (building.kind === "house" || building.kind === "barracks") continue;
+      const pad = pads.find((p) => p.id === building.padId);
+      if (!pad) continue;
+      if (pad.laneCoverage === 2) {
+        laneDefense[0] += 1;
+        laneDefense[1] += 1;
+      } else {
+        laneDefense[pad.laneCoverage] += 1;
+      }
+    }
     const target = pads
       .filter((p) => !occ.has(p.id) && p.zone === wantZone)
-      .sort((a, b) => a.pos.y - b.pos.y)[0];
+      .sort((a, b) => {
+        if (kind === "house") return a.pos.y - b.pos.y;
+        const aCoverage =
+          a.laneCoverage === 2
+            ? Math.min(laneDefense[0], laneDefense[1]) - 0.25
+            : laneDefense[a.laneCoverage];
+        const bCoverage =
+          b.laneCoverage === 2
+            ? Math.min(laneDefense[0], laneDefense[1]) - 0.25
+            : laneDefense[b.laneCoverage];
+        return aCoverage - bCoverage || a.pos.y - b.pos.y;
+      })[0];
     if (!target) return false;
     this.spendRes(team, cost);
     this.state.buildings.push({
@@ -1866,17 +1893,64 @@ export class GameSim {
   }
 
   aiAssignWorkers() {
-    const nodes = this.state.nodes.filter((n) => n.team === "foe");
-    // Prefer scarce wood if low, else gold mines
-    const lowWood = this.state.wood.foe < 60;
-    nodes.sort((a, b) => {
-      const score = (n: typeof a) => (lowWood ? n.woodPerLoad * 2 + n.goldPerLoad : n.goldPerLoad * 2 + n.woodPerLoad);
-      return score(b) - score(a);
-    });
-    for (const node of nodes) {
-      if (node.loadsLeft <= 0) continue;
-      const workers = this.state.villagers.filter((v) => v.team === "foe" && v.targetNodeId === node.id).length;
-      if (workers < 2) this.assignVillagerToNode(node.id, "foe");
+    const nodes = this.state.nodes.filter((n) => n.team === "foe" && n.loadsLeft > 0);
+    const peons = this.state.villagers.filter((v) => v.team === "foe");
+
+    // Reconcile slot counts from actual assignments so interrupted workers do
+    // not leave phantom occupancy behind.
+    for (const node of this.state.nodes.filter((n) => n.team === "foe")) {
+      node.workers = peons.filter((v) => v.targetNodeId === node.id).length;
+    }
+
+    const urgentKind =
+      this.state.wood.foe < 75
+        ? "pine"
+        : this.state.gold.foe < 70
+          ? "copper"
+          : null;
+    if (
+      urgentKind &&
+      !peons.some(
+        (v) =>
+          v.targetNodeId &&
+          nodes.find((n) => n.id === v.targetNodeId)?.kind === urgentKind,
+      )
+    ) {
+      const donor = peons.find((v) => {
+        const node = nodes.find((n) => n.id === v.targetNodeId);
+        return node && node.kind !== urgentKind && (v.state === "toNode" || v.state === "gathering");
+      });
+      if (donor?.targetNodeId) {
+        const old = nodes.find((n) => n.id === donor.targetNodeId);
+        if (old) old.workers = Math.max(0, old.workers - 1);
+        donor.targetNodeId = undefined;
+        donor.state = "idle";
+      }
+    }
+
+    let idle = peons.filter((v) => v.state === "idle" || v.state === "home").length;
+    while (idle > 0) {
+      const lowWood = this.state.wood.foe < 100;
+      const lowGold = this.state.gold.foe < 100;
+      const target = nodes
+        .filter((n) => n.workers < n.maxWorkers)
+        .sort((a, b) => {
+          const score = (n: typeof a) => {
+            const demand =
+              n.kind === "pine"
+                ? lowWood
+                  ? 3
+                  : 1
+                : lowGold
+                  ? 2.6
+                  : 1.2;
+            return (n.woodPerLoad + n.goldPerLoad) * demand - n.workers * 18;
+          };
+          return score(b) - score(a);
+        })[0];
+      if (!target) break;
+      this.assignVillagerToNode(target.id, "foe");
+      idle -= 1;
     }
   }
 

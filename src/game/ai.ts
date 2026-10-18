@@ -85,21 +85,29 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
   const state = sim.getState();
   sim.aiAssignWorkers();
 
-  // Reliable macro baseline prevents exploration from idling the entire
-  // economy. Learning now chooses strategy on top of competent fundamentals.
+  // Defensive opening book: establish population, saturate economy, and cover
+  // both lanes before spending heavily on aggression.
   const houses = sim.getBuildings("foe").filter((b) => b.kind === "house").length;
-  if (houses < 1 && sim.getState().wood.foe >= 55) {
-    sim.placeAiBuilding("house");
-  } else if (
-    sim.peonSlotsUsed("foe") < sim.peonCap("foe") &&
-    Math.random() < Math.min(0.9, 0.48 + skill * 0.004)
-  ) {
+  const desiredHouses = state.waveIndex >= 4 ? 3 : state.waveIndex >= 2 ? 2 : 1;
+  if (houses < desiredHouses && state.wood.foe >= 55) {
+    sim.placeAiBuilding("house", 0);
+  }
+  if (sim.peonSlotsUsed("foe") < sim.peonCap("foe")) {
     sim.enqueuePeon("foe");
   }
 
+  const defenses = sim
+    .getBuildings("foe")
+    .filter((b) => b.kind === "watchtower" || b.kind === "ballista" || b.kind === "catapult");
+  const desiredDefenses = state.waveIndex < 2 ? 2 : state.waveIndex < 5 ? 3 : 4;
+  if (defenses.length < desiredDefenses) {
+    const heavyCoverage = defenses.length >= 2 && state.waveIndex >= 2;
+    sim.placeAiBuilding(heavyCoverage ? "ballista" : "watchtower", skill >= 45 ? 0 : 10);
+  }
+
   const barracks = sim.getBuildings("foe").filter((b) => b.kind === "barracks");
-  if (barracks.length === 0 && state.waveIndex >= 1) {
-    sim.placeAiBuilding("barracks");
+  if (barracks.length === 0 && state.waveIndex >= 1 && defenses.length >= 2) {
+    sim.placeAiBuilding("barracks", 10);
   } else if (barracks.length > 0) {
     // Keep production active; failed attempts are harmless when resources are
     // reserved or queues are full.
