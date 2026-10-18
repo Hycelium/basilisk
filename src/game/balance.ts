@@ -64,6 +64,12 @@ export const PEON_MELEE_RANGE = 18;
 export const PEON_DAMAGE = 6;
 export const PEON_ATTACK_CD = 0.5;
 export const PEON_FIGHT_SPEED = 54;
+/** Patrol and guard notice a fight a short walk past melee, then leash back. */
+export const PEON_AGGRO_RANGE = 40;
+/** Melee soldiers notice enemies a short step beyond contact range. */
+export const MELEE_AGGRO_RANGE = 42;
+/** Chase limit as a multiple of aggro, then the unit resumes its order. */
+export const AGGRO_LEASH_MULT = 1.75;
 
 /**
  * Watchtowers (archers) are weak vs units already on the keep and

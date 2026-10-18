@@ -52,6 +52,8 @@ export interface Unit {
   fromBarracks: boolean;
   ignoreEnemyCreeps: boolean;
   rallyPoint?: Vec2;
+  /** Spot where auto-engage broke off. The unit returns here before chasing again. */
+  engageFrom?: Vec2;
   aiHeldForRush?: boolean;
   aiStagingPoint?: Vec2;
 }
@@ -134,6 +136,8 @@ export interface Villager {
   patrolA?: Vec2;
   patrolB?: Vec2;
   patrolToB?: boolean;
+  /** Leash origin while a patrol fight pulls the peon off the route. */
+  engageFrom?: Vec2;
   forcedAttack?: boolean;
   timer: number;
   carryingGold: number;

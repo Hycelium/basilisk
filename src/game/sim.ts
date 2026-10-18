@@ -15,6 +15,9 @@ import {
   KEEP_THREAT_RADIUS,
   MAX_PEON_QUEUE,
   MAX_TRAIN_QUEUE,
+  AGGRO_LEASH_MULT,
+  MELEE_AGGRO_RANGE,
+  PEON_AGGRO_RANGE,
   PEON_ATTACK_CD,
   PEON_DAMAGE,
   PEON_FIGHT_SPEED,
@@ -77,6 +80,7 @@ import type {
   UiSnapshot,
   Unit,
   UnitKind,
+  Villager,
 } from "./types";
 
 function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
@@ -408,6 +412,8 @@ export class GameSim {
     v.moveTarget = undefined;
     v.patrolA = undefined;
     v.patrolB = undefined;
+    v.patrolToB = undefined;
+    v.engageFrom = undefined;
     v.forcedAttack = false;
   }
 
@@ -486,12 +492,17 @@ export class GameSim {
   }
 
   stopSelectedVillagers() {
+    let held = 0;
     for (const v of this.state.villagers) {
       if (v.team !== "you" || !this.state.selectedVillagerIds.includes(v.id)) continue;
+      const guard = { ...v.pos };
       this.releasePeonTask(v);
-      v.state = "idle";
+      v.state = "defend";
+      v.moveTarget = guard;
+      v.forcedAttack = false;
+      held += 1;
     }
-    this.addToast("Selected peons stopped.");
+    if (held > 0) this.addToast("Selected peons stopped.");
   }
 
   /** Direct barricade placement (touch radial menu) — no build-mode round trip. */
@@ -655,7 +666,16 @@ export class GameSim {
     inside.forEach((v, i) => {
       const side = i % 2 === 0 ? -1 : 1;
       v.pos = { x: keep.pos.x + side * (14 + (i % 3) * 5), y: keep.pos.y + (team === "you" ? -28 : 28) };
-      v.state = "idle";
+      // Stand guard at the exit so they keep fighting nearby enemies.
+      v.state = "defend";
+      v.moveTarget = { ...v.pos };
+      v.forcedAttack = false;
+      v.targetEnemyId = undefined;
+      v.targetNodeId = undefined;
+      v.engageFrom = undefined;
+      v.patrolA = undefined;
+      v.patrolB = undefined;
+      v.patrolToB = undefined;
     });
     if (team === "you" && inside.length > 0) this.addToast(`${inside.length} peon(s) ungarrisoned.`);
   }
@@ -902,6 +922,13 @@ export class GameSim {
         if (node) node.workers = Math.max(0, node.workers - 1);
       }
       v.targetNodeId = undefined;
+      v.moveTarget = undefined;
+      v.patrolA = undefined;
+      v.patrolB = undefined;
+      v.patrolToB = undefined;
+      v.engageFrom = undefined;
+      v.forcedAttack = false;
+      v.targetEnemyId = undefined;
       // Preserve carried resources and bank them on arrival.
       v.state = v.carryingGold > 0 || v.carryingWood > 0 ? "toKeep" : "home";
       v.timer = 0;
@@ -1190,24 +1217,233 @@ export class GameSim {
     }
   }
 
+  private livingHostile(team: Team, id: number, allowPeons: boolean): Unit | Villager | undefined {
+    const unit = this.state.units.find((u) => u.id === id && u.team !== team && u.hp > 0);
+    if (unit) return unit;
+    if (!allowPeons) return undefined;
+    return this.state.villagers.find(
+      (v) => v.id === id && v.team !== team && v.hp > 0 && v.state !== "garrisoned",
+    );
+  }
+
+  private nearestPeonThreat(team: Team, pos: { x: number; y: number }, radius: number) {
+    let best: Unit | Villager | undefined;
+    let bestD = radius;
+    const consider = (ent: Unit | Villager, d: number) => {
+      if (d <= bestD) {
+        best = ent;
+        bestD = d;
+      }
+    };
+    for (const u of this.state.units) {
+      if (u.team === team || u.hp <= 0) continue;
+      consider(u, dist(u.pos, pos));
+    }
+    for (const v of this.state.villagers) {
+      if (v.team === team || v.hp <= 0 || v.state === "garrisoned") continue;
+      consider(v, dist(v.pos, pos));
+    }
+    return best;
+  }
+
+  /** In-place swing. Does not chase, so gather and move orders stay intact. */
+  private peonRetaliate(v: Villager, team: Team) {
+    const threat = this.nearestPeonThreat(team, v.pos, PEON_MELEE_RANGE);
+    if (!threat) return false;
+    if (v.attackTimer <= 0) {
+      threat.hp -= PEON_DAMAGE;
+      v.attackTimer = PEON_ATTACK_CD;
+      this.emitCombat("meleeHit", v.pos, threat.pos, team);
+      this.addFloat(`-${PEON_DAMAGE}`, threat.pos.x, threat.pos.y - 7, "#e8c070");
+    }
+    return true;
+  }
+
+  private stepPeonPatrol(v: Villager, team: Team, dt: number) {
+    if (!v.patrolA || !v.patrolB) {
+      v.state = "idle";
+      return;
+    }
+    const leash = PEON_AGGRO_RANGE * AGGRO_LEASH_MULT;
+    const anchor = v.engageFrom;
+    let target =
+      anchor && v.targetEnemyId != null ? this.livingHostile(team, v.targetEnemyId, true) : undefined;
+    if (target && anchor && dist(anchor, target.pos) > leash) {
+      target = undefined;
+      v.targetEnemyId = undefined;
+    }
+    if (!target && anchor && dist(v.pos, anchor) > 3) {
+      const onRoute = this.nearestPeonThreat(team, anchor, PEON_AGGRO_RANGE);
+      if (onRoute) {
+        target = onRoute;
+        v.targetEnemyId = onRoute.id;
+      } else {
+        moveTowards(v.pos, anchor, v.speed, dt);
+        return;
+      }
+    }
+    if (!target) {
+      v.engageFrom = undefined;
+      v.targetEnemyId = undefined;
+      const seen = this.nearestPeonThreat(team, v.pos, PEON_AGGRO_RANGE);
+      if (seen) {
+        v.engageFrom = { ...v.pos };
+        v.targetEnemyId = seen.id;
+        target = seen;
+      }
+    }
+    if (target) {
+      if (dist(v.pos, target.pos) > PEON_MELEE_RANGE) {
+        moveTowards(v.pos, target.pos, PEON_FIGHT_SPEED, dt);
+      } else if (v.attackTimer <= 0) {
+        target.hp -= PEON_DAMAGE;
+        v.attackTimer = PEON_ATTACK_CD;
+        this.emitCombat("meleeHit", v.pos, target.pos, team);
+        this.addFloat(`-${PEON_DAMAGE}`, target.pos.x, target.pos.y - 8, "#c8e090");
+      }
+      return;
+    }
+    const destination = v.patrolToB ? v.patrolB : v.patrolA;
+    moveTowards(v.pos, destination, v.speed, dt);
+    if (dist(v.pos, destination) < 3) v.patrolToB = !v.patrolToB;
+  }
+
+  /** Stand-ground guard. Returns false when this peon has no guard point. */
+  private stepPeonGuard(v: Villager, team: Team, dt: number) {
+    const guard = v.moveTarget;
+    if (!guard) return false;
+    const leash = PEON_AGGRO_RANGE * AGGRO_LEASH_MULT;
+    let target = v.targetEnemyId != null ? this.livingHostile(team, v.targetEnemyId, true) : undefined;
+    if (target && dist(guard, target.pos) > leash) target = undefined;
+    if (!target) {
+      target = this.nearestPeonThreat(team, guard, PEON_AGGRO_RANGE);
+      if (!target) {
+        const inFace = this.nearestPeonThreat(team, v.pos, PEON_MELEE_RANGE);
+        if (inFace && dist(guard, inFace.pos) <= leash) target = inFace;
+      }
+    }
+    v.targetEnemyId = target?.id;
+    if (!target) {
+      if (dist(v.pos, guard) > 3) moveTowards(v.pos, guard, v.speed, dt);
+      return true;
+    }
+    if (dist(v.pos, target.pos) > PEON_MELEE_RANGE) {
+      moveTowards(v.pos, target.pos, PEON_FIGHT_SPEED, dt);
+    } else if (v.attackTimer <= 0) {
+      target.hp -= PEON_DAMAGE;
+      v.attackTimer = PEON_ATTACK_CD;
+      this.emitCombat("meleeHit", v.pos, target.pos, team);
+      this.addFloat(`-${PEON_DAMAGE}`, target.pos.x, target.pos.y - 8, "#c8e090");
+    }
+    return true;
+  }
+
+  private militaryAccepts(u: Unit, ent: Unit | Villager, enemyTeam: Team) {
+    if (ent.hp <= 0 || ent.team !== enemyTeam) return false;
+    if ("fromBarracks" in ent) return !u.ignoreEnemyCreeps || ent.fromBarracks;
+    return (u.fromBarracks || u.kind === "archer") && ent.state !== "garrisoned";
+  }
+
+  private pickMilitaryHostile(u: Unit, team: Team): Unit | Villager | undefined {
+    const enemyTeam = this.enemy(team);
+    const aggro = u.kind === "archer" ? ARCHER_RANGE : MELEE_AGGRO_RANGE;
+    const leash = aggro * AGGRO_LEASH_MULT;
+    const allowPeons = u.fromBarracks || u.kind === "archer";
+    if (u.targetUnitId != null && u.engageFrom) {
+      const current = this.livingHostile(team, u.targetUnitId, allowPeons);
+      if (current && this.militaryAccepts(u, current, enemyTeam) && dist(u.engageFrom, current.pos) <= leash) {
+        return current;
+      }
+      u.targetUnitId = undefined;
+    }
+    const nearest = (origin: { x: number; y: number }, radius: number) => {
+      let best: Unit | Villager | undefined;
+      let bestD = radius;
+      for (const e of this.state.units) {
+        if (!this.militaryAccepts(u, e, enemyTeam)) continue;
+        const d = dist(e.pos, origin);
+        if (d <= bestD) {
+          best = e;
+          bestD = d;
+        }
+      }
+      if (!allowPeons) return best;
+      for (const v of this.state.villagers) {
+        if (!this.militaryAccepts(u, v, enemyTeam)) continue;
+        const d = dist(v.pos, origin);
+        if (d <= bestD) {
+          best = v;
+          bestD = d;
+        }
+      }
+      return best;
+    };
+    if (u.engageFrom && dist(u.pos, u.engageFrom) > 4) {
+      const onPost = nearest(u.engageFrom, aggro);
+      if (onPost) {
+        u.targetUnitId = onPost.id;
+        return onPost;
+      }
+      return undefined;
+    }
+    u.engageFrom = undefined;
+    const seen = nearest(u.pos, aggro);
+    if (!seen) return undefined;
+    u.engageFrom = { ...u.pos };
+    u.targetUnitId = seen.id;
+    return seen;
+  }
+
+  private fightMilitary(u: Unit, target: Unit | Villager, team: Team, dt: number) {
+    const contact = u.kind === "archer" ? ARCHER_RANGE : 18;
+    if (dist(u.pos, target.pos) > contact) {
+      moveTowards(u.pos, target.pos, u.speed, dt);
+      return;
+    }
+    if (u.attackTimer > 0) return;
+    target.hp -= u.damage;
+    u.attackTimer = u.attackCooldown;
+    const ranged = u.kind === "archer";
+    this.emitCombat(ranged ? "arrow" : "meleeHit", u.pos, target.pos, team);
+    this.addFloat(
+      `-${Math.round(u.damage)}`,
+      target.pos.x,
+      target.pos.y - 7,
+      ranged ? "#e8d39a" : "#ffd1cc",
+    );
+  }
+
   private updateUnitMovementAndMelee(dt: number, team: Team) {
     const enemyTeam = this.enemy(team);
     for (const u of this.state.units.filter((x) => x.team === team)) {
       u.attackTimer -= dt;
       const gateY = laneYGate(team);
       const enemies = this.state.units.filter((e) => e.team === enemyTeam && e.lane === u.lane);
-      if (u.aiHeldForRush && u.aiStagingPoint) {
-        if (dist(u.pos, u.aiStagingPoint) > 4) {
-          moveTowards(u.pos, u.aiStagingPoint, u.speed, dt);
+      if (u.fromBarracks) {
+        const hostile = this.pickMilitaryHostile(u, team);
+        if (hostile) {
+          this.fightMilitary(u, hostile, team, dt);
+          continue;
         }
-        continue;
+        if (u.engageFrom && dist(u.pos, u.engageFrom) > 4) {
+          moveTowards(u.pos, u.engageFrom, u.speed, dt);
+          continue;
+        }
+        u.engageFrom = undefined;
+        u.targetUnitId = undefined;
+        if (u.aiHeldForRush && u.aiStagingPoint) {
+          if (dist(u.pos, u.aiStagingPoint) > 4) {
+            moveTowards(u.pos, u.aiStagingPoint, u.speed, dt);
+          }
+          continue;
+        }
+        if (u.rallyPoint) {
+          moveTowards(u.pos, u.rallyPoint, u.speed, dt);
+          if (dist(u.pos, u.rallyPoint) < 5) u.rallyPoint = undefined;
+          continue;
+        }
       }
-      if (u.rallyPoint) {
-        moveTowards(u.pos, u.rallyPoint, u.speed, dt);
-        if (dist(u.pos, u.rallyPoint) < 5) u.rallyPoint = undefined;
-        continue;
-      }
-      if (u.kind === "archer") {
+      if (!u.fromBarracks && u.kind === "archer") {
         const rangedUnits = enemies
           .filter((e) => dist(e.pos, u.pos) <= ARCHER_RANGE)
           .sort((a, b) => dist(a.pos, u.pos) - dist(b.pos, u.pos));
@@ -1230,9 +1466,11 @@ export class GameSim {
           continue;
         }
       }
-      const meleeTarget = enemies
-        .filter((e) => dist(e.pos, u.pos) < 18 && (u.fromBarracks || e.fromBarracks))
-        .sort((a, b) => dist(a.pos, u.pos) - dist(b.pos, u.pos))[0];
+      const meleeTarget = !u.fromBarracks
+        ? enemies
+            .filter((e) => dist(e.pos, u.pos) < 18 && e.fromBarracks)
+            .sort((a, b) => dist(a.pos, u.pos) - dist(b.pos, u.pos))[0]
+        : undefined;
       if (meleeTarget) {
         if (u.attackTimer <= 0) {
           meleeTarget.hp -= u.damage;
@@ -1416,6 +1654,9 @@ export class GameSim {
         if (v.state === "toGarrison" || v.state === "defend") {
           v.state = "idle";
           v.targetEnemyId = undefined;
+          v.moveTarget = undefined;
+          v.forcedAttack = false;
+          v.engageFrom = undefined;
         }
       }
       if (wasDefending) this.aiAssignWorkers();
@@ -1482,6 +1723,9 @@ export class GameSim {
         }
         v.targetNodeId = undefined;
         v.state = "defend";
+        v.moveTarget = undefined;
+        v.forcedAttack = false;
+        v.engageFrom = undefined;
         v.targetEnemyId = this.pickPeonTarget(siegeTargets, 0)?.id;
       }
     }
@@ -1502,6 +1746,9 @@ export class GameSim {
         // player's bell recall pulls them home; idle peons may still defend.
         if ((v.state === "idle" || v.state === "home") && !v.targetNodeId) {
           v.state = "defend";
+          v.moveTarget = undefined;
+          v.forcedAttack = false;
+          v.engageFrom = undefined;
           v.targetEnemyId = this.pickPeonTarget(threats, i)?.id;
           rallied += 1;
         }
@@ -1536,6 +1783,7 @@ export class GameSim {
       }
 
       if (v.state === "toBarricade" || v.state === "buildingBarricade") {
+        if (this.peonRetaliate(v, team)) return;
         const site = this.state.barricades.find((b) => b.id === v.targetBarricadeId);
         if (!site) {
           v.targetBarricadeId = undefined;
@@ -1560,6 +1808,7 @@ export class GameSim {
       }
 
       if (v.state === "moving" && v.moveTarget) {
+        if (this.peonRetaliate(v, team)) return;
         moveTowards(v.pos, v.moveTarget, v.speed, dt);
         if (dist(v.pos, v.moveTarget) < 3) {
           v.moveTarget = undefined;
@@ -1569,26 +1818,12 @@ export class GameSim {
       }
 
       if (v.state === "patrolling" && v.patrolA && v.patrolB) {
-        const nearby = this.state.units
-          .filter((u) => u.team !== team && dist(u.pos, v.pos) <= 46)
-          .sort((a, b) => dist(a.pos, v.pos) - dist(b.pos, v.pos))[0];
-        if (nearby) {
-          if (dist(v.pos, nearby.pos) > PEON_MELEE_RANGE) {
-            moveTowards(v.pos, nearby.pos, PEON_FIGHT_SPEED, dt);
-          } else if (v.attackTimer <= 0) {
-            nearby.hp -= PEON_DAMAGE;
-            v.attackTimer = PEON_ATTACK_CD;
-            this.emitCombat("meleeHit", v.pos, nearby.pos, team);
-          }
-          return;
-        }
-        const destination = v.patrolToB ? v.patrolB : v.patrolA;
-        moveTowards(v.pos, destination, v.speed, dt);
-        if (dist(v.pos, destination) < 3) v.patrolToB = !v.patrolToB;
+        this.stepPeonPatrol(v, team, dt);
         return;
       }
 
       if (v.state === "defend") {
+        if (!v.forcedAttack && this.stepPeonGuard(v, team, dt)) return;
         const forcedTarget = v.forcedAttack
           ? this.state.units.find((u) => u.id === v.targetEnemyId && u.team !== team && u.hp > 0)
           : undefined;
@@ -1618,25 +1853,8 @@ export class GameSim {
 
       const node = v.targetNodeId ? this.state.nodes.find((n) => n.id === v.targetNodeId) : undefined;
 
-      // Peons contest resource camps directly. A raid can kill workers and hold
-      // one of the node's worker slots, denying that economy.
-      const enemyPeon = this.state.villagers
-        .filter(
-          (other) =>
-            other.team !== team &&
-            other.hp > 0 &&
-            other.state !== "garrisoned" &&
-            other.state !== "toGarrison",
-        )
-        .sort((a, b) => dist(a.pos, v.pos) - dist(b.pos, v.pos))[0];
-      if (enemyPeon && dist(enemyPeon.pos, v.pos) <= PEON_MELEE_RANGE) {
-        if (v.attackTimer <= 0) {
-          enemyPeon.hp -= PEON_DAMAGE;
-          v.attackTimer = PEON_ATTACK_CD;
-          this.addFloat(`-${PEON_DAMAGE}`, enemyPeon.pos.x, enemyPeon.pos.y - 7, "#e8c070");
-        }
-        return;
-      }
+      // Melee retaliation only. Gather, return, and idle do not hunt.
+      if (this.peonRetaliate(v, team)) return;
 
       if (!node && (v.state === "toNode" || v.state === "gathering")) {
         v.state = "idle";
@@ -2013,6 +2231,8 @@ export class GameSim {
       unit.aiHeldForRush = false;
       unit.aiStagingPoint = undefined;
       unit.rallyPoint = undefined;
+      unit.engageFrom = undefined;
+      unit.targetUnitId = undefined;
       unit.lane = index % 3 === 2 ? (targetLane === 0 ? 1 : 0) : targetLane;
     });
     this.aiRushDeadline = 0;

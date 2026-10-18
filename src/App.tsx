@@ -692,7 +692,9 @@ export default function App() {
       id: "patrol",
       icon: "⇄",
       label: "Patrol",
-      hint: layout.touch ? "Then tap a patrol destination" : "Then right-click a patrol destination (P)",
+      hint: layout.touch
+        ? "Then tap a destination. They walk the route and fight nearby."
+        : "Then right-click a destination (P). They walk the route and fight nearby.",
       disabled: ui.selectedPeonCount === 0,
       active: patrolMode,
       onPress: () => setPatrol(!patrolModeRef.current),
@@ -896,12 +898,17 @@ export default function App() {
                 className={patrolMode ? "active" : ""}
                 aria-pressed={patrolMode}
                 onClick={() => setPatrol(!patrolModeRef.current)}
-                title={layout.touch ? "Then tap a patrol destination" : "Then right-click a patrol destination (P)"}
+                title={
+                  layout.touch
+                    ? "Then tap a destination. They walk the route and fight nearby."
+                    : "Then right-click a destination (P). They walk the route and fight nearby."
+                }
               >
                 Patrol
               </button>
               <button
                 type="button"
+                title="Hold this spot and fight enemies that come close"
                 onClick={() => {
                   sim.stopSelectedVillagers();
                   refreshUi();

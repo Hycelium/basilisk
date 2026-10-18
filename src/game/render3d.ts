@@ -1469,9 +1469,15 @@ export class GameRenderer {
         if (v.team !== "you" || !state.selectedVillagerIds.includes(v.id)) continue;
         let target = v.moveTarget;
         if (v.state === "patrolling") target = v.patrolToB ? v.patrolB : v.patrolA;
-        if (v.targetNodeId) target = state.nodes.find((n) => n.id === v.targetNodeId)?.pos;
-        if (v.targetEnemyId) target = state.units.find((u) => u.id === v.targetEnemyId)?.pos;
-        if (v.targetBarricadeId) target = state.barricades.find((b) => b.id === v.targetBarricadeId)?.pos;
+        else if (v.state === "defend" && v.moveTarget && !v.forcedAttack) target = v.moveTarget;
+        else if (v.targetBarricadeId) target = state.barricades.find((b) => b.id === v.targetBarricadeId)?.pos;
+        else if (v.targetNodeId) target = state.nodes.find((n) => n.id === v.targetNodeId)?.pos;
+        else if (v.targetEnemyId) {
+          target =
+            state.units.find((u) => u.id === v.targetEnemyId)?.pos ??
+            state.villagers.find((other) => other.id === v.targetEnemyId)?.pos;
+        }
+        if (target && Math.hypot(target.x - v.pos.x, target.y - v.pos.y) < 2) target = undefined;
         if (!target) continue;
         const o = seg * 6;
         pos[o] = v.pos.x - hw;
