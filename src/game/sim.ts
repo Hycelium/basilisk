@@ -100,6 +100,7 @@ export class GameSim {
   private nextId = 1;
   private state: GameState;
   private aiTimer = 0;
+  private aiRushDeadline = 0;
   private activeMap: MapDef;
   private controlGroups = new Map<number, number[]>();
 
@@ -252,6 +253,7 @@ export class GameSim {
     this.activeMap = getOrCreateCampaignMap(meta.level, meta.scoutSalt);
     this.nextId = 1;
     this.aiTimer = 0;
+    this.aiRushDeadline = 0;
     this.state = this.makeFreshState(this.activeMap);
   }
 
@@ -721,6 +723,8 @@ export class GameSim {
       damage *= DAMAGE_MULT[barracks.damageRank];
       cooldown *= RATE_MULT[barracks.rateRank];
     }
+    const aiHeldForRush = team === "foe" && fromBarracks;
+    const stagingY = 138 + lane * 8;
     const u: Unit = {
       id: this.next(),
       team,
@@ -744,6 +748,13 @@ export class GameSim {
       fromBarracks,
       ignoreEnemyCreeps: !fromBarracks,
       rallyPoint: barracks?.rallyPoint ? { ...barracks.rallyPoint } : undefined,
+      aiHeldForRush,
+      aiStagingPoint: aiHeldForRush
+        ? {
+            x: lanePathX(this.activeMap.seed, team, lane, stagingY),
+            y: stagingY,
+          }
+        : undefined,
     };
     this.state.units.push(u);
   }
@@ -1179,6 +1190,12 @@ export class GameSim {
       u.attackTimer -= dt;
       const gateY = laneYGate(team);
       const enemies = this.state.units.filter((e) => e.team === enemyTeam && e.lane === u.lane);
+      if (u.aiHeldForRush && u.aiStagingPoint) {
+        if (dist(u.pos, u.aiStagingPoint) > 4) {
+          moveTowards(u.pos, u.aiStagingPoint, u.speed, dt);
+        }
+        continue;
+      }
       if (u.rallyPoint) {
         moveTowards(u.pos, u.rallyPoint, u.speed, dt);
         if (dist(u.pos, u.rallyPoint) < 5) u.rallyPoint = undefined;
@@ -1234,8 +1251,18 @@ export class GameSim {
           this.state.shake = Math.max(this.state.shake, 0.12);
           this.emitCombat("ramImpact", u.pos, barricade.pos, team);
           this.addFloat("CRUSH", barricade.pos.x, barricade.pos.y - 9, "#e4bd77");
+        } else if (u.kind === "archer") {
+          // Archers cannot damage a barricade, but may slowly leave the road
+          // and flank it so a ranged-only army never deadlocks forever.
+          const dir = team === "you" ? -1 : 1;
+          const flankSide = u.lane === 0 ? -1 : 1;
+          const bypassX = barricade.pos.x + flankSide * 32;
+          const lateral = Math.min(Math.abs(bypassX - u.pos.x), u.speed * 0.58 * dt);
+          u.pos.x += Math.sign(bypassX - u.pos.x) * lateral;
+          u.pos.y += dir * u.speed * 0.44 * dt;
+          continue;
         } else {
-          if (u.kind !== "archer" && u.attackTimer <= 0) {
+          if (u.attackTimer <= 0) {
             barricade.hp -= u.kind === "runner" ? 3 : 2;
             u.attackTimer = u.attackCooldown;
             this.emitCombat(
@@ -1865,31 +1892,171 @@ export class GameSim {
     return true;
   }
 
-  aiUpgradeWeakestTower() {
-    const team: Team = "foe";
+  private aiObservedHumanUnits(maxY = 430) {
+    return this.state.units.filter((u) => u.team === "you" && u.pos.y <= maxY);
+  }
+
+  aiBuildDefensiveBarricade() {
+    const cost = BUILD_COST.barricade;
+    const existing = this.state.barricades.filter((b) => b.team === "foe");
+    const maxBarricades = this.state.waveIndex >= 4 ? 2 : 1;
+    if (existing.length >= maxBarricades) return false;
+    if (this.state.gold.foe < cost.gold + 20 || this.state.wood.foe < cost.wood + 30) return false;
+    if (this.aiObservedHumanUnits(205).length > 0) return false;
+
+    const observed = this.aiObservedHumanUnits();
+    const lanePressure = [0, 0];
+    for (const unit of observed) lanePressure[unit.lane] += unit.kind === "rammer" ? 3 : 1;
+    for (const barricade of existing) lanePressure[barricade.lane] = -100;
+    let lane = (lanePressure[1] > lanePressure[0] ? 1 : 0) as 0 | 1;
+    if (lanePressure[0] === lanePressure[1]) {
+      lane = ((this.state.waveIndex + existing.length) % 2) as 0 | 1;
+    }
+    if (existing.some((b) => b.lane === lane)) lane = (lane === 0 ? 1 : 0);
+    if (existing.some((b) => b.lane === lane)) return false;
+
+    const y = 210 + existing.length * 38;
+    const x =
+      (lanePathX(this.activeMap.seed, "you", lane, y) +
+        lanePathX(this.activeMap.seed, "foe", lane, y)) /
+      2;
+    const builder = this.state.villagers
+      .filter(
+        (v) =>
+          v.team === "foe" &&
+          v.state !== "garrisoned" &&
+          v.state !== "toGarrison" &&
+          v.state !== "defend" &&
+          v.state !== "toBarricade" &&
+          v.state !== "buildingBarricade",
+      )
+      .sort((a, b) => {
+        const aIdle = a.state === "idle" || a.state === "home" ? 0 : 1;
+        const bIdle = b.state === "idle" || b.state === "home" ? 0 : 1;
+        return aIdle - bIdle || dist(a.pos, { x, y }) - dist(b.pos, { x, y });
+      })[0];
+    if (!builder) return false;
+
+    if (builder.targetNodeId) {
+      const node = this.state.nodes.find((n) => n.id === builder.targetNodeId);
+      if (node) node.workers = Math.max(0, node.workers - 1);
+    }
+    this.spendRes("foe", cost);
+    const barricade = {
+      id: this.next(),
+      team: "foe" as Team,
+      lane,
+      pos: { x, y },
+      hp: 6,
+      maxHp: 6,
+      buildProgress: 0,
+      buildTime: 3,
+      built: false,
+      builderId: builder.id,
+    };
+    this.state.barricades.push(barricade);
+    builder.targetNodeId = undefined;
+    builder.targetEnemyId = undefined;
+    builder.targetBarricadeId = barricade.id;
+    builder.state = "toBarricade";
+    this.addToast(`Enemy peons fortify the ${lane === 0 ? "west" : "east"} road.`);
+    return true;
+  }
+
+  aiCoordinateRush(skill: number) {
+    const held = this.state.units.filter(
+      (u) => u.team === "foe" && u.fromBarracks && u.aiHeldForRush && u.hp > 0,
+    );
+    if (held.length === 0) {
+      this.aiRushDeadline = 0;
+      return false;
+    }
+    if (this.aiRushDeadline <= 0) {
+      this.aiRushDeadline = this.state.time + Math.max(6, 10 - skill * 0.04);
+    }
+
+    const immediateDefense = this.aiObservedHumanUnits(245).length > 0;
+    const groupSize = Math.min(7, 4 + Math.floor(skill / 35));
+    const hasFrontline = held.some((u) => u.kind !== "archer" && u.kind !== "rammer");
+    const hasSupport = held.some((u) => u.kind === "archer" || u.kind === "ward");
+    const timedOut = this.state.time >= this.aiRushDeadline;
+    const release =
+      (immediateDefense && held.length >= 2) ||
+      (held.length >= groupSize && (hasFrontline && hasSupport)) ||
+      (timedOut && held.length >= 3);
+    if (!release) return false;
+
+    const pads = this.getPads("you");
+    const laneDefense = [0, 0];
+    for (const building of this.getBuildings("you")) {
+      if (building.kind === "house" || building.kind === "barracks") continue;
+      const pad = pads.find((p) => p.id === building.padId);
+      if (!pad) continue;
+      if (pad.laneCoverage === 2) {
+        laneDefense[0] += 1;
+        laneDefense[1] += 1;
+      } else {
+        laneDefense[pad.laneCoverage] += 1;
+      }
+    }
+    for (const barricade of this.state.barricades.filter((b) => b.team === "you" && b.built)) {
+      laneDefense[barricade.lane] += 1.5;
+    }
+    const targetLane = (laneDefense[1] < laneDefense[0] ? 1 : 0) as 0 | 1;
+    held.forEach((unit, index) => {
+      unit.aiHeldForRush = false;
+      unit.aiStagingPoint = undefined;
+      unit.rallyPoint = undefined;
+      unit.lane = index % 3 === 2 ? (targetLane === 0 ? 1 : 0) : targetLane;
+    });
+    this.aiRushDeadline = 0;
+    this.addToast(`Enemy warband rushes the ${targetLane === 0 ? "west" : "east"} road!`);
+    return true;
+  }
+
+  aiUpgradeDefense(preference: "damage" | "rate" | "adaptive" = "adaptive") {
     const towers = this.state.buildings.filter(
-      (b) => b.team === team && b.kind !== "barracks" && b.kind !== "house",
+      (b) => b.team === "foe" && b.kind !== "barracks" && b.kind !== "house",
     );
     if (towers.length === 0) return false;
-    towers.sort((a, b) => this.buildingDamage(a) - this.buildingDamage(b));
-    const t = towers[0];
-    if (t.damageRank < 2) {
-      const cost = UPGRADE_COST[t.damageRank];
-      if (this.state.gold[team] < cost + AI_RESERVE) return false;
-      this.spend(team, cost);
-      t.damageRank = (t.damageRank + 1) as 1 | 2;
-      t.spent += cost;
+    const observed = this.aiObservedHumanUnits();
+    const fast = observed.filter((u) => u.kind === "runner" || u.kind === "raider").length;
+    const heavy = observed.filter(
+      (u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer",
+    ).length;
+    const desired = preference === "adaptive" ? (fast > heavy ? "rate" : "damage") : preference;
+    const laneThreat = [0, 0];
+    for (const unit of observed) laneThreat[unit.lane] += unit.kind === "rammer" ? 2 : 1;
+    const threatenedLane = (laneThreat[1] > laneThreat[0] ? 1 : 0) as 0 | 1;
+    const pads = this.getPads("foe");
+
+    const ordered = [...towers].sort((a, b) => {
+      const padA = pads.find((p) => p.id === a.padId);
+      const padB = pads.find((p) => p.id === b.padId);
+      const covers = (pad: Pad | undefined) =>
+        pad && (pad.laneCoverage === 2 || pad.laneCoverage === threatenedLane) ? 1 : 0;
+      const aRank = desired === "damage" ? a.damageRank : a.rateRank;
+      const bRank = desired === "damage" ? b.damageRank : b.rateRank;
+      return covers(padB) - covers(padA) || aRank - bRank;
+    });
+
+    const tryUpgrade = (kind: "damage" | "rate") => {
+      const tower = ordered.find((b) => (kind === "damage" ? b.damageRank : b.rateRank) < 2);
+      if (!tower) return false;
+      const rank = kind === "damage" ? tower.damageRank : tower.rateRank;
+      const cost = UPGRADE_COST[rank];
+      if (this.state.gold.foe < cost + AI_RESERVE) return false;
+      this.spend("foe", cost);
+      if (kind === "damage") tower.damageRank = (tower.damageRank + 1) as 1 | 2;
+      else tower.rateRank = (tower.rateRank + 1) as 1 | 2;
+      tower.spent += cost;
       return true;
-    }
-    if (t.rateRank < 2) {
-      const cost = UPGRADE_COST[t.rateRank];
-      if (this.state.gold[team] < cost + AI_RESERVE) return false;
-      this.spend(team, cost);
-      t.rateRank = (t.rateRank + 1) as 1 | 2;
-      t.spent += cost;
-      return true;
-    }
-    return false;
+    };
+    return tryUpgrade(desired) || tryUpgrade(desired === "damage" ? "rate" : "damage");
+  }
+
+  aiUpgradeWeakestTower() {
+    return this.aiUpgradeDefense("adaptive");
   }
 
   aiAssignWorkers() {
@@ -1967,21 +2134,47 @@ export class GameSim {
   aiTrainUnits() {
     const bars = this.state.buildings.filter((b) => b.team === "foe" && b.kind === "barracks");
     if (bars.length === 0) return false;
-    const bar = bars[0];
-    if (bar.queue.length >= 3) return false;
+    if (bars.every((b) => b.queue.length >= 3)) return false;
     const gold = this.state.gold.foe;
     const wood = this.state.wood.foe;
     if (gold < AI_RESERVE + 28) return false;
+    const observed = this.aiObservedHumanUnits();
     const yourTowers = this.state.buildings.filter(
       (b) => b.team === "you" && b.kind !== "barracks" && b.kind !== "house",
     ).length;
-    const yourArmy = this.state.units.filter((u) => u.team === "you").length;
-    let kind: TrainKind = "levy";
-    if (yourTowers >= 3 && gold >= 48 + AI_RESERVE) kind = "ward";
-    else if (yourArmy >= 4 && gold >= 34 + AI_RESERVE && wood >= 28) kind = "archer";
-    else if (yourTowers >= 2 && gold >= 36 + AI_RESERVE && wood >= 22) kind = "runner";
-    else if (gold >= 40 + AI_RESERVE && wood >= 45 && Math.random() < 0.35) kind = "rammer";
-    return this.enqueueTrain(kind, "foe");
+    const ranged = observed.filter((u) => u.kind === "archer").length;
+    const fast = observed.filter((u) => u.kind === "runner" || u.kind === "raider").length;
+    const heavy = observed.filter(
+      (u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer",
+    ).length;
+    const visibleBarricades = this.state.barricades.filter((b) => b.team === "you" && b.built).length;
+    const force = this.state.units.filter((u) => u.team === "foe" && u.fromBarracks);
+    const queuedKinds = bars.flatMap((b) => b.queue.map((job) => job.kind));
+    const count = (kind: TrainKind) =>
+      force.filter((u) => u.kind === kind).length + queuedKinds.filter((k) => k === kind).length;
+
+    let candidates: TrainKind[];
+    if ((visibleBarricades > 0 || yourTowers >= 4) && count("rammer") === 0) {
+      candidates = ["rammer", "ward", "runner", "levy"];
+    } else if (ranged >= Math.max(2, observed.length * 0.4)) {
+      candidates = ["ward", "runner", "archer", "levy"];
+    } else if (fast >= Math.max(2, observed.length * 0.4)) {
+      candidates = ["archer", "levy", "ward", "runner"];
+    } else if (heavy >= 2) {
+      candidates = ["levy", "archer", "rammer", "ward"];
+    } else {
+      const mixed: TrainKind[] = ["levy", "levy", "ward", "archer", "runner"];
+      candidates = [...mixed].sort((a, b) => count(a) - count(b));
+      if (yourTowers >= 3) candidates.unshift("ward");
+    }
+
+    for (const kind of candidates) {
+      const def = UNIT_DEFS[kind];
+      if (gold >= (def.cost ?? 30) + AI_RESERVE && wood >= (def.woodCost ?? 0)) {
+        if (this.enqueueTrain(kind, "foe")) return true;
+      }
+    }
+    return false;
   }
 
   getUiSnapshot(): UiSnapshot {

@@ -6,11 +6,14 @@ function featuresFrom(sim: GameSim): LearnFeatures {
   const s = sim.getState();
   const yours = s.buildings.filter((b) => b.team === "you");
   const foes = s.buildings.filter((b) => b.team === "foe");
+  // Composition knowledge is limited to units that have crossed toward the
+  // foe's half of the map; production queues remain hidden.
+  const observedArmy = s.units.filter((u) => u.team === "you" && u.pos.y <= 430);
   const isCombatStructure = (kind: (typeof yours)[number]["kind"]) =>
     kind !== "barracks" && kind !== "house" && kind !== "barricade";
   return {
     yourTowers: yours.filter((b) => isCombatStructure(b.kind)).length,
-    yourArmy: s.units.filter((u) => u.team === "you").length,
+    yourArmy: observedArmy.length,
     yourBarracks: yours.filter((b) => b.kind === "barracks").length,
     foeTowers: foes.filter((b) => isCombatStructure(b.kind)).length,
     foeArmy: s.units.filter((u) => u.team === "foe").length,
@@ -19,6 +22,9 @@ function featuresFrom(sim: GameSim): LearnFeatures {
     yourGold: s.gold.you,
     wave: s.waveIndex,
     hpLead: s.keeps.foe.hp - s.keeps.you.hp,
+    yourFast: observedArmy.filter((u) => u.kind === "runner" || u.kind === "raider").length,
+    yourHeavy: observedArmy.filter((u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer").length,
+    yourRanged: observedArmy.filter((u) => u.kind === "archer").length,
   };
 }
 
@@ -52,7 +58,13 @@ function applyAction(sim: GameSim, action: LearnAction) {
       if (!sim.aiEnqueueTrain("rammer")) fallbackMacro(sim);
       break;
     case "upgrade":
-      if (!sim.aiUpgradeWeakestTower()) fallbackMacro(sim);
+      if (!sim.aiUpgradeDefense("adaptive")) fallbackMacro(sim);
+      break;
+    case "upgrade_damage":
+      if (!sim.aiUpgradeDefense("damage")) fallbackMacro(sim);
+      break;
+    case "upgrade_rate":
+      if (!sim.aiUpgradeDefense("rate")) fallbackMacro(sim);
       break;
     case "econ":
       sim.aiAssignWorkers();
@@ -104,6 +116,9 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
     const heavyCoverage = defenses.length >= 2 && state.waveIndex >= 2;
     sim.placeAiBuilding(heavyCoverage ? "ballista" : "watchtower", skill >= 45 ? 0 : 10);
   }
+  if (defenses.length >= 2 && state.waveIndex >= 1) {
+    sim.aiBuildDefensiveBarricade();
+  }
 
   const barracks = sim.getBuildings("foe").filter((b) => b.kind === "barracks");
   if (barracks.length === 0 && state.waveIndex >= 1 && defenses.length >= 2) {
@@ -113,6 +128,7 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
     // reserved or queues are full.
     sim.aiTrainUnits();
   }
+  sim.aiCoordinateRush(skill);
 
   const action = brain.choose(featuresFrom(sim));
   applyAction(sim, action);
@@ -120,7 +136,7 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
   // Experienced brains execute a second macro action instead of waiting a
   // full decision cycle while floating resources.
   if (skill >= 45 && state.gold.foe > 120) {
-    if (!sim.aiUpgradeWeakestTower()) sim.aiTrainUnits();
+    if (!sim.aiUpgradeDefense("adaptive")) sim.aiTrainUnits();
   }
 }
 

@@ -52,6 +52,8 @@ export interface Unit {
   fromBarracks: boolean;
   ignoreEnemyCreeps: boolean;
   rallyPoint?: Vec2;
+  aiHeldForRush?: boolean;
+  aiStagingPoint?: Vec2;
 }
 
 export type WavePhase = "build" | "spawning" | "fighting";

@@ -14,6 +14,8 @@ export type LearnAction =
   | "train_ward"
   | "train_rammer"
   | "upgrade"
+  | "upgrade_damage"
+  | "upgrade_rate"
   | "econ"
   | "wait";
 
@@ -30,6 +32,8 @@ export const LEARN_ACTIONS: LearnAction[] = [
   "econ",
   "wait",
   "train_archer",
+  "upgrade_damage",
+  "upgrade_rate",
 ];
 
 export interface LearnFeatures {
@@ -43,6 +47,9 @@ export interface LearnFeatures {
   yourGold: number;
   wave: number;
   hpLead: number; // foeKeep - yourKeep (positive = foe ahead)
+  yourFast: number;
+  yourHeavy: number;
+  yourRanged: number;
 }
 
 export interface BrainStats {
@@ -207,6 +214,10 @@ export class LearningBrain {
         if (features.foeBarracks > 0 && LEARN_ACTIONS[i].startsWith("train")) v += 0.22;
         if (features.yourTowers >= 3 && (LEARN_ACTIONS[i] === "train_ward" || LEARN_ACTIONS[i] === "train_runner")) v += 0.42;
         if (features.yourArmy >= 4 && LEARN_ACTIONS[i] === "train_archer") v += 0.38;
+        if (features.yourRanged >= 2 && LEARN_ACTIONS[i] === "train_ward") v += 0.5;
+        if (features.yourFast >= 2 && LEARN_ACTIONS[i] === "upgrade_rate") v += 0.38;
+        if (features.yourHeavy >= 2 && LEARN_ACTIONS[i] === "upgrade_damage") v += 0.38;
+        if (features.foeTowers >= 2 && LEARN_ACTIONS[i].startsWith("upgrade_")) v += 0.16;
         if (features.yourBarracks > 0 && LEARN_ACTIONS[i] === "train_rammer") v += 0.24;
         if (features.foeGold > 170 && LEARN_ACTIONS[i] === "wait") v -= 0.5;
         if (features.hpLead < -50 && (LEARN_ACTIONS[i] === "upgrade" || LEARN_ACTIONS[i] === "build_ballista")) v += 0.3;
