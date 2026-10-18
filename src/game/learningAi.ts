@@ -10,6 +10,7 @@ export type LearnAction =
   | "build_barracks"
   | "train_levy"
   | "train_runner"
+  | "train_archer"
   | "train_ward"
   | "train_rammer"
   | "upgrade"
@@ -28,6 +29,7 @@ export const LEARN_ACTIONS: LearnAction[] = [
   "upgrade",
   "econ",
   "wait",
+  "train_archer",
 ];
 
 export interface LearnFeatures {
@@ -63,10 +65,10 @@ interface BrainSave {
 }
 
 const KEY = "roadkeep_foe_brain_v1";
-const ALPHA = 0.22;
-const GAMMA = 0.92;
-const EPS_START = 0.35;
-const EPS_MIN = 0.08;
+const ALPHA = 0.36;
+const GAMMA = 0.88;
+const EPS_START = 0.24;
+const EPS_MIN = 0.03;
 
 function band(n: number, edges: number[]) {
   for (let i = 0; i < edges.length; i++) if (n <= edges[i]) return i;
@@ -101,6 +103,7 @@ export class LearningBrain {
   private lastActionIdx = 0;
   private lastActionName: LearnAction = "wait";
   private matchRewardAcc = 0;
+  private lastFeatures: LearnFeatures | null = null;
 
   constructor() {
     this.load();
@@ -139,15 +142,17 @@ export class LearningBrain {
   }
 
   epsilon() {
-    const decay = Math.max(0, this.games - 3);
-    return Math.max(EPS_MIN, EPS_START - decay * 0.015);
+    return Math.max(EPS_MIN, EPS_START - this.games * 0.022);
   }
 
   intellect() {
-    // Grows with experience + win rate
-    const exp = Math.min(50, this.games * 2 + Math.floor(this.updates / 40));
-    const wr = this.games > 0 ? (this.wins / this.games) * 40 : 0;
-    return Math.max(1, Math.min(99, Math.floor(8 + exp + wr)));
+    // Permanent experience only: games, updates, and wins never decrease, so
+    // the displayed IQ can no longer reverse after a loss.
+    const experience =
+      this.games * 4 +
+      this.wins * 3 +
+      Math.floor(this.updates / 24);
+    return Math.max(8, Math.min(99, 8 + experience));
   }
 
   stats(): BrainStats {
@@ -164,12 +169,17 @@ export class LearningBrain {
 
   private row(key: string) {
     if (!this.q[key]) this.q[key] = emptyRow();
+    while (this.q[key].length < LEARN_ACTIONS.length) this.q[key].push(0);
+    if (this.q[key].length > LEARN_ACTIONS.length) {
+      this.q[key] = this.q[key].slice(0, LEARN_ACTIONS.length);
+    }
     return this.q[key];
   }
 
   beginMatch() {
     this.lastKey = null;
     this.matchRewardAcc = 0;
+    this.lastFeatures = null;
   }
 
   /** Called each AI tick — returns chosen action. */
@@ -179,7 +189,7 @@ export class LearningBrain {
 
     // Temporal-difference update from previous step (shaping reward)
     if (this.lastKey) {
-      const reward = this.stepReward(features);
+      const reward = this.stepReward(features, this.lastFeatures);
       this.matchRewardAcc += reward;
       this.tdUpdate(this.lastKey, this.lastActionIdx, reward, key);
     }
@@ -194,9 +204,12 @@ export class LearningBrain {
         // Soft prior: early game prefer economy/build, late prefer train
         let v = row[i];
         if (features.foeTowers < 2 && LEARN_ACTIONS[i].startsWith("build")) v += 0.15;
-        if (features.foeBarracks > 0 && LEARN_ACTIONS[i].startsWith("train")) v += 0.1;
-        if (features.yourTowers >= 3 && (LEARN_ACTIONS[i] === "train_ward" || LEARN_ACTIONS[i] === "train_runner")) v += 0.2;
-        if (features.yourBarracks > 0 && LEARN_ACTIONS[i] === "train_rammer") v += 0.08;
+        if (features.foeBarracks > 0 && LEARN_ACTIONS[i].startsWith("train")) v += 0.22;
+        if (features.yourTowers >= 3 && (LEARN_ACTIONS[i] === "train_ward" || LEARN_ACTIONS[i] === "train_runner")) v += 0.42;
+        if (features.yourArmy >= 4 && LEARN_ACTIONS[i] === "train_archer") v += 0.38;
+        if (features.yourBarracks > 0 && LEARN_ACTIONS[i] === "train_rammer") v += 0.24;
+        if (features.foeGold > 170 && LEARN_ACTIONS[i] === "wait") v -= 0.5;
+        if (features.hpLead < -50 && (LEARN_ACTIONS[i] === "upgrade" || LEARN_ACTIONS[i] === "build_ballista")) v += 0.3;
         if (v > best) {
           best = v;
           idx = i;
@@ -207,16 +220,23 @@ export class LearningBrain {
     this.lastKey = key;
     this.lastActionIdx = idx;
     this.lastActionName = LEARN_ACTIONS[idx];
+    this.lastFeatures = { ...features };
     return this.lastActionName;
   }
 
-  private stepReward(f: LearnFeatures) {
-    // Dense shaping so learning happens within a match, not only at the end
-    let r = 0;
-    r += f.hpLead * 0.002;
-    r += Math.min(2, f.foeArmy) * 0.02;
-    r -= Math.min(3, f.yourArmy) * 0.015;
-    if (f.foeGold < 25) r -= 0.05;
+  private stepReward(f: LearnFeatures, previous: LearnFeatures | null) {
+    if (!previous) return 0;
+    // Reward actual improvement since the previous decision rather than the
+    // absolute board state, which previously reinforced stale actions.
+    let r = (f.hpLead - previous.hpLead) * 0.035;
+    const armySwing =
+      (f.foeArmy - f.yourArmy) -
+      (previous.foeArmy - previous.yourArmy);
+    r += armySwing * 0.16;
+    r += (f.foeTowers - previous.foeTowers) * 0.12;
+    r += (f.foeBarracks - previous.foeBarracks) * 0.18;
+    if (f.foeGold > 220) r -= 0.08;
+    if (f.foeGold < 20) r -= 0.04;
     return r;
   }
 
@@ -227,14 +247,15 @@ export class LearningBrain {
     const target = reward + GAMMA * maxNext;
     row[a] += ALPHA * (target - row[a]);
     this.updates += 1;
+    if (this.updates % 20 === 0) this.save();
   }
 
   endMatch(wonByFoe: boolean | null) {
     if (this.lastKey) {
       let terminal = this.matchRewardAcc * 0.05;
-      if (wonByFoe === true) terminal += 1.5;
-      else if (wonByFoe === false) terminal -= 1.5;
-      else terminal -= 0.2;
+      if (wonByFoe === true) terminal += 4;
+      else if (wonByFoe === false) terminal -= 3;
+      else terminal -= 0.35;
       const row = this.row(this.lastKey);
       row[this.lastActionIdx] += ALPHA * (terminal - row[this.lastActionIdx]);
       this.updates += 1;

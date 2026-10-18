@@ -6,11 +6,13 @@ function featuresFrom(sim: GameSim): LearnFeatures {
   const s = sim.getState();
   const yours = s.buildings.filter((b) => b.team === "you");
   const foes = s.buildings.filter((b) => b.team === "foe");
+  const isCombatStructure = (kind: (typeof yours)[number]["kind"]) =>
+    kind !== "barracks" && kind !== "house" && kind !== "barricade";
   return {
-    yourTowers: yours.filter((b) => b.kind !== "barracks").length,
+    yourTowers: yours.filter((b) => isCombatStructure(b.kind)).length,
     yourArmy: s.units.filter((u) => u.team === "you").length,
     yourBarracks: yours.filter((b) => b.kind === "barracks").length,
-    foeTowers: foes.filter((b) => b.kind !== "barracks").length,
+    foeTowers: foes.filter((b) => isCombatStructure(b.kind)).length,
     foeArmy: s.units.filter((u) => u.team === "foe").length,
     foeBarracks: foes.filter((b) => b.kind === "barracks").length,
     foeGold: s.gold.foe,
@@ -39,6 +41,9 @@ function applyAction(sim: GameSim, action: LearnAction) {
       break;
     case "train_runner":
       if (!sim.aiEnqueueTrain("runner")) fallbackMacro(sim);
+      break;
+    case "train_archer":
+      if (!sim.aiEnqueueTrain("archer")) fallbackMacro(sim);
       break;
     case "train_ward":
       if (!sim.aiEnqueueTrain("ward")) fallbackMacro(sim);
@@ -76,16 +81,39 @@ function fallbackMacro(sim: GameSim) {
 
 export function runAiTurn(sim: GameSim, _reserve: number) {
   const brain = getFoeBrain();
+  const skill = brain.stats().intellect;
+  const state = sim.getState();
   sim.aiAssignWorkers();
-  // Eco first: houses raise peon cap; queue peons when under cap
+
+  // Reliable macro baseline prevents exploration from idling the entire
+  // economy. Learning now chooses strategy on top of competent fundamentals.
   const houses = sim.getBuildings("foe").filter((b) => b.kind === "house").length;
   if (houses < 1 && sim.getState().wood.foe >= 55) {
     sim.placeAiBuilding("house");
-  } else if (sim.peonSlotsUsed("foe") < sim.peonCap("foe") && Math.random() < 0.35) {
+  } else if (
+    sim.peonSlotsUsed("foe") < sim.peonCap("foe") &&
+    Math.random() < Math.min(0.9, 0.48 + skill * 0.004)
+  ) {
     sim.enqueuePeon("foe");
   }
+
+  const barracks = sim.getBuildings("foe").filter((b) => b.kind === "barracks");
+  if (barracks.length === 0 && state.waveIndex >= 1) {
+    sim.placeAiBuilding("barracks");
+  } else if (barracks.length > 0) {
+    // Keep production active; failed attempts are harmless when resources are
+    // reserved or queues are full.
+    sim.aiTrainUnits();
+  }
+
   const action = brain.choose(featuresFrom(sim));
   applyAction(sim, action);
+
+  // Experienced brains execute a second macro action instead of waiting a
+  // full decision cycle while floating resources.
+  if (skill >= 45 && state.gold.foe > 120) {
+    if (!sim.aiUpgradeWeakestTower()) sim.aiTrainUnits();
+  }
 }
 
 export function notifyAiMatchStart() {

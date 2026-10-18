@@ -1623,7 +1623,11 @@ export class GameSim {
         v.timer -= dt;
         if (v.timer <= 0) {
           node.loadsLeft -= 1;
-          const mult = team === "you" ? gMult : 1;
+          const brain = foeBrainStats();
+          const mult =
+            team === "you"
+              ? gMult
+              : gMult * (1 + Math.min(0.24, brain.games * 0.012));
           v.carryingGold = Math.round(node.goldPerLoad * mult);
           v.carryingWood = Math.round(node.woodPerLoad * mult);
           v.state = "toKeep";
@@ -1744,7 +1748,8 @@ export class GameSim {
     this.aiTimer -= dt;
     if (this.aiTimer <= 0) {
       runAiTurn(this, AI_RESERVE);
-      this.aiTimer = 2.0;
+      const iq = foeBrainStats().intellect;
+      this.aiTimer = Math.max(0.72, 1.85 - iq * 0.0115);
     }
 
     this.doTowerCombat(dt, "you");
