@@ -20,15 +20,77 @@ function teamColor(team: Team, lite = false) {
   return lite ? 0xf08090 : 0xa03040;
 }
 
-/** Map 2D sim coords (y down) → Three.js XZ ground (Y up). */
+/** Map 2D sim coords (y down) â†’ Three.js XZ ground (Y up). Allocates â€” use only off the hot path. */
 function to3(x: number, y: number, h = 0) {
   return new THREE.Vector3(x - WORLD_W / 2, h, y - WORLD_H / 2);
 }
 
+/** Allocation-free variant of to3 for per-frame placement. */
+function setPos3(obj: { position: THREE.Vector3 }, x: number, y: number, h = 0) {
+  obj.position.set(x - WORLD_W / 2, h, y - WORLD_H / 2);
+}
+
 type EntityKey = string;
 
+export type QualityTier = "low" | "medium" | "high";
+export type QualitySetting = "auto" | QualityTier;
+export type TouchDragMode = "select" | "camera";
+
+export interface QualityInfo {
+  setting: QualitySetting;
+  tier: QualityTier;
+  fps: number;
+}
+
+const QUALITY_KEY = "roadkeep.quality";
+
+const TIER_PROFILE: Record<
+  QualityTier,
+  { dpr: number; shadows: boolean; shadowMap: number; particles: number; fog: boolean; pointLights: boolean; shadowEvery: number }
+> = {
+  low: { dpr: 1.0, shadows: false, shadowMap: 1024, particles: 120, fog: false, pointLights: false, shadowEvery: 1 },
+  medium: { dpr: 1.5, shadows: true, shadowMap: 1024, particles: 260, fog: true, pointLights: true, shadowEvery: 2 },
+  high: { dpr: 2.0, shadows: true, shadowMap: 2048, particles: 420, fog: true, pointLights: true, shadowEvery: 1 },
+};
+
+export function loadQualitySetting(): QualitySetting {
+  try {
+    const v = localStorage.getItem(QUALITY_KEY);
+    if (v === "low" || v === "medium" || v === "high" || v === "auto") return v;
+  } catch {
+    /* ignore */
+  }
+  return "auto";
+}
+
+export function isTouchDevice() {
+  if (typeof window === "undefined") return false;
+  const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  return coarse || navigator.maxTouchPoints > 0;
+}
+
+/** Static capability guess â€” refined by frame-time sampling once the game runs. */
+export function detectQualityTier(): QualityTier {
+  const nav = navigator as Navigator & { deviceMemory?: number; userAgentData?: { mobile?: boolean } };
+  const cores = nav.hardwareConcurrency || 4;
+  const memory = nav.deviceMemory ?? 0;
+  const ua = nav.userAgent || "";
+  const mobile =
+    nav.userAgentData?.mobile === true ||
+    /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
+    (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1); // iPadOS desktop UA
+  if (mobile) {
+    if (cores <= 4 || (memory > 0 && memory <= 3)) return "low";
+    return "medium";
+  }
+  if (cores <= 4 || (memory > 0 && memory <= 4)) return "medium";
+  return "high";
+}
+
+const MAX_COMMAND_LINES = 64;
+
 /**
- * Three.js battlefield renderer — same public API as the old Canvas2D GameRenderer.
+ * Three.js battlefield renderer â€” same public API as the old Canvas2D GameRenderer.
  * Simulation stays 2D; this is presentation only.
  */
 export class GameRenderer {
@@ -52,8 +114,37 @@ export class GameRenderer {
       clips: THREE.AnimationClip[];
       actions: Map<string, THREE.AnimationAction>;
       current?: string;
+      root: THREE.Object3D;
+      accum: number;
+      frame: number;
     }
   >();
+  private scratchLive = new Set<string>();
+  private scratchIds = new Set<number>();
+  private scratchPads = new Set<string>();
+  // Pooled command-line visuals (updated in place, never re-created per frame)
+  private commandLines: THREE.LineSegments;
+  private commandLinePos: Float32Array;
+  private commandLineCol: Float32Array;
+  private rallyLine: THREE.Line;
+  private rallyLinePos: Float32Array;
+  private padMaterials = new Map<string, THREE.MeshStandardMaterial>();
+  private rangeRingFor = "";
+  // Quality
+  private qualitySetting: QualitySetting = "auto";
+  private tier: QualityTier = "high";
+  private detectedTier: QualityTier = "high";
+  private autoDrops = 0;
+  private frameSamples = 0;
+  private frameAccum = 0;
+  private frameCount = 0;
+  private fpsEstimate = 60;
+  private shadowFrame = 0;
+  private onQualityChange: ((info: QualityInfo) => void) | null = null;
+  private touchDragMode: TouchDragMode = "select";
+  private pinchStartAngle = 0;
+  private pinchCenter = { x: 0, y: 0 };
+  private tmpV = new THREE.Vector3();
   private lastMapId = "";
   private worldGroup = new THREE.Group();
   private torchLights: THREE.PointLight[] = [];
@@ -86,17 +177,17 @@ export class GameRenderer {
   private particleGeo = new THREE.BufferGeometry();
   private particleMat: THREE.PointsMaterial;
   private particlePoints: THREE.Points;
-  /** Spherical orbit — pitch from Y (0=top-down, π/2=horizon). */
+  /** Spherical orbit â€” pitch from Y (0=top-down, Ï€/2=horizon). */
   private camDist = 520;
   private camYaw = 0.12;
-  private camPitch = 1.12; // ~64° from top → proper RTS angle, not bird's-eye
+  private camPitch = 1.12; // ~64Â° from top â†’ proper RTS angle, not bird's-eye
   private camLook = new THREE.Vector3(0, 14, 55);
   private readonly camDistMin = 280;
   private readonly camDistMax = 900;
   private readonly camPitchMin = 0.72;
   private readonly camPitchMax = 1.35;
   private camShake = new THREE.Vector3();
-  private pointers = new Map<number, { x: number; y: number }>();
+  private pointers = new Map<number, { x: number; y: number; ox: number; oy: number }>();
   private dragMode: "none" | "orbit" | "pan" | "pinch" | "select" = "none";
   private dragMoved = false;
   private pointerButton = 0;
@@ -107,9 +198,13 @@ export class GameRenderer {
   private suppressClick = false;
 
   constructor(private canvas: HTMLCanvasElement) {
+    this.qualitySetting = loadQualitySetting();
+    this.detectedTier = detectQualityTier();
+    this.tier = this.qualitySetting === "auto" ? this.detectedTier : this.qualitySetting;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      // Antialias is fixed at context creation; low tier skips it entirely.
+      antialias: this.tier !== "low",
       alpha: false,
       powerPreference: "high-performance",
     });
@@ -166,9 +261,32 @@ export class GameRenderer {
     this.particlePoints = new THREE.Points(this.particleGeo, this.particleMat);
     this.particlePoints.frustumCulled = false;
     this.root.add(this.particlePoints);
+    this.allocateParticleBuffers(TIER_PROFILE.high.particles);
+
+    // Pooled command lines: one LineSegments for all peon order lines, one dashed Line for rally.
+    this.commandLinePos = new Float32Array(MAX_COMMAND_LINES * 2 * 3);
+    this.commandLineCol = new Float32Array(MAX_COMMAND_LINES * 2 * 3);
+    const lineGeo = new THREE.BufferGeometry();
+    lineGeo.setAttribute("position", new THREE.BufferAttribute(this.commandLinePos, 3).setUsage(THREE.DynamicDrawUsage));
+    lineGeo.setAttribute("color", new THREE.BufferAttribute(this.commandLineCol, 3).setUsage(THREE.DynamicDrawUsage));
+    lineGeo.setDrawRange(0, 0);
+    this.commandLines = new THREE.LineSegments(
+      lineGeo,
+      new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.58 }),
+    );
+    this.commandLines.frustumCulled = false;
+    this.commandLineRoot.add(this.commandLines);
+    this.rallyLinePos = new Float32Array(6);
+    const rallyGeo = new THREE.BufferGeometry();
+    rallyGeo.setAttribute("position", new THREE.BufferAttribute(this.rallyLinePos, 3).setUsage(THREE.DynamicDrawUsage));
+    this.rallyLine = new THREE.Line(rallyGeo, new THREE.LineDashedMaterial({ color: 0xffd475, dashSize: 5, gapSize: 3 }));
+    this.rallyLine.frustumCulled = false;
+    this.rallyLine.visible = false;
+    this.commandLineRoot.add(this.rallyLine);
 
     this.buildSky();
     this.fitCamera();
+    this.applyTier(this.tier, false);
     void ensureModelsLoaded().then(() => {
       // Force one remesh pass so trees/units upgrade to GLBs
       this.lastMapId = "";
@@ -181,6 +299,12 @@ export class GameRenderer {
     this.knownUnits.clear();
     this.knownCombatEvents.clear();
     this.particles.length = 0;
+    this.rangeRingFor = "";
+    if (this.rangeRing) {
+      this.dynamicRoot.remove(this.rangeRing);
+      this.rangeRing.geometry.dispose();
+      this.rangeRing = null;
+    }
     for (const [k, obj] of [...this.entityMap]) {
       this.dynamicRoot.remove(obj);
       this.clearAnimation(k);
@@ -222,7 +346,7 @@ export class GameRenderer {
     this.resetCamera();
   }
 
-  /** Best default RTS framing — oblique, biased toward your keep. */
+  /** Best default RTS framing â€” oblique, biased toward your keep. */
   resetCamera() {
     this.camDist = 520;
     this.camYaw = 0.12;
@@ -233,6 +357,17 @@ export class GameRenderer {
 
   zoomBy(factor: number) {
     this.camDist = THREE.MathUtils.clamp(this.camDist * factor, this.camDistMin, this.camDistMax);
+    this.applyCamera();
+  }
+
+  /** Normalised zoom: 0 = closest, 1 = furthest. */
+  getZoomT() {
+    return (this.camDist - this.camDistMin) / (this.camDistMax - this.camDistMin);
+  }
+
+  setZoomT(t: number) {
+    const k = THREE.MathUtils.clamp(t, 0, 1);
+    this.camDist = this.camDistMin + (this.camDistMax - this.camDistMin) * k;
     this.applyCamera();
   }
 
@@ -266,23 +401,51 @@ export class GameRenderer {
     this.camera.lookAt(this.camLook);
   }
 
+  /** One-finger drag behaviour on touch devices: marquee select (default) or camera orbit. */
+  setTouchDragMode(mode: TouchDragMode) {
+    this.touchDragMode = mode;
+  }
+
+  getTouchDragMode() {
+    return this.touchDragMode;
+  }
+
+  getDragMode() {
+    return this.dragMode;
+  }
+
+  /** Cancel the pending tap for the current gesture (used after a long-press fires). */
+  cancelTap() {
+    this.suppressClick = true;
+  }
+
   /** Returns true if this pointerdown should also fire a game click (short tap). */
   onPointerDown(ev: PointerEvent) {
-    this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
-    this.dragMoved = false;
-    this.suppressClick = false;
-    this.pointerButton = ev.button;
+    this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, ox: ev.clientX, oy: ev.clientY });
     this.pointerType = ev.pointerType;
-    this.lastPtr = { x: ev.clientX, y: ev.clientY };
 
     if (this.pointers.size === 2) {
+      // Second finger: whatever was happening becomes a two-finger camera gesture
+      // (pinch = zoom, drag = pan, twist = orbit).
       this.dragMode = "pinch";
       const pts = [...this.pointers.values()];
       this.pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
       this.pinchStartCamDist = this.camDist;
+      this.pinchStartAngle = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+      this.pinchCenter = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      this.suppressClick = true;
+      this.dragMoved = true;
+      return false;
+    }
+    if (this.pointers.size > 2) {
       this.suppressClick = true;
       return false;
     }
+
+    this.dragMoved = false;
+    this.suppressClick = false;
+    this.pointerButton = ev.button;
+    this.lastPtr = { x: ev.clientX, y: ev.clientY };
 
     // Middle / Alt = orbit immediately. Right-click is a command when tapped,
     // but promotes to orbit when dragged.
@@ -293,7 +456,7 @@ export class GameRenderer {
       this.dragMode = "pan";
       this.suppressClick = true;
     } else {
-      this.dragMode = "none"; // promote to orbit after move threshold
+      this.dragMode = "none"; // promote to select/orbit after move threshold
     }
     try {
       (ev.target as HTMLElement).setPointerCapture?.(ev.pointerId);
@@ -304,17 +467,35 @@ export class GameRenderer {
   }
 
   onPointerMove(ev: PointerEvent) {
-    if (!this.pointers.has(ev.pointerId)) return;
-    this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    const prev = this.pointers.get(ev.pointerId);
+    if (!prev) return;
+    this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, ox: prev.ox, oy: prev.oy });
 
-    if (this.dragMode === "pinch" && this.pointers.size >= 2) {
+    if (this.dragMode === "pinch") {
+      if (this.pointers.size < 2) return;
       const pts = [...this.pointers.values()];
       const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
       if (this.pinchStartDist > 1) {
         const ratio = this.pinchStartDist / Math.max(1, d);
         this.camDist = THREE.MathUtils.clamp(this.pinchStartCamDist * ratio, this.camDistMin, this.camDistMax);
-        this.applyCamera();
       }
+      // Twist â†’ yaw orbit
+      const angle = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+      let dAngle = angle - this.pinchStartAngle;
+      if (dAngle > Math.PI) dAngle -= Math.PI * 2;
+      if (dAngle < -Math.PI) dAngle += Math.PI * 2;
+      if (Math.abs(dAngle) > 0.004) {
+        this.camYaw -= dAngle;
+        this.pinchStartAngle = angle;
+      }
+      // Centroid drift â†’ pan
+      const cx = (pts[0].x + pts[1].x) / 2;
+      const cy = (pts[0].y + pts[1].y) / 2;
+      const pdx = cx - this.pinchCenter.x;
+      const pdy = cy - this.pinchCenter.y;
+      this.pinchCenter = { x: cx, y: cy };
+      if (Math.abs(pdx) > 0.1 || Math.abs(pdy) > 0.1) this.panBy(pdx, pdy);
+      this.applyCamera();
       this.dragMoved = true;
       this.suppressClick = true;
       return;
@@ -323,12 +504,18 @@ export class GameRenderer {
     const dx = ev.clientX - this.lastPtr.x;
     const dy = ev.clientY - this.lastPtr.y;
     this.lastPtr = { x: ev.clientX, y: ev.clientY };
-    const dist = Math.hypot(dx, dy);
-    if (dist < 0.5 && this.dragMode === "none") return;
 
-    if (this.dragMode === "none" && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
-      this.dragMode =
-        this.pointerType === "mouse" && this.pointerButton === 0 ? "select" : "orbit";
+    if (this.dragMode === "none") {
+      const touch = this.pointerType !== "mouse";
+      const threshold = touch ? 8 : 2;
+      // Total travel from pointerdown — last-frame dx is too small to promote a slow finger drag.
+      const travel = Math.hypot(ev.clientX - prev.ox, ev.clientY - prev.oy);
+      if (travel <= threshold) return;
+      if (touch) {
+        this.dragMode = this.touchDragMode === "select" ? "select" : "orbit";
+      } else {
+        this.dragMode = this.pointerButton === 0 ? "select" : "orbit";
+      }
       this.suppressClick = true;
       this.dragMoved = true;
     }
@@ -351,12 +538,92 @@ export class GameRenderer {
   onPointerUp(ev: PointerEvent): boolean {
     this.pointers.delete(ev.pointerId);
     const wasTap = !this.suppressClick && !this.dragMoved && this.dragMode === "none";
-    if (this.pointers.size < 2 && this.dragMode === "pinch") this.dragMode = "none";
+    if (this.pointers.size < 2 && this.dragMode === "pinch") {
+      // Lifting one finger of a pinch must not turn the remaining finger into a select/orbit.
+      this.dragMode = "none";
+      this.suppressClick = true;
+      this.dragMoved = true;
+      const rest = this.pointers.values().next().value as { x: number; y: number } | undefined;
+      if (rest) this.lastPtr = { x: rest.x, y: rest.y };
+    }
     if (this.pointers.size === 0) {
       this.dragMode = "none";
       this.dragMoved = false;
+      this.suppressClick = false;
     }
     return wasTap;
+  }
+
+  // ---------------------------------------------------------------- quality
+
+  onQuality(cb: ((info: QualityInfo) => void) | null) {
+    this.onQualityChange = cb;
+    cb?.(this.getQualityInfo());
+  }
+
+  getQualityInfo(): QualityInfo {
+    return { setting: this.qualitySetting, tier: this.tier, fps: Math.round(this.fpsEstimate) };
+  }
+
+  setQuality(setting: QualitySetting) {
+    this.qualitySetting = setting;
+    try {
+      localStorage.setItem(QUALITY_KEY, setting);
+    } catch {
+      /* ignore */
+    }
+    this.autoDrops = 0;
+    this.frameAccum = 0;
+    this.frameCount = 0;
+    this.frameSamples = 0;
+    this.applyTier(setting === "auto" ? this.detectedTier : setting, true);
+  }
+
+  private applyTier(tier: QualityTier, notify: boolean) {
+    const profile = TIER_PROFILE[tier];
+    const prev = this.tier;
+    this.tier = tier;
+    this.renderer.shadowMap.enabled = profile.shadows;
+    this.renderer.shadowMap.autoUpdate = profile.shadowEvery <= 1;
+    if (this.sun.castShadow !== profile.shadows) this.sun.castShadow = profile.shadows;
+    if (this.sun.shadow.mapSize.x !== profile.shadowMap) {
+      this.sun.shadow.mapSize.set(profile.shadowMap, profile.shadowMap);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+    }
+    this.scene.fog = profile.fog ? new THREE.FogExp2(0x8eb4d0, 0.00055) : null;
+    for (const light of this.torchLights) light.visible = profile.pointLights;
+    if (this.particles.length > profile.particles) this.particles.length = profile.particles;
+    if (prev !== tier) {
+      // Shadow/fog toggles need shader recompiles.
+      this.scene.traverse((o) => {
+        const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+        if (!m) return;
+        if (Array.isArray(m)) for (const x of m) x.needsUpdate = true;
+        else m.needsUpdate = true;
+      });
+    }
+    this.resize();
+    if (notify) this.onQualityChange?.(this.getQualityInfo());
+  }
+
+  /** Rolling frame-time monitor; in Auto mode steps the tier down when the device can't keep up. */
+  private sampleFrame(dtMs: number) {
+    if (dtMs > 250) return; // tab was hidden / debugger paused
+    this.frameSamples++;
+    if (this.frameSamples < 30) return; // warm-up (shader compiles, first asset uploads)
+    this.frameAccum += dtMs;
+    this.frameCount++;
+    if (this.frameAccum < 2000) return;
+    const avg = this.frameAccum / this.frameCount;
+    this.fpsEstimate = 1000 / Math.max(1, avg);
+    this.frameAccum = 0;
+    this.frameCount = 0;
+    if (this.qualitySetting !== "auto" || this.autoDrops >= 2) return;
+    if (avg > 22 && this.tier !== "low") {
+      this.autoDrops++;
+      this.applyTier(this.tier === "high" ? "medium" : "low", true);
+    }
   }
 
   onWheel(ev: WheelEvent) {
@@ -365,7 +632,19 @@ export class GameRenderer {
     this.zoomBy(factor);
   }
 
+  private allocateParticleBuffers(cap: number) {
+    const positions = new Float32Array(cap * 3);
+    const colors = new Float32Array(cap * 3);
+    this.particleGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
+    this.particleGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3).setUsage(THREE.DynamicDrawUsage));
+    this.particleGeo.setDrawRange(0, 0);
+  }
+
   private burst(x: number, y: number, h: number, color: number, count: number, speed = 40) {
+    const cap = TIER_PROFILE[this.tier].particles;
+    // Scale burst density with tier so low-end devices don't pay for bursts they'll clip anyway.
+    if (this.tier === "low") count = Math.max(2, Math.round(count * 0.4));
+    else if (this.tier === "medium") count = Math.max(3, Math.round(count * 0.7));
     const c = new THREE.Color(color);
     for (let i = 0; i < count; i++) {
       const a = Math.random() * Math.PI * 2;
@@ -380,7 +659,7 @@ export class GameRenderer {
         size: 2 + Math.random() * 3,
       });
     }
-    if (this.particles.length > 420) this.particles.splice(0, this.particles.length - 420);
+    if (this.particles.length > cap) this.particles.splice(0, this.particles.length - cap);
   }
 
   private shootArrow(fromX: number, fromY: number, toX: number, toY: number, spread: number, startH = 12) {
@@ -398,8 +677,10 @@ export class GameRenderer {
   }
 
   private syncCombatFx(state: GameState, dt: number) {
-    // Unit deaths — use cached last positions (syncUnits may already have pruned meshes)
-    const live = new Set(state.units.map((u) => u.id));
+    // Unit deaths â€” use cached last positions (syncUnits may already have pruned meshes)
+    const live = this.scratchIds;
+    live.clear();
+    for (const u of state.units) live.add(u.id);
     for (const [id, last] of this.knownUnits) {
       if (!live.has(id)) {
         this.burst(last.x, last.y, 8, last.team === "you" ? 0x88c8ff : 0xff8866, 16, 58);
@@ -461,33 +742,45 @@ export class GameRenderer {
       this.knownKick.set(b.id, b.animKick);
     }
 
-    // Integrate particles
-    for (const p of this.particles) {
+    // Integrate particles (in-place compaction, no per-frame array churn)
+    let write = 0;
+    const particles = this.particles;
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
       p.life -= dt;
+      if (p.life <= 0) continue;
       p.vel.y -= 60 * dt;
       p.pos.x += p.vel.x * dt;
       p.pos.y += p.vel.y * dt;
       p.pos.z += p.vel.z * dt;
+      particles[write++] = p;
     }
-    this.particles = this.particles.filter((p) => p.life > 0);
+    particles.length = write;
 
-    this.arrows = this.arrows.filter((arrow) => {
+    let arrowWrite = 0;
+    for (let i = 0; i < this.arrows.length; i++) {
+      const arrow = this.arrows[i];
       arrow.life -= dt;
       const t = Math.min(1, 1 - arrow.life / arrow.max);
       arrow.mesh.position.lerpVectors(arrow.start, arrow.end, t);
       arrow.mesh.position.y += Math.sin(t * Math.PI) * 18;
-      if (arrow.life > 0) return true;
+      if (arrow.life > 0) {
+        this.arrows[arrowWrite++] = arrow;
+        continue;
+      }
       this.dynamicRoot.remove(arrow.mesh);
       arrow.mesh.geometry.dispose();
       (arrow.mesh.material as THREE.Material).dispose();
-      return false;
-    });
+    }
+    this.arrows.length = arrowWrite;
 
-    const n = this.particles.length;
-    const positions = new Float32Array(Math.max(1, n) * 3);
-    const colors = new Float32Array(Math.max(1, n) * 3);
+    const posAttr = this.particleGeo.getAttribute("position") as THREE.BufferAttribute;
+    const colAttr = this.particleGeo.getAttribute("color") as THREE.BufferAttribute;
+    const positions = posAttr.array as Float32Array;
+    const colors = colAttr.array as Float32Array;
+    const n = Math.min(particles.length, posAttr.count);
     for (let i = 0; i < n; i++) {
-      const p = this.particles[i];
+      const p = particles[i];
       const fade = Math.max(0, p.life / p.max);
       positions[i * 3] = p.pos.x;
       positions[i * 3 + 1] = p.pos.y;
@@ -496,11 +789,12 @@ export class GameRenderer {
       colors[i * 3 + 1] = p.color.g * fade;
       colors[i * 3 + 2] = p.color.b * fade;
     }
-    this.particleGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    this.particleGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     this.particleGeo.setDrawRange(0, n);
-    this.particleGeo.attributes.position.needsUpdate = true;
-    this.particleGeo.attributes.color.needsUpdate = true;
+    this.particlePoints.visible = n > 0;
+    if (n > 0) {
+      posAttr.needsUpdate = true;
+      colAttr.needsUpdate = true;
+    }
   }
 
   private updateCamera(state: GameState) {
@@ -516,8 +810,8 @@ export class GameRenderer {
     const rect = this.canvas.getBoundingClientRect();
     const w = Math.max(1, Math.floor(rect.width));
     const h = Math.max(1, Math.floor(rect.height));
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.renderer.setPixelRatio(dpr);
+    const dpr = Math.min(TIER_PROFILE[this.tier].dpr, window.devicePixelRatio || 1);
+    if (this.renderer.getPixelRatio() !== dpr) this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.fov = h > w ? 44 : 40;
@@ -541,8 +835,10 @@ export class GameRenderer {
 
   draw(state: GameState) {
     const now = performance.now();
-    const step = Math.min(0.05, Math.max(0.008, (now - this.wallClock) / 1000));
+    const rawMs = now - this.wallClock;
+    const step = Math.min(0.05, Math.max(0.008, rawMs / 1000));
     this.wallClock = now;
+    this.sampleFrame(rawMs);
 
     if (state.mapId !== this.lastMapId) {
       this.rebuildBattlefield(state);
@@ -557,7 +853,7 @@ export class GameRenderer {
     this.syncUnits(state);
     this.syncVillagers(state);
     this.syncCommandViz(state);
-    for (const animated of this.animationMap.values()) animated.mixer.update(step);
+    this.updateAnimations(step);
     this.syncSelectionRing(state);
     this.syncFloats(state);
     this.pulseTorches(state.time);
@@ -566,7 +862,34 @@ export class GameRenderer {
     this.sun.intensity = 2.25 + Math.sin(state.time * 0.35) * 0.1;
     this.hemi.intensity = 1.3 + Math.sin(state.time * 0.22) * 0.05;
 
+    const profile = TIER_PROFILE[this.tier];
+    if (profile.shadows && profile.shadowEvery > 1) {
+      this.shadowFrame = (this.shadowFrame + 1) % profile.shadowEvery;
+      if (this.shadowFrame === 0) this.renderer.shadowMap.needsUpdate = true;
+    }
+
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /** Mixers near the camera tick every frame; distant ones at half/third rate (accumulated dt). */
+  private updateAnimations(step: number) {
+    const nearSq = this.tier === "high" ? 520 * 520 : this.tier === "medium" ? 380 * 380 : 260 * 260;
+    const farInterval = this.tier === "low" ? 3 : 2;
+    const baseInterval = this.tier === "low" ? 2 : 1;
+    const cam = this.camera.position;
+    for (const animated of this.animationMap.values()) {
+      animated.accum += step;
+      animated.frame++;
+      const p = animated.root.getWorldPosition(this.tmpV);
+      const dx = p.x - cam.x;
+      const dy = p.y - cam.y;
+      const dz = p.z - cam.z;
+      const far = dx * dx + dy * dy + dz * dz > nearSq;
+      const interval = far ? farInterval : baseInterval;
+      if (animated.frame % interval !== 0) continue;
+      animated.mixer.update(animated.accum);
+      animated.accum = 0;
+    }
   }
 
   private rebuildMapProps(state: GameState) {
@@ -612,7 +935,15 @@ export class GameRenderer {
       mixer: new THREE.AnimationMixer(object),
       clips,
       actions: new Map(),
+      root: object,
+      accum: 0,
+      frame: Math.floor(Math.random() * 3), // stagger throttled updates
     });
+  }
+
+  private liveSet() {
+    this.scratchLive.clear();
+    return this.scratchLive;
   }
 
   private playAnimation(key: EntityKey, choices: string[], speed = 1) {
@@ -673,23 +1004,25 @@ export class GameRenderer {
     }
     const light = new THREE.PointLight(0xffaa55, 1.6, 110, 2);
     light.position.set(-16, 28, 14);
+    light.visible = TIER_PROFILE[this.tier].pointLights;
     g.add(light);
     this.torchLights.push(light);
     const light2 = light.clone();
     light2.position.set(16, 28, 14);
+    light2.visible = light.visible;
     g.add(light2);
     this.torchLights.push(light2);
     return g;
   }
 
   private syncKeeps(state: GameState) {
-    const live = new Set<string>();
+    const live = this.liveSet();
     for (const team of ["you", "foe"] as Team[]) {
       const key = `keep-${team}`;
       live.add(key);
       const obj = this.ensure(key, () => this.makeKeep(team));
       const k = state.keeps[team];
-      obj.position.copy(to3(k.pos.x, k.pos.y, 0));
+      setPos3(obj, k.pos.x, k.pos.y, 0);
       if (k.hitFlash > 0) obj.scale.setScalar(1.04);
       else obj.scale.setScalar(1);
     }
@@ -713,51 +1046,64 @@ export class GameRenderer {
   }
 
   private syncBuildings(state: GameState) {
-    const live = new Set<string>();
+    const live = this.liveSet();
     for (const b of state.buildings) {
       const key = `bld-${b.id}`;
       live.add(key);
-      const obj = this.ensure(key, () => this.makeBuilding(b.kind, b.team));
-      obj.position.copy(to3(b.pos.x, b.pos.y, 0));
-      const arm = obj.getObjectByName("arm");
+      const obj = this.ensure(key, () => {
+        const built = this.makeBuilding(b.kind, b.team);
+        built.userData.arm = built.getObjectByName("arm") ?? null;
+        return built;
+      });
+      setPos3(obj, b.pos.x, b.pos.y, 0);
+      const arm = obj.userData.arm as THREE.Object3D | null;
       if (arm && b.animKick > 0) arm.rotation.z = -0.8 * (b.animKick / 0.15);
       else if (arm) arm.rotation.z = 0;
     }
     this.prune("bld-", live);
   }
 
+  private padMaterial(zone: string, team: Team) {
+    const id = `${zone}-${team}`;
+    let mat = this.padMaterials.get(id);
+    if (!mat) {
+      mat = new THREE.MeshStandardMaterial({
+        color: zone === "eco" ? 0xa8c86a : team === "you" ? 0x6eb4ff : 0xb44a55,
+        transparent: true,
+        opacity: 0.55,
+        side: THREE.DoubleSide,
+      });
+      this.padMaterials.set(id, mat);
+    }
+    return mat;
+  }
+
   private syncPads(state: GameState) {
-    const live = new Set<string>();
+    const live = this.liveSet();
+    const occupied = this.scratchPads;
+    occupied.clear();
+    for (const b of state.buildings) if (b.padId) occupied.add(b.padId);
     for (const p of state.pads) {
-      if (state.buildings.some((b) => b.padId === p.id)) continue;
+      if (occupied.has(p.id)) continue;
       const key = `pad-${p.id}`;
       live.add(key);
       const obj = this.ensure(key, () => {
+        // Each pad owns a material instance so opacity can differ, but geometry/material are created once.
         const ring = new THREE.Mesh(
           new THREE.RingGeometry(p.zone === "eco" ? 9 : 10, p.zone === "eco" ? 13 : 14, 24),
-          new THREE.MeshStandardMaterial({
-            color: p.zone === "eco" ? 0xa8c86a : p.team === "you" ? 0x6eb4ff : 0xb44a55,
-            transparent: true,
-            opacity: 0.55,
-            side: THREE.DoubleSide,
-          }),
+          this.padMaterial(p.zone, p.team).clone(),
         );
         ring.rotation.x = -Math.PI / 2;
         return ring;
       });
-      obj.position.copy(to3(p.pos.x, p.pos.y, 0.4));
+      setPos3(obj, p.pos.x, p.pos.y, 0.4);
       const pulse = state.buildSelection && p.team === "you" ? 0.7 + Math.sin(state.time * 5) * 0.25 : 0.45;
       const ecoSel = state.buildSelection === "house";
       const match =
         p.zone === "eco"
           ? ecoSel || !state.buildSelection
           : state.buildSelection !== "house" || !state.buildSelection;
-      (obj as THREE.Mesh).material = new THREE.MeshStandardMaterial({
-        color: p.zone === "eco" ? 0xa8c86a : p.team === "you" ? 0x6eb4ff : 0xb44a55,
-        transparent: true,
-        opacity: match ? pulse : 0.22,
-        side: THREE.DoubleSide,
-      });
+      ((obj as THREE.Mesh).material as THREE.MeshStandardMaterial).opacity = match ? pulse : 0.22;
     }
     this.prune("pad-", live);
   }
@@ -804,78 +1150,85 @@ export class GameRenderer {
   }
 
   private syncNodes(state: GameState) {
-    const live = new Set<string>();
+    const live = this.liveSet();
     for (const n of state.nodes) {
       const key = `node-${n.id}`;
       live.add(key);
       const obj = this.ensure(key, () => {
-        const g = new THREE.Group();
-        if (n.kind === "pine") {
-          // Bright oak + log pile = wood. Scenery pines never look like this.
-          const canopy = cloneModel("kOak", 30) ?? cloneModel("oak", 30) ?? makeAoETree(1.2);
-          canopy.name = "canopy";
-          g.add(canopy);
-          const logs = cloneModel("kLogs", 7);
-          if (logs) {
-            logs.position.set(6, 0, 4);
-            logs.name = "logs";
-            g.add(logs);
-          }
-          g.add(
-            this.resourceBeacon(
-              n.team === "you" ? "WOOD" : "RAID WOOD",
-              n.team === "you" ? 0xf0c040 : 0xff704f,
-            ),
-          );
-        } else {
-          const rocks = new THREE.Group();
-          rocks.name = "canopy";
-          const a = cloneModel("kRock", 10);
-          const b = cloneModel("kRock2", 8);
-          const c = cloneModel("kStone", 7);
-          if (a) rocks.add(a);
-          if (b) {
-            b.position.set(6, 0, 2);
-            rocks.add(b);
-          }
-          if (c) {
-            c.position.set(-5, 0, 3);
-            rocks.add(c);
-          }
-          if (rocks.children.length === 0) rocks.add(makeMine());
-          // Gold seam so mines read as ore, not random boulders
-          const nugget = new THREE.Mesh(
-            new THREE.OctahedronGeometry(2.2, 0),
-            new THREE.MeshStandardMaterial({ color: 0xffd24a, emissive: 0xaa7700, emissiveIntensity: 0.6, metalness: 0.8, roughness: 0.25 }),
-          );
-          nugget.position.set(0, 8, 0);
-          rocks.add(nugget);
-          g.add(rocks);
-          g.add(
-            this.resourceBeacon(
-              n.team === "you" ? "GOLD" : "RAID GOLD",
-              n.team === "you" ? 0x4aa0ff : 0xff704f,
-            ),
-          );
-        }
+        const g = this.makeNode(n);
+        g.userData.canopy = g.getObjectByName("canopy") ?? null;
+        g.userData.beam = g.getObjectByName("beam") ?? null;
+        g.userData.label = g.getObjectByName("label") ?? null;
+        g.userData.marker = g.getObjectByName("marker") ?? null;
         return g;
       });
-      obj.position.copy(to3(n.pos.x, n.pos.y, 0));
-      obj.scale.setScalar(1);
+      setPos3(obj, n.pos.x, n.pos.y, 0);
       const alive = n.loadsLeft > 0;
-      const canopy = obj.getObjectByName("canopy");
+      const canopy = obj.userData.canopy as THREE.Object3D | null;
       if (canopy) canopy.visible = alive;
-      const beam = obj.getObjectByName("beam");
+      const beam = obj.userData.beam as THREE.Object3D | null;
       if (beam) beam.visible = alive;
-      const label = obj.getObjectByName("label");
+      const label = obj.userData.label as THREE.Object3D | null;
       if (label) label.visible = alive;
-      const marker = obj.getObjectByName("marker") as THREE.Mesh | undefined;
+      const marker = obj.userData.marker as THREE.Mesh | null;
       if (marker?.material instanceof THREE.MeshBasicMaterial) {
         marker.material.opacity = alive ? 0.55 + Math.sin(state.time * 4 + n.pos.x) * 0.3 : 0.12;
       }
-      obj.visible = true;
     }
     this.prune("node-", live);
+  }
+
+  private makeNode(n: GameState["nodes"][number]) {
+    const g = new THREE.Group();
+    if (n.kind === "pine") {
+      // Bright oak + log pile = wood. Scenery pines never look like this.
+      const canopy = cloneModel("kOak", 30) ?? cloneModel("oak", 30) ?? makeAoETree(1.2);
+      canopy.name = "canopy";
+      g.add(canopy);
+      const logs = cloneModel("kLogs", 7);
+      if (logs) {
+        logs.position.set(6, 0, 4);
+        logs.name = "logs";
+        g.add(logs);
+      }
+      g.add(
+        this.resourceBeacon(
+          n.team === "you" ? "WOOD" : "RAID WOOD",
+          n.team === "you" ? 0xf0c040 : 0xff704f,
+        ),
+      );
+    } else {
+      const rocks = new THREE.Group();
+      rocks.name = "canopy";
+      const a = cloneModel("kRock", 10);
+      const b = cloneModel("kRock2", 8);
+      const c = cloneModel("kStone", 7);
+      if (a) rocks.add(a);
+      if (b) {
+        b.position.set(6, 0, 2);
+        rocks.add(b);
+      }
+      if (c) {
+        c.position.set(-5, 0, 3);
+        rocks.add(c);
+      }
+      if (rocks.children.length === 0) rocks.add(makeMine());
+      // Gold seam so mines read as ore, not random boulders
+      const nugget = new THREE.Mesh(
+        new THREE.OctahedronGeometry(2.2, 0),
+        new THREE.MeshStandardMaterial({ color: 0xffd24a, emissive: 0xaa7700, emissiveIntensity: 0.6, metalness: 0.8, roughness: 0.25 }),
+      );
+      nugget.position.set(0, 8, 0);
+      rocks.add(nugget);
+      g.add(rocks);
+      g.add(
+        this.resourceBeacon(
+          n.team === "you" ? "GOLD" : "RAID GOLD",
+          n.team === "you" ? 0x4aa0ff : 0xff704f,
+        ),
+      );
+    }
+    return g;
   }
 
   private makeBarricade(barricade: Barricade) {
@@ -909,12 +1262,12 @@ export class GameRenderer {
   }
 
   private syncBarricades(state: GameState) {
-    const live = new Set<string>();
+    const live = this.liveSet();
     for (const barricade of state.barricades) {
       const key = `bar-${barricade.id}`;
       live.add(key);
       const obj = this.ensure(key, () => this.makeBarricade(barricade));
-      obj.position.copy(to3(barricade.pos.x, barricade.pos.y, 0));
+      setPos3(obj, barricade.pos.x, barricade.pos.y, 0);
       const progress = barricade.built
         ? 1
         : Math.max(0.12, barricade.buildProgress / Math.max(0.01, barricade.buildTime));
@@ -1002,16 +1355,20 @@ export class GameRenderer {
   }
 
   private syncUnits(state: GameState) {
-    const live = new Set<string>();
+    const live = this.liveSet();
     for (const u of state.units) {
       const key = `unit-${u.id}`;
       live.add(key);
-      const obj = this.ensure(key, () => this.makeUnit(u, key));
-      obj.position.copy(to3(u.pos.x, u.pos.y, 0));
+      const obj = this.ensure(key, () => {
+        const made = this.makeUnit(u, key);
+        made.userData.ramBody = made.children.find((child) => child.userData.movingRamBody) ?? null;
+        return made;
+      });
+      setPos3(obj, u.pos.x, u.pos.y, 0);
       // Face march direction
       obj.rotation.y = u.team === "you" ? Math.PI : 0;
       if (u.kind === "rammer") {
-        const body = obj.children.find((child) => child.userData.movingRamBody);
+        const body = obj.userData.ramBody as THREE.Object3D | null;
         if (body) {
           body.position.y = Math.abs(Math.sin(state.time * 5.5 + u.id)) * 0.35;
           body.rotation.z = Math.sin(state.time * 5.5 + u.id) * 0.012;
@@ -1030,13 +1387,14 @@ export class GameRenderer {
   }
 
   private syncVillagers(state: GameState) {
-    const live = new Set<string>();
+    const live = this.liveSet();
     for (const v of state.villagers) {
       if (v.state === "garrisoned") continue;
       const key = `vil-${v.id}`;
       live.add(key);
       const obj = this.ensure(key, () => {
         const g = new THREE.Group();
+        g.userData.selection = null;
         const animated =
           cloneAnimatedModel("kCharC", 14) ??
           cloneAnimatedModel(v.team === "you" ? "blue" : "red", 14);
@@ -1063,10 +1421,10 @@ export class GameRenderer {
         g.add(head);
         return g;
       });
-      obj.position.copy(to3(v.pos.x, v.pos.y, 0));
+      setPos3(obj, v.pos.x, v.pos.y, 0);
       obj.rotation.y = v.team === "you" ? Math.PI : 0;
       obj.scale.setScalar(v.state === "defend" ? 1.08 : 1);
-      let selection = obj.getObjectByName("peon-selection") as THREE.Mesh | undefined;
+      let selection = obj.userData.selection as THREE.Mesh | null;
       if (!selection) {
         selection = new THREE.Mesh(
           new THREE.RingGeometry(5.8, 7.1, 28),
@@ -1082,6 +1440,7 @@ export class GameRenderer {
         selection.rotation.x = -Math.PI / 2;
         selection.position.y = 0.25;
         obj.add(selection);
+        obj.userData.selection = selection;
       }
       selection.visible = state.selectedVillagerIds.includes(v.id);
       if (v.state === "defend" && v.attackTimer > 0) {
@@ -1098,55 +1457,68 @@ export class GameRenderer {
   }
 
   private syncCommandViz(state: GameState) {
-    while (this.commandLineRoot.children.length) {
-      const child = this.commandLineRoot.children[0];
-      this.commandLineRoot.remove(child);
-      if (child instanceof THREE.Line) {
-        child.geometry.dispose();
-        (child.material as THREE.Material).dispose();
+    // Peon order lines → pooled LineSegments, written in place.
+    const pos = this.commandLinePos;
+    const col = this.commandLineCol;
+    let seg = 0;
+    const hw = WORLD_W / 2;
+    const hh = WORLD_H / 2;
+    if (state.selectedVillagerIds.length > 0) {
+      for (const v of state.villagers) {
+        if (seg >= MAX_COMMAND_LINES) break;
+        if (v.team !== "you" || !state.selectedVillagerIds.includes(v.id)) continue;
+        let target = v.moveTarget;
+        if (v.state === "patrolling") target = v.patrolToB ? v.patrolB : v.patrolA;
+        if (v.targetNodeId) target = state.nodes.find((n) => n.id === v.targetNodeId)?.pos;
+        if (v.targetEnemyId) target = state.units.find((u) => u.id === v.targetEnemyId)?.pos;
+        if (v.targetBarricadeId) target = state.barricades.find((b) => b.id === v.targetBarricadeId)?.pos;
+        if (!target) continue;
+        const o = seg * 6;
+        pos[o] = v.pos.x - hw;
+        pos[o + 1] = 0.5;
+        pos[o + 2] = v.pos.y - hh;
+        pos[o + 3] = target.x - hw;
+        pos[o + 4] = 0.5;
+        pos[o + 5] = target.y - hh;
+        const patrol = v.state === "patrolling";
+        const r = patrol ? 0.902 : 0.494;
+        const g = patrol ? 0.749 : 0.824;
+        const b = patrol ? 0.412 : 1.0;
+        col[o] = r;
+        col[o + 1] = g;
+        col[o + 2] = b;
+        col[o + 3] = r;
+        col[o + 4] = g;
+        col[o + 5] = b;
+        seg++;
       }
     }
-
-    const selected = state.villagers.filter(
-      (v) => v.team === "you" && state.selectedVillagerIds.includes(v.id),
-    );
-    for (const v of selected) {
-      let target = v.moveTarget;
-      if (v.state === "patrolling") target = v.patrolToB ? v.patrolB : v.patrolA;
-      if (v.targetNodeId) target = state.nodes.find((n) => n.id === v.targetNodeId)?.pos;
-      if (v.targetEnemyId) target = state.units.find((u) => u.id === v.targetEnemyId)?.pos;
-      if (v.targetBarricadeId) target = state.barricades.find((b) => b.id === v.targetBarricadeId)?.pos;
-      if (!target) continue;
-      const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([
-          to3(v.pos.x, v.pos.y, 0.5),
-          to3(target.x, target.y, 0.5),
-        ]),
-        new THREE.LineBasicMaterial({
-          color: v.state === "patrolling" ? 0xe6bf69 : 0x7ed2ff,
-          transparent: true,
-          opacity: 0.58,
-        }),
-      );
-      this.commandLineRoot.add(line);
+    this.commandLines.geometry.setDrawRange(0, seg * 2);
+    this.commandLines.visible = seg > 0;
+    if (seg > 0) {
+      (this.commandLines.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+      (this.commandLines.geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
     }
 
-    const selectedBarracks = state.buildings.find(
-      (b) => b.id === state.selectedBuildingId && b.kind === "barracks" && b.rallyPoint,
-    );
+    const selectedBarracks = state.selectedBuildingId
+      ? state.buildings.find((b) => b.id === state.selectedBuildingId && b.kind === "barracks" && b.rallyPoint)
+      : undefined;
     if (selectedBarracks?.rallyPoint) {
-      const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([
-          to3(selectedBarracks.pos.x, selectedBarracks.pos.y, 1),
-          to3(selectedBarracks.rallyPoint.x, selectedBarracks.rallyPoint.y, 1),
-        ]),
-        new THREE.LineDashedMaterial({ color: 0xffd475, dashSize: 5, gapSize: 3 }),
-      );
-      line.computeLineDistances();
-      this.commandLineRoot.add(line);
+      const rp = this.rallyLinePos;
+      rp[0] = selectedBarracks.pos.x - hw;
+      rp[1] = 1;
+      rp[2] = selectedBarracks.pos.y - hh;
+      rp[3] = selectedBarracks.rallyPoint.x - hw;
+      rp[4] = 1;
+      rp[5] = selectedBarracks.rallyPoint.y - hh;
+      (this.rallyLine.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+      this.rallyLine.computeLineDistances();
+      this.rallyLine.visible = true;
+    } else {
+      this.rallyLine.visible = false;
     }
 
-    const live = new Set<string>();
+    const live = this.liveSet();
     for (const marker of state.commandMarkers) {
       const key = `cmd-${marker.id}`;
       live.add(key);
@@ -1171,7 +1543,7 @@ export class GameRenderer {
         ring.rotation.x = -Math.PI / 2;
         return ring;
       });
-      obj.position.copy(to3(marker.pos.x, marker.pos.y, 0.35));
+      setPos3(obj, marker.pos.x, marker.pos.y, 0.35);
       const pulse = 1 + (1.4 - marker.life) * 1.8;
       obj.scale.setScalar(Math.max(0.5, pulse));
       const mesh = obj as THREE.Mesh;
@@ -1183,12 +1555,16 @@ export class GameRenderer {
   }
 
   private syncSelectionRing(state: GameState) {
+    const b = state.selectedBuildingId ? state.buildings.find((x) => x.id === state.selectedBuildingId) : undefined;
+    const wanted = b && b.kind !== "barracks" ? `${b.id}:${b.canRefund ? 1 : 0}` : "";
+    if (wanted === this.rangeRingFor) return; // unchanged — ring is already correct
+    this.rangeRingFor = wanted;
     if (this.rangeRing) {
       this.dynamicRoot.remove(this.rangeRing);
       this.rangeRing.geometry.dispose();
+      (this.rangeRing.material as THREE.Material).dispose();
       this.rangeRing = null;
     }
-    const b = state.buildings.find((x) => x.id === state.selectedBuildingId);
     if (!b || b.kind === "barracks") return;
     const range = !b.canRefund && b.kind === "watchtower" ? STARTER_GUARD_RANGE : BUILD_RANGE[b.kind];
     const ring = new THREE.Mesh(
@@ -1233,7 +1609,7 @@ export class GameRenderer {
         return false;
       }
       const ft = state.floatingTexts.find((f) => f.id === s.id)!;
-      s.mesh.position.copy(to3(ft.pos.x, ft.pos.y, 24 + ft.rise));
+      setPos3(s.mesh, ft.pos.x, ft.pos.y, 24 + ft.rise);
       (s.mesh.material as THREE.SpriteMaterial).opacity = Math.min(1, ft.life);
       return true;
     });

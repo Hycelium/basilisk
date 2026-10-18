@@ -494,6 +494,12 @@ export class GameSim {
     this.addToast("Selected peons stopped.");
   }
 
+  /** Direct barricade placement (touch radial menu) — no build-mode round trip. */
+  placeBarricadeAt(world: { x: number; y: number }) {
+    if (this.state.phase !== "running") return;
+    this.tryPlaceBarricade(world);
+  }
+
   private tryPlaceBarricade(world: { x: number; y: number }) {
     if (world.y < FOE_SIEGE_Y || world.y > YOU_SIEGE_Y) {
       this.addToast("Barricades must be placed on the road between the keeps.");

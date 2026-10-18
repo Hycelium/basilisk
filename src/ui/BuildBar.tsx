@@ -3,6 +3,8 @@ import type { BuildingKind, UiSnapshot } from "../game/types";
 
 interface BuildBarProps {
   ui: UiSnapshot;
+  /** Horizontal icon strip with cost badges (phones). */
+  compact?: boolean;
   getCost: (kind: BuildingKind) => ResCost;
   onSelect: (kind: BuildingKind) => void;
   onCancel: () => void;
@@ -17,11 +19,11 @@ const builds: { kind: BuildingKind; label: string; blurb: string }[] = [
   { kind: "barricade", label: "Barricade", blurb: "Peon-built road block" },
 ];
 
-export function BuildBar({ ui, getCost, onSelect, onCancel }: BuildBarProps) {
+export function BuildBar({ ui, compact = false, getCost, onSelect, onCancel }: BuildBarProps) {
   return (
-    <div className="build-wrap">
+    <div className={compact ? "build-wrap compact" : "build-wrap"}>
       {ui.buildSelection && (
-        <div className="build-hint">
+        <div className="build-hint" role="status">
           <span>
             Place <strong>{ui.buildSelection}</strong>
             {ui.buildSelection === "house"
@@ -37,8 +39,8 @@ export function BuildBar({ ui, getCost, onSelect, onCancel }: BuildBarProps) {
           </button>
         </div>
       )}
-      <div className="buildbar">
-        {builds.map(({ kind, label, blurb }) => {
+      <div className="buildbar" role="toolbar" aria-label="Build">
+        {builds.map(({ kind, label, blurb }, i) => {
           const selected = ui.buildSelection === kind;
           const cost = getCost(kind);
           const afford = ui.yourGold >= cost.gold && ui.yourWood >= cost.wood;
@@ -47,7 +49,10 @@ export function BuildBar({ ui, getCost, onSelect, onCancel }: BuildBarProps) {
               key={kind}
               type="button"
               className={selected ? "build-btn selected" : "build-btn"}
-              onClick={() => onSelect(kind)}
+              onClick={() => (selected ? onCancel() : onSelect(kind))}
+              aria-pressed={selected}
+              aria-label={`${label} — ${blurb} — ${formatCost(cost)}`}
+              title={`${label} (${i + 1}) · ${blurb}`}
             >
               <span className="build-icon" data-kind={kind} aria-hidden />
               <span className="build-copy">

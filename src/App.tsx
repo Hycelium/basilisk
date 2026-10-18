@@ -1,13 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
-import { GameRenderer } from "./game/render3d";
+import { GameRenderer, type QualityInfo, type QualitySetting, type TouchDragMode } from "./game/render3d";
 import { GameSim, hitTest } from "./game/sim";
-import type { BuildingKind, CombatEventKind, TrainKind, UiSnapshot } from "./game/types";
+import type { BuildingKind, CombatEventKind, RectHit, TrainKind, UiSnapshot } from "./game/types";
 import { BUILD_COST } from "./game/balance";
 import { Hud } from "./ui/Hud";
 import { BuildBar } from "./ui/BuildBar";
 import { DetailSheet } from "./ui/DetailSheet";
 import { Overlays } from "./ui/Overlays";
+import { ControlCluster, type ClusterAction } from "./ui/ControlCluster";
+import { RadialMenu, type RadialItem } from "./ui/RadialMenu";
+import { useHints } from "./ui/hints";
+import { useLayout } from "./ui/useLayout";
 
 const defaultUi: UiSnapshot = {
   phase: "title",
@@ -71,8 +75,47 @@ const defaultUi: UiSnapshot = {
   foeLastAction: "wait",
 };
 
+const LONG_PRESS_MS = 350;
+const LONG_PRESS_SLOP = 10;
+const TAP_SLOP_MOUSE = 6;
+const TAP_SLOP_TOUCH = 10;
+const DRAG_MODE_KEY = "roadkeep.touchDrag";
+
+type FsDocument = Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => Promise<void> | void;
+};
+type FsElement = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void };
+
+function fullscreenElement() {
+  const d = document as FsDocument;
+  return d.fullscreenElement ?? d.webkitFullscreenElement ?? null;
+}
+
+function fullscreenSupported() {
+  if (typeof document === "undefined") return false;
+  const el = document.documentElement as FsElement;
+  return Boolean(document.fullscreenEnabled || el.requestFullscreen || el.webkitRequestFullscreen);
+}
+
+interface TapMarker {
+  id: number;
+  x: number;
+  y: number;
+  kind: "move" | "gather" | "attack" | "patrol" | "select" | "build";
+  label: string;
+}
+
+interface RadialState {
+  x: number;
+  y: number;
+  world: { x: number; y: number };
+  hit: RectHit | null;
+}
+
 export default function App() {
   const pageRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sim = useMemo(() => new GameSim(), []);
   const rendererRef = useRef<GameRenderer | null>(null);
@@ -82,29 +125,53 @@ export default function App() {
   const heardMapRef = useRef("");
   const hpRef = useRef(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fsSupported] = useState(fullscreenSupported);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const patrolModeRef = useRef(false);
-  const selectionBoxRef = useRef<{
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
+  const selectionBoxRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
   const [patrolMode, setPatrolMode] = useState(false);
-  const [selectionBox, setSelectionBox] = useState<{
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  } | null>(null);
-
-  const toggleFullscreen = async () => {
-    if (document.fullscreenElement) {
-      await document.exitFullscreen();
-    } else {
-      await pageRef.current?.requestFullscreen();
+  const [selectionBox, setSelectionBox] = useState<{ left: number; top: number; width: number; height: number } | null>(
+    null,
+  );
+  const layout = useLayout();
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const [clusterOpen, setClusterOpen] = useState(false);
+  const [touchDrag, setTouchDrag] = useState<TouchDragMode>(() => {
+    try {
+      return localStorage.getItem(DRAG_MODE_KEY) === "camera" ? "camera" : "select";
+    } catch {
+      return "select";
     }
-  };
+  });
+  const [quality, setQuality] = useState<QualityInfo>({ setting: "auto", tier: "high", fps: 60 });
+  const [zoomT, setZoomT] = useState(0.39);
+  const [tapMarkers, setTapMarkers] = useState<TapMarker[]>([]);
+  const tapIdRef = useRef(0);
+  const [radial, setRadial] = useState<RadialState | null>(null);
+  const radialRef = useRef<RadialState | null>(null);
+  radialRef.current = radial;
+  const longPressRef = useRef<{ timer: number; x: number; y: number; pointerId: number } | null>(null);
+  const { hint, show: showHint, dismiss: dismissHint } = useHints();
+  const prevUiRef = useRef(ui);
+
+  const refreshUi = useCallback(() => setUi(sim.getUiSnapshot()), [sim]);
+
+  const toggleFullscreen = useCallback(async () => {
+    const d = document as FsDocument;
+    const el = pageRef.current as FsElement | null;
+    try {
+      if (fullscreenElement()) {
+        if (d.exitFullscreen) await d.exitFullscreen();
+        else await d.webkitExitFullscreen?.();
+      } else if (el) {
+        if (el.requestFullscreen) await el.requestFullscreen();
+        else await el.webkitRequestFullscreen?.();
+      }
+    } catch {
+      /* iOS Safari and some embedded browsers reject — the dvh layout already fills the screen */
+    }
+  }, []);
 
   function beep(freq: number, dur = 0.06) {
     if (!sim.getState().soundOn || !sim.getState().audioUnlocked) return;
@@ -180,14 +247,72 @@ export default function App() {
     }
   }
 
+  const pushTapMarker = useCallback((x: number, y: number, kind: TapMarker["kind"], label: string) => {
+    const id = ++tapIdRef.current;
+    setTapMarkers((list) => [...list.slice(-3), { id, x, y, kind, label }]);
+    window.setTimeout(() => setTapMarkers((list) => list.filter((m) => m.id !== id)), 760);
+  }, []);
+
+  const setPatrol = useCallback((on: boolean) => {
+    patrolModeRef.current = on;
+    setPatrolMode(on);
+  }, []);
+
+  const clearLongPress = useCallback(() => {
+    if (longPressRef.current) {
+      window.clearTimeout(longPressRef.current.timer);
+      longPressRef.current = null;
+    }
+  }, []);
+
+  /** Shared contextual order used by right-click (mouse) and tap-with-selection (touch). */
+  const issueOrder = useCallback(
+    (world: { x: number; y: number }, hit: RectHit | null, localX: number, localY: number) => {
+      const state = sim.getState();
+      if (state.buildSelection) {
+        sim.click(hit, world);
+        pushTapMarker(localX, localY, "build", "Place");
+      } else {
+        const patrol = patrolModeRef.current;
+        const hadPeons = state.selectedVillagerIds.length > 0;
+        sim.commandSelected(world, hit, patrol);
+        if (hadPeons) {
+          const kind: TapMarker["kind"] =
+            hit?.kind === "node" ? "gather" : hit?.kind === "unit" ? "attack" : patrol ? "patrol" : "move";
+          const label = kind === "gather" ? "Gather" : kind === "attack" ? "Attack" : kind === "patrol" ? "Patrol" : "Move";
+          pushTapMarker(localX, localY, kind, label);
+        }
+      }
+      setPatrol(false);
+      beep(hit?.kind === "node" ? 520 : 370, 0.045);
+      refreshUi();
+    },
+    // beep is stable enough for this purpose; it only reads refs/sim.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sim, pushTapMarker, refreshUi, setPatrol],
+  );
+
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const stage = stageRef.current;
+    if (!canvas || !stage) return;
     const renderer = new GameRenderer(canvas);
     rendererRef.current = renderer;
+    renderer.setTouchDragMode(touchDrag);
+    renderer.onQuality((info) => setQuality(info));
     renderer.resize();
-    const onResize = () => renderer.resize();
-    window.addEventListener("resize", onResize);
+
+    // Debounced resize via ResizeObserver on the stage (handles orientation, URL-bar collapse, fullscreen).
+    let resizeTimer = 0;
+    const scheduleResize = () => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => renderer.resize(), 80);
+    };
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleResize) : null;
+    ro?.observe(stage);
+    window.addEventListener("resize", scheduleResize);
+    window.addEventListener("orientationchange", scheduleResize);
+    window.visualViewport?.addEventListener("resize", scheduleResize);
 
     let raf = 0;
     let prev = performance.now();
@@ -222,54 +347,104 @@ export default function App() {
     };
     raf = requestAnimationFrame(frame);
 
-    const onDown = (ev: PointerEvent) => {
-      if (!rendererRef.current) return;
-      if (ev.button === 2) ev.preventDefault();
+    const local = (ev: PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
-      if (ev.pointerType === "mouse" && ev.button === 0 && !ev.shiftKey && !ev.altKey) {
-        dragStartRef.current = { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+      return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+    };
+    const isTouchLike = (ev: PointerEvent) => ev.pointerType !== "mouse";
+
+    const onDown = (ev: PointerEvent) => {
+      const r = rendererRef.current;
+      if (!r) return;
+      if (ev.button === 2) ev.preventDefault();
+      const touch = isTouchLike(ev);
+      // Any new finger cancels a pending long-press and the marquee.
+      clearLongPress();
+      if (radialRef.current) setRadial(null);
+      const p = local(ev);
+      const wasMultitouch = r.getDragMode() === "pinch";
+      r.onPointerDown(ev);
+      const nowPinch = r.getDragMode() === "pinch";
+      if (nowPinch || wasMultitouch) {
+        dragStartRef.current = null;
+        selectionBoxRef.current = null;
+        setSelectionBox(null);
+      } else if (!touch && ev.button === 0 && !ev.shiftKey && !ev.altKey) {
+        dragStartRef.current = p;
+      } else if (touch && r.getTouchDragMode() === "select") {
+        dragStartRef.current = p;
       } else {
         dragStartRef.current = null;
       }
-      rendererRef.current.onPointerDown(ev);
+      if (touch && !nowPinch && sim.getState().phase === "running") {
+        const timer = window.setTimeout(() => {
+          longPressRef.current = null;
+          r.cancelTap();
+          dragStartRef.current = null;
+          selectionBoxRef.current = null;
+          setSelectionBox(null);
+          const world = r.screenToWorld(p.x, p.y);
+          const hit = hitTest(sim.getState(), world.x, world.y);
+          if (hit?.kind === "villager") {
+            // Long-press on a peon: select it and open orders for it.
+            sim.click(hit, world);
+            refreshUi();
+          }
+          navigator.vibrate?.(12);
+          setRadial({ x: p.x, y: p.y, world, hit });
+        }, LONG_PRESS_MS);
+        longPressRef.current = { timer, x: ev.clientX, y: ev.clientY, pointerId: ev.pointerId };
+      }
       if (!sim.getState().audioUnlocked) sim.unlockAudio();
     };
+
     const onMove = (ev: PointerEvent) => {
-      rendererRef.current?.onPointerMove(ev);
+      const r = rendererRef.current;
+      if (!r) return;
+      const lp = longPressRef.current;
+      if (lp && lp.pointerId === ev.pointerId && Math.hypot(ev.clientX - lp.x, ev.clientY - lp.y) > LONG_PRESS_SLOP) {
+        clearLongPress();
+      }
+      r.onPointerMove(ev);
       const start = dragStartRef.current;
-      if (start && (ev.buttons & 1) !== 0) {
-        const rect = canvas.getBoundingClientRect();
-        const x = ev.clientX - rect.left;
-        const y = ev.clientY - rect.top;
-        if (Math.hypot(x - start.x, y - start.y) > 6) {
-          const box = {
-            left: Math.min(start.x, x),
-            top: Math.min(start.y, y),
-            width: Math.abs(x - start.x),
-            height: Math.abs(y - start.y),
-          };
-          selectionBoxRef.current = box;
-          setSelectionBox(box);
-        }
+      if (!start) return;
+      const mode = r.getDragMode();
+      if (mode === "pinch" || mode === "orbit" || mode === "pan") {
+        dragStartRef.current = null;
+        selectionBoxRef.current = null;
+        setSelectionBox(null);
+        return;
+      }
+      const pressed = isTouchLike(ev) || (ev.buttons & 1) !== 0;
+      if (!pressed) return;
+      const p = local(ev);
+      const slop = isTouchLike(ev) ? TAP_SLOP_TOUCH : TAP_SLOP_MOUSE;
+      if (Math.hypot(p.x - start.x, p.y - start.y) > slop && mode === "select") {
+        const box = {
+          left: Math.min(start.x, p.x),
+          top: Math.min(start.y, p.y),
+          width: Math.abs(p.x - start.x),
+          height: Math.abs(p.y - start.y),
+        };
+        selectionBoxRef.current = box;
+        setSelectionBox(box);
       }
     };
+
     const onUp = (ev: PointerEvent) => {
       const r = rendererRef.current;
       if (!r) return;
+      clearLongPress();
       const tap = r.onPointerUp(ev);
-      const rect = canvas.getBoundingClientRect();
-      const localX = ev.clientX - rect.left;
-      const localY = ev.clientY - rect.top;
+      const p = local(ev);
+      const touch = isTouchLike(ev);
       const start = dragStartRef.current;
       const box = selectionBoxRef.current;
-      if (box && start && ev.button === 0) {
+      if (box && start && (touch || ev.button === 0)) {
         const a = r.screenToWorld(box.left, box.top);
-        const b = r.screenToWorld(
-          box.left + box.width,
-          box.top + box.height,
-        );
+        const b = r.screenToWorld(box.left + box.width, box.top + box.height);
         sim.selectVillagersInRect(a, b, ev.ctrlKey || ev.metaKey);
-        setUi(sim.getUiSnapshot());
+        refreshUi();
         setSelectionBox(null);
         selectionBoxRef.current = null;
         dragStartRef.current = null;
@@ -279,23 +454,44 @@ export default function App() {
       setSelectionBox(null);
       selectionBoxRef.current = null;
       dragStartRef.current = null;
-      if (!tap) return;
-      const world = r.screenToWorld(localX, localY);
-      const hit = hitTest(sim.getState(), world.x, world.y);
+      if (!tap || ev.type === "pointercancel") return;
+      const world = r.screenToWorld(p.x, p.y);
+      const state = sim.getState();
+      const hit = hitTest(state, world.x, world.y);
+
       if (ev.button === 2) {
-        if (sim.getState().buildSelection) sim.click(hit, world);
-        else sim.commandSelected(world, hit, patrolModeRef.current);
-        patrolModeRef.current = false;
-        setPatrolMode(false);
-        beep(hit?.kind === "node" ? 520 : 370, 0.045);
-      } else {
-        sim.click(hit, world);
+        issueOrder(world, hit, p.x, p.y);
+        return;
       }
-      setUi(sim.getUiSnapshot());
-      if (ev.button !== 2) beep(320);
+
+      if (touch && state.phase === "running") {
+        const peonsSelected = state.selectedVillagerIds.length > 0;
+        const ownPeon = hit?.kind === "villager" && state.villagers.some((v) => v.id === Number(hit.id) && v.team === "you");
+        const ownStructure =
+          (hit?.kind === "building" && state.buildings.some((b) => b.id === Number(hit.id) && b.team === "you")) ||
+          (hit?.kind === "keep" && hit.id === "you");
+        if (!state.buildSelection && peonsSelected && !ownPeon && !ownStructure) {
+          // Tap-to-order: ground → move, tree/mine → gather, enemy → attack.
+          issueOrder(world, hit, p.x, p.y);
+          return;
+        }
+      }
+
+      sim.click(hit, world);
+      if (hit?.kind === "villager") pushTapMarker(p.x, p.y, "select", "");
+      refreshUi();
+      beep(320);
     };
-    const onWheel = (ev: WheelEvent) => rendererRef.current?.onWheel(ev);
+
+    const onWheel = (ev: WheelEvent) => {
+      rendererRef.current?.onWheel(ev);
+      setZoomT(rendererRef.current?.getZoomT() ?? 0.4);
+    };
     const onContext = (ev: Event) => ev.preventDefault();
+    const stopGesture = (ev: Event) => {
+      // Only the canvas itself; sheets/overlays inside the stage must keep scrolling.
+      if (ev.type.startsWith("gesture") || ev.target === canvas) ev.preventDefault();
+    };
 
     canvas.addEventListener("pointerdown", onDown);
     canvas.addEventListener("pointermove", onMove);
@@ -303,30 +499,66 @@ export default function App() {
     canvas.addEventListener("pointercancel", onUp);
     canvas.addEventListener("wheel", onWheel, { passive: false });
     canvas.addEventListener("contextmenu", onContext);
+    // iOS Safari pinch/double-tap page zoom over the stage.
+    stage.addEventListener("gesturestart", stopGesture);
+    stage.addEventListener("gesturechange", stopGesture);
+    stage.addEventListener("touchmove", stopGesture, { passive: false });
+    const onVisibility = () => {
+      if (document.hidden) {
+        clearLongPress();
+        prev = performance.now();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
-      window.removeEventListener("resize", onResize);
+      ro?.disconnect();
+      window.clearTimeout(resizeTimer);
+      window.removeEventListener("resize", scheduleResize);
+      window.removeEventListener("orientationchange", scheduleResize);
+      window.visualViewport?.removeEventListener("resize", scheduleResize);
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onUp);
       canvas.removeEventListener("wheel", onWheel);
       canvas.removeEventListener("contextmenu", onContext);
+      stage.removeEventListener("gesturestart", stopGesture);
+      stage.removeEventListener("gesturechange", stopGesture);
+      stage.removeEventListener("touchmove", stopGesture);
+      document.removeEventListener("visibilitychange", onVisibility);
       cancelAnimationFrame(raf);
+      renderer.onQuality(null);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sim]);
 
   useEffect(() => {
+    rendererRef.current?.setTouchDragMode(touchDrag);
+    try {
+      localStorage.setItem(DRAG_MODE_KEY, touchDrag);
+    } catch {
+      /* ignore */
+    }
+  }, [touchDrag]);
+
+  useEffect(() => {
     const onFullscreenChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement));
+      setIsFullscreen(Boolean(fullscreenElement()));
       requestAnimationFrame(() => rendererRef.current?.resize());
     };
     document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", onFullscreenChange);
+    };
   }, []);
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
+      const target = ev.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "SELECT" || target.tagName === "TEXTAREA")) return;
       const r = rendererRef.current;
       const slot = /^[1-9]$/.test(ev.key) ? Number(ev.key) : 0;
       let groupHandled = false;
@@ -351,12 +583,12 @@ export default function App() {
       }
       if (ev.key === "Escape") {
         sim.cancelSelection();
-        patrolModeRef.current = false;
-        setPatrolMode(false);
+        setPatrol(false);
+        setRadial(null);
+        setClusterOpen(false);
       }
       if ((ev.key === "p" || ev.key === "P") && sim.getState().selectedVillagerIds.length > 0) {
-        patrolModeRef.current = !patrolModeRef.current;
-        setPatrolMode(patrolModeRef.current);
+        setPatrol(!patrolModeRef.current);
       }
       if (ev.key === "f" || ev.key === "F") void toggleFullscreen();
       if (r) {
@@ -369,34 +601,274 @@ export default function App() {
         if (ev.key === "ArrowRight") r.panBy(-40, 0);
         if (ev.key === "ArrowUp") r.panBy(0, 40);
         if (ev.key === "ArrowDown") r.panBy(0, -40);
+        setZoomT(r.getZoomT());
       }
-      setUi(sim.getUiSnapshot());
+      refreshUi();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [sim]);
+  }, [sim, refreshUi, setPatrol, toggleFullscreen]);
+
+  // Contextual one-shot hints.
+  useEffect(() => {
+    const prev = prevUiRef.current;
+    prevUiRef.current = ui;
+    const touch = layoutRef.current.touch;
+    if (ui.phase !== "running") return;
+    if (prev.phase !== "running") {
+      showHint(
+        touch ? "touch-start" : "mouse-start",
+        touch
+          ? "Tap your keep to train peons. Two fingers: drag to pan, pinch to zoom, twist to rotate."
+          : "Click your keep to train peons. Right-drag orbits, Shift-drag pans, wheel zooms.",
+      );
+    }
+    if (ui.selectedPeonCount > 0 && prev.selectedPeonCount === 0) {
+      showHint(
+        touch ? "touch-order" : "mouse-order",
+        touch
+          ? "Tap the ground to move, tap a tree or mine to gather, tap a foe to attack. Hold for more orders."
+          : "Right-click the ground to move, a tree or mine to gather, a foe to attack. P then right-click patrols.",
+      );
+    }
+    if (ui.buildSelection && !prev.buildSelection) {
+      showHint(
+        "place-build",
+        ui.buildSelection === "barricade"
+          ? "Tap the road between the keeps; the nearest peon will build it."
+          : "Tap a glowing pad to place it. Houses go on green pads behind your keep.",
+      );
+    }
+    if (ui.selectedKeepTeam === "you" && prev.selectedKeepTeam !== "you") {
+      showHint("keep-panel", "Queue peons here. Build Houses on eco pads to raise the cap.");
+    }
+  }, [ui, showHint]);
 
   const onSelectBuild = (kind: BuildingKind) => {
     sim.selectBuild(kind);
-    setUi(sim.getUiSnapshot());
+    refreshUi();
     beep(280);
   };
 
   const onEnqueue = (kind: TrainKind) => {
     sim.enqueueTrain(kind, "you");
-    setUi(sim.getUiSnapshot());
+    refreshUi();
     beep(360);
   };
 
+  const onQuality = (setting: QualitySetting) => {
+    rendererRef.current?.setQuality(setting);
+  };
+
+  const sheetOpen = ui.selectedKeepTeam === "you" || Boolean(ui.selectedBuildingId && ui.selectedBuildingKind);
+  const compactHud = layout.layout === "column" || layout.phone;
+  const compactBuild = layout.layout === "column" && layout.phone;
+
+  const clusterActions: ClusterAction[] = [
+    {
+      id: "recall",
+      icon: "🔔",
+      label: "Recall",
+      hint: "Recall all peons to your keep",
+      onPress: () => {
+        sim.callVillagersHome("you");
+        refreshUi();
+        beep(620, 0.12);
+      },
+    },
+    {
+      id: "garrison",
+      icon: "🏰",
+      label: "Garrison",
+      hint: "Garrison peons in the keep (they fire arrows)",
+      disabled: ui.keepGarrisoned >= ui.keepGarrisonMax || ui.phase !== "running",
+      onPress: () => {
+        sim.garrisonVillagers("you");
+        refreshUi();
+        beep(560);
+      },
+    },
+    {
+      id: "patrol",
+      icon: "⇄",
+      label: "Patrol",
+      hint: layout.touch ? "Then tap a patrol destination" : "Then right-click a patrol destination (P)",
+      disabled: ui.selectedPeonCount === 0,
+      active: patrolMode,
+      onPress: () => setPatrol(!patrolModeRef.current),
+    },
+    {
+      id: "barricade",
+      icon: "🪵",
+      label: "Barricade",
+      hint: "Build a barricade across a road",
+      active: ui.buildSelection === "barricade",
+      disabled: ui.phase !== "running",
+      onPress: () => {
+        if (sim.getState().buildSelection === "barricade") sim.cancelSelection();
+        else sim.selectBuild("barricade");
+        refreshUi();
+        beep(280);
+      },
+    },
+    {
+      id: "reset-cam",
+      icon: "⟲",
+      label: "Reset view",
+      hint: "Reset camera (R)",
+      onPress: () => {
+        rendererRef.current?.resetCamera();
+        setZoomT(rendererRef.current?.getZoomT() ?? 0.4);
+      },
+    },
+  ];
+  if (fsSupported) {
+    clusterActions.push({
+      id: "fullscreen",
+      icon: isFullscreen ? "↙" : "⛶",
+      label: isFullscreen ? "Exit full" : "Fullscreen",
+      hint: isFullscreen ? "Exit full screen (F)" : "Full screen (F)",
+      onPress: () => void toggleFullscreen(),
+    });
+  }
+
+  const radialItems: RadialItem[] = [];
+  if (radial) {
+    const state = sim.getState();
+    const peons = state.selectedVillagerIds.length > 0;
+    const { world, hit, x, y } = radial;
+    if (peons) {
+      radialItems.push({
+        id: "move",
+        icon: "➤",
+        label: "Move",
+        tone: "move",
+        onPress: () => {
+          setPatrol(false);
+          issueOrder(world, null, x, y);
+        },
+      });
+      radialItems.push({
+        id: "patrol",
+        icon: "⇄",
+        label: "Patrol",
+        tone: "patrol",
+        onPress: () => {
+          setPatrol(true);
+          issueOrder(world, null, x, y);
+        },
+      });
+      if (hit?.kind === "node") {
+        radialItems.push({
+          id: "gather",
+          icon: "⛏",
+          label: "Gather",
+          tone: "gather",
+          onPress: () => {
+            setPatrol(false);
+            issueOrder(world, hit, x, y);
+          },
+        });
+      }
+      if (hit?.kind === "unit" && state.units.some((u) => u.id === Number(hit.id) && u.team === "foe")) {
+        radialItems.push({
+          id: "attack",
+          icon: "⚔",
+          label: "Attack",
+          tone: "attack",
+          onPress: () => {
+            setPatrol(false);
+            issueOrder(world, hit, x, y);
+          },
+        });
+      }
+    } else if (hit?.kind === "node") {
+      radialItems.push({
+        id: "gather",
+        icon: "⛏",
+        label: "Gather",
+        tone: "gather",
+        onPress: () => {
+          sim.click(hit, world);
+          pushTapMarker(x, y, "gather", "Gather");
+          refreshUi();
+        },
+      });
+    }
+    radialItems.push({
+      id: "barricade",
+      icon: "🪵",
+      label: "Barricade",
+      tone: "build",
+      onPress: () => {
+        sim.placeBarricadeAt(world);
+        pushTapMarker(x, y, "build", "Build");
+        refreshUi();
+        beep(280);
+      },
+    });
+    radialItems.push({
+      id: "recall",
+      icon: "🔔",
+      label: "Recall",
+      tone: "recall",
+      onPress: () => {
+        sim.callVillagersHome("you");
+        refreshUi();
+        beep(620, 0.12);
+      },
+    });
+  }
+
+  const dismissRadial = useCallback(() => setRadial(null), []);
+  const stageRect = stageRef.current?.getBoundingClientRect();
+
+  const pageClass = [
+    "page",
+    `layout-${layout.layout}`,
+    layout.phone ? "is-phone" : "is-large",
+    layout.touch ? "is-touch" : "is-pointer",
+    isFullscreen ? "is-fullscreen" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className="page" ref={pageRef}>
-      <div className="phone">
+    <div className={pageClass} ref={pageRef}>
+      <div className="phone shell">
         <header className="brand">
           <span className="brand-mark">Roadkeep</span>
           <span className="brand-sub">three.js siege · dusk valley</span>
         </header>
 
-        <div className="stage">
+        <Hud
+          ui={ui}
+          compact={compactHud}
+          quality={quality}
+          onQuality={onQuality}
+          onPause={() => {
+            sim.togglePause();
+            refreshUi();
+          }}
+          onSpeed={() => {
+            sim.toggleSpeed();
+            refreshUi();
+          }}
+          onSound={() => {
+            sim.unlockAudio();
+            if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+            void audioCtxRef.current.resume();
+            sim.setSound(!sim.getState().soundOn);
+            refreshUi();
+          }}
+          onRush={() => {
+            sim.rushNextWave();
+            refreshUi();
+            beep(500);
+          }}
+        />
+
+        <div className={sheetOpen ? "stage sheet-open" : "stage"} ref={stageRef}>
           <canvas ref={canvasRef} className="battlefield" />
           {selectionBox && (
             <div
@@ -409,117 +881,142 @@ export default function App() {
               }}
             />
           )}
-          {ui.selectedPeonCount > 0 && (
-            <div className="unit-command-bar">
-              <strong>{ui.selectedPeonCount} peon{ui.selectedPeonCount === 1 ? "" : "s"}</strong>
+          {tapMarkers.map((m) => (
+            <span key={m.id} className={`tap-marker ${m.kind}`} style={{ left: m.x, top: m.y }} aria-hidden>
+              {m.label && <em>{m.label}</em>}
+            </span>
+          ))}
+          {ui.selectedPeonCount > 0 && ui.phase === "running" && !sheetOpen && (
+            <div className="unit-command-bar" role="toolbar" aria-label="Peon orders">
+              <strong>
+                {ui.selectedPeonCount} peon{ui.selectedPeonCount === 1 ? "" : "s"}
+              </strong>
               <button
                 type="button"
                 className={patrolMode ? "active" : ""}
-                onClick={() => {
-                  patrolModeRef.current = !patrolModeRef.current;
-                  setPatrolMode(patrolModeRef.current);
-                }}
-                title="Then right-click a patrol destination"
+                aria-pressed={patrolMode}
+                onClick={() => setPatrol(!patrolModeRef.current)}
+                title={layout.touch ? "Then tap a patrol destination" : "Then right-click a patrol destination (P)"}
               >
-                Patrol (P)
+                Patrol
               </button>
               <button
                 type="button"
                 onClick={() => {
                   sim.stopSelectedVillagers();
-                  setUi(sim.getUiSnapshot());
+                  refreshUi();
                 }}
               >
                 Stop
               </button>
-              <small>Right-click to move, gather, or attack · Ctrl+number saves group</small>
+              <button
+                type="button"
+                onClick={() => {
+                  sim.garrisonVillagers("you");
+                  refreshUi();
+                  beep(560);
+                }}
+                disabled={ui.keepGarrisoned >= ui.keepGarrisonMax}
+                title="Garrison peons in the keep"
+              >
+                Garrison
+              </button>
+              <button
+                type="button"
+                className="ghost dismiss"
+                aria-label="Deselect"
+                onClick={() => {
+                  sim.cancelSelection();
+                  setPatrol(false);
+                  refreshUi();
+                }}
+              >
+                ✕
+              </button>
             </div>
           )}
-          <div className="cam-pad" aria-label="Camera controls">
-            <button type="button" title="Zoom in" onClick={() => rendererRef.current?.zoomBy(0.88)}>
-              +
+          {patrolMode && ui.selectedPeonCount > 0 && (
+            <div className="mode-banner" role="status">
+              Patrol: {layout.touch ? "tap" : "right-click"} the destination
+            </div>
+          )}
+          {hint && (
+            <button type="button" className="hint-toast" onClick={dismissHint} aria-live="polite">
+              {hint.text}
             </button>
-            <button type="button" title="Zoom out" onClick={() => rendererRef.current?.zoomBy(1.14)}>
-              −
-            </button>
-            <button type="button" title="Tilt up" onClick={() => rendererRef.current?.orbitBy(0, -36)}>
-              ⌃
-            </button>
-            <button type="button" title="Tilt down" onClick={() => rendererRef.current?.orbitBy(0, 36)}>
-              ⌄
-            </button>
-            <button type="button" title="Reset view" className="cam-reset" onClick={() => rendererRef.current?.resetCamera()}>
-              ⟲
-            </button>
-            <button
-              type="button"
-              title={isFullscreen ? "Exit full screen (F)" : "Full screen (F)"}
-              aria-label={isFullscreen ? "Exit full screen" : "Enter full screen"}
-              className="fullscreen-toggle"
-              onClick={() => void toggleFullscreen()}
-            >
-              {isFullscreen ? "↙" : "⛶"}
-            </button>
-            <button
-              type="button"
-              title="Recall all peons"
-              aria-label="Recall all peons to your keep"
-              className="peon-recall"
-              onClick={() => {
-                sim.callVillagersHome("you");
-                setUi(sim.getUiSnapshot());
-                beep(620, 0.12);
-              }}
-            >
-              🔔
-            </button>
-          </div>
-          <p className="cam-hint">Drag-select · right-click orders · right-drag orbit · Shift-drag pan</p>
+          )}
+          {radial && radialItems.length > 0 && (
+            <RadialMenu
+              x={radial.x}
+              y={radial.y}
+              width={stageRect?.width ?? 400}
+              height={stageRect?.height ?? 600}
+              items={radialItems}
+              onDismiss={dismissRadial}
+            />
+          )}
+          <ControlCluster
+            expanded={clusterOpen}
+            onToggle={setClusterOpen}
+            actions={clusterActions}
+            touch={layout.touch}
+            flip={sheetOpen}
+            dragMode={touchDrag}
+            onDragMode={setTouchDrag}
+            zoom={zoomT}
+            onZoom={(t) => {
+              rendererRef.current?.setZoomT(t);
+              setZoomT(t);
+            }}
+          />
+          {!layout.touch && (
+            <p className="cam-hint">Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom</p>
+          )}
           <DetailSheet
             ui={ui}
             onClose={() => {
               sim.cancelSelection();
-              setUi(sim.getUiSnapshot());
+              refreshUi();
             }}
             onUpgradeDamage={() => {
               sim.buyUpgrade("damage");
-              setUi(sim.getUiSnapshot());
+              refreshUi();
               beep(400);
             }}
             onUpgradeRate={() => {
               sim.buyUpgrade("rate");
-              setUi(sim.getUiSnapshot());
+              refreshUi();
               beep(460);
             }}
             onRaze={() => {
               sim.razeSelected();
-              setUi(sim.getUiSnapshot());
+              refreshUi();
               beep(220);
             }}
             onEnqueue={onEnqueue}
             onCancelQueue={(i) => {
               sim.cancelQueueSlot(i);
-              setUi(sim.getUiSnapshot());
+              refreshUi();
               beep(200);
             }}
             onEnqueuePeon={() => {
               sim.enqueuePeon("you");
-              setUi(sim.getUiSnapshot());
+              refreshUi();
               beep(300);
             }}
             onCallHome={() => {
               sim.callVillagersHome("you");
-              setUi(sim.getUiSnapshot());
+              refreshUi();
               beep(240);
             }}
             onGarrison={() => {
               sim.garrisonVillagers("you");
-              setUi(sim.getUiSnapshot());
+              refreshUi();
               beep(560);
             }}
             onUngarrison={() => {
               sim.ungarrisonVillagers("you");
-              setUi(sim.getUiSnapshot());
+              refreshUi();
               beep(260);
             }}
           />
@@ -527,52 +1024,30 @@ export default function App() {
             ui={ui}
             onRerollMap={() => {
               sim.rerollMap();
-              setUi(sim.getUiSnapshot());
+              refreshUi();
               beep(440);
             }}
             onStart={() => {
               sim.startMatch();
-              setUi(sim.getUiSnapshot());
+              refreshUi();
               beep(520);
             }}
             onRestart={() => {
               sim.reset();
-              setUi(sim.getUiSnapshot());
+              refreshUi();
               hpRef.current = 100;
             }}
           />
         </div>
 
-        <Hud
-          ui={ui}
-          onPause={() => {
-            sim.togglePause();
-            setUi(sim.getUiSnapshot());
-          }}
-          onSpeed={() => {
-            sim.toggleSpeed();
-            setUi(sim.getUiSnapshot());
-          }}
-          onSound={() => {
-            sim.unlockAudio();
-            if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
-            void audioCtxRef.current.resume();
-            sim.setSound(!sim.getState().soundOn);
-            setUi(sim.getUiSnapshot());
-          }}
-          onRush={() => {
-            sim.rushNextWave();
-            setUi(sim.getUiSnapshot());
-            beep(500);
-          }}
-        />
         <BuildBar
           ui={ui}
+          compact={compactBuild}
           getCost={(k) => BUILD_COST[k]!}
           onSelect={onSelectBuild}
           onCancel={() => {
             sim.cancelSelection();
-            setUi(sim.getUiSnapshot());
+            refreshUi();
           }}
         />
       </div>

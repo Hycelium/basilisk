@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { buildingName } from "../game/sim";
 import type { TrainKind, UiSnapshot } from "../game/types";
 
@@ -36,13 +37,35 @@ export function DetailSheet({
   onUngarrison,
 }: DetailSheetProps) {
   const keepPanel = ui.selectedKeepTeam === "you";
+  const subject = keepPanel ? "keep" : ui.selectedBuildingId ? `b${ui.selectedBuildingId}` : "";
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => setCollapsed(false), [subject]);
   if (!keepPanel && (!ui.selectedBuildingId || !ui.selectedBuildingKind)) return null;
+
+  const sheetClass = collapsed ? "detail sheet-float collapsed" : "detail sheet-float";
+  const headControls = (
+    <div className="detail-head-actions">
+      <button
+        type="button"
+        className="ghost"
+        onClick={() => setCollapsed((c) => !c)}
+        aria-expanded={!collapsed}
+        aria-label={collapsed ? "Expand panel" : "Collapse panel"}
+        title={collapsed ? "Expand" : "Collapse"}
+      >
+        {collapsed ? "▴" : "▾"}
+      </button>
+      <button type="button" className="ghost" onClick={onClose} aria-label="Close">
+        ✕
+      </button>
+    </div>
+  );
 
   if (keepPanel) {
     const canPay =
       ui.yourGold >= ui.peonTrainCost.gold && ui.yourWood >= ui.peonTrainCost.wood;
     return (
-      <div className="detail sheet-float">
+      <div className={sheetClass}>
         <div className="detail-head">
           <div>
             <div className="detail-title">Your Keep</div>
@@ -50,10 +73,10 @@ export function DetailSheet({
               Peons {ui.peonCount}/{ui.peonCap} · Garrison {ui.keepGarrisoned}/{ui.keepGarrisonMax}
             </div>
           </div>
-          <button type="button" className="ghost" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
+          {headControls}
         </div>
+        {!collapsed && (
+        <div className="detail-body">
         <p className="detail-note">
           Queue peons here. Cap starts at 2 — build Houses on green pads behind the keep.
         </p>
@@ -106,6 +129,8 @@ export function DetailSheet({
             ))}
           </div>
         </div>
+        </div>
+        )}
       </div>
     );
   }
@@ -115,17 +140,17 @@ export function DetailSheet({
   const isHouse = ui.selectedBuildingKind === "house";
 
   return (
-    <div className="detail sheet-float">
+    <div className={sheetClass}>
       <div className="detail-head">
         <div>
           <div className="detail-title">{buildingName(ui.selectedBuildingKind!)}</div>
           <div className="detail-sub">{isEnemy ? "Enemy — inspect only" : "Your structure"}</div>
         </div>
-        <button type="button" className="ghost" onClick={onClose} aria-label="Close">
-          ✕
-        </button>
+        {headControls}
       </div>
 
+      {!collapsed && (
+      <div className="detail-body">
       {isHouse && (
         <p className="detail-note">Raises peon population by +3. Eco pad only.</p>
       )}
@@ -238,6 +263,8 @@ export function DetailSheet({
             </em>
           </button>
         </div>
+      )}
+      </div>
       )}
     </div>
   );
