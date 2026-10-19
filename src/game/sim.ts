@@ -57,6 +57,7 @@ import {
   villagerStart,
 } from "./map";
 import { foeBrainStats, notifyAiMatchEnd, notifyAiMatchStart, runAiTurn } from "./ai";
+import { formatIntellect, rushCommitDelay, thinkInterval } from "./learningAi";
 import {
   awardMatchXp,
   bumpScoutSalt,
@@ -279,7 +280,7 @@ export class GameSim {
     notifyAiMatchStart();
     const iq = foeBrainStats().intellect;
     this.addToast(`Build phase — ${FIRST_BUILD}s until wave 1`);
-    this.addToast(`Foe intellect ${iq} — learning your patterns`);
+    this.addToast(`Foe intellect ${formatIntellect(iq)} — learning your patterns`);
   }
 
   setSound(on: boolean) {
@@ -2004,7 +2005,7 @@ export class GameSim {
     if (this.aiTimer <= 0) {
       runAiTurn(this, AI_RESERVE);
       const iq = foeBrainStats().intellect;
-      this.aiTimer = Math.max(0.72, 1.85 - iq * 0.0115);
+      this.aiTimer = thinkInterval(iq);
     }
 
     this.doTowerCombat(dt, "you");
@@ -2196,7 +2197,7 @@ export class GameSim {
       return false;
     }
     if (this.aiRushDeadline <= 0) {
-      this.aiRushDeadline = this.state.time + Math.max(6, 10 - skill * 0.04);
+      this.aiRushDeadline = this.state.time + rushCommitDelay(skill);
     }
 
     const immediateDefense = this.aiObservedHumanUnits(245).length > 0;
@@ -2509,6 +2510,7 @@ export class GameSim {
         foeKeep: Math.max(0, Math.ceil(s.keeps.foe.hp)),
       },
       foeIntellect: brain.intellect,
+      foeIntellectPct: brain.intellectProgress,
       foeGames: brain.games,
       foeWins: brain.wins,
       foeExplore: brain.epsilon,

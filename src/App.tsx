@@ -69,6 +69,7 @@ const defaultUi: UiSnapshot = {
   lastXpGain: 0,
   stats: { slain: 0, goldEarned: 0, waves: 0, yourKeep: 100, foeKeep: 100 },
   foeIntellect: 8,
+  foeIntellectPct: 0,
   foeGames: 0,
   foeWins: 0,
   foeExplore: 0.35,

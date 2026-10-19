@@ -1,3 +1,4 @@
+import { formatIntellect } from "../game/learningAi";
 import type { QualityInfo, QualitySetting } from "../game/render3d";
 import type { UiSnapshot } from "../game/types";
 
@@ -61,7 +62,10 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
         </div>
         <div className="stat intellect">
           <span className="label">FOE IQ</span>
-          <span className="value">{ui.foeIntellect}</span>
+          <span className="value">{formatIntellect(ui.foeIntellect)}</span>
+          <div className="bar iq" title="Progress to the next intellect level">
+            <div className="fill" style={{ width: `${ui.foeIntellectPct * 100}%` }} />
+          </div>
           <span className="phase-tag muted">
             {ui.foeWins}W/{ui.foeGames}G · ε{explorePct}%
           </span>

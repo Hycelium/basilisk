@@ -113,10 +113,14 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
     .filter((b) => b.kind === "watchtower" || b.kind === "ballista" || b.kind === "catapult");
   const desiredDefenses = state.waveIndex < 2 ? 2 : state.waveIndex < 5 ? 3 : 4;
   if (defenses.length < desiredDefenses) {
-    const heavyCoverage = defenses.length >= 2 && state.waveIndex >= 2;
+    // Past the old cap, step into ballista a wave sooner instead of stacking watchtowers.
+    const heavyCoverage =
+      skill > 99
+        ? defenses.length >= 1 && state.waveIndex >= 1
+        : defenses.length >= 2 && state.waveIndex >= 2;
     sim.placeAiBuilding(heavyCoverage ? "ballista" : "watchtower", skill >= 45 ? 0 : 10);
   }
-  if (defenses.length >= 2 && state.waveIndex >= 1) {
+  if (defenses.length >= (skill > 160 ? 1 : 2) && state.waveIndex >= 1) {
     sim.aiBuildDefensiveBarricade();
   }
 
@@ -133,9 +137,11 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
   const action = brain.choose(featuresFrom(sim));
   applyAction(sim, action);
 
-  // Experienced brains execute a second macro action instead of waiting a
-  // full decision cycle while floating resources.
-  if (skill >= 45 && state.gold.foe > 120) {
+  // Experienced brains spend a second action on the learned plan instead of
+  // floating gold. The gate keeps falling past level 99, with a floor so they
+  // still hold a reserve.
+  const followGold = skill <= 99 ? 120 : Math.max(72, 120 - (skill - 99) * 0.28);
+  if (skill >= 45 && state.gold.foe > followGold) {
     if (!sim.aiUpgradeDefense("adaptive")) sim.aiTrainUnits();
   }
 }

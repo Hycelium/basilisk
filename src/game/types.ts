@@ -350,8 +350,10 @@ export interface UiSnapshot {
     yourKeep: number;
     foeKeep: number;
   };
-  /** Persistent Q-learning foe — climbs as it plays you. */
+  /** Persistent Q-learning foe — climbs as it plays you. No level ceiling. */
   foeIntellect: number;
+  /** 0–1 progress toward the next intellect level. */
+  foeIntellectPct: number;
   foeGames: number;
   foeWins: number;
   foeExplore: number;

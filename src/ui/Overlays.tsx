@@ -1,3 +1,4 @@
+import { formatIntellect } from "../game/learningAi";
 import type { UiSnapshot } from "../game/types";
 
 interface OverlaysProps {
@@ -32,9 +33,14 @@ export function Overlays({ ui, onStart, onRestart, onRerollMap }: OverlaysProps)
           </button>
 
           <p className="foe-brain-tease">
-            Foe intellect {ui.foeIntellect}
+            Foe intellect {formatIntellect(ui.foeIntellect)}
             {ui.foeGames > 0 ? ` · ${ui.foeWins}W / ${ui.foeGames} games learned` : " · virgin Q-table"}
           </p>
+          <div className="foe-iq-meter" title="Progress to the next intellect level">
+            <div className="bar iq">
+              <div className="fill" style={{ width: `${ui.foeIntellectPct * 100}%` }} />
+            </div>
+          </div>
 
           <ul className="tips">
             <li>The foe Q-learns your builds across sessions</li>
@@ -62,8 +68,13 @@ export function Overlays({ ui, onStart, onRestart, onRerollMap }: OverlaysProps)
           {ui.lastXpGain > 0 && <p className="xp-gain">+{ui.lastXpGain} Keep XP</p>}
           <p className="keep-lvl">Keep Level {ui.keepLevel}</p>
           <p className="foe-brain-tease">
-            Foe intellect {ui.foeIntellect} · remembered {ui.foeGames} sieges
+            Foe intellect {formatIntellect(ui.foeIntellect)} · remembered {ui.foeGames} sieges
           </p>
+          <div className="foe-iq-meter" title="Progress to the next intellect level">
+            <div className="bar iq">
+              <div className="fill" style={{ width: `${ui.foeIntellectPct * 100}%` }} />
+            </div>
+          </div>
           <p className="map-next-hint">Play again loads the map for your current keep level. The foe keeps learning.</p>
           <button type="button" className="cta" onClick={onRestart}>
             Play again

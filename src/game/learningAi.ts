@@ -58,7 +58,10 @@ export interface BrainStats {
   losses: number;
   updates: number;
   epsilon: number;
-  intellect: number; // 1–99 display
+  /** Uncapped. Grows with experience and never falls. */
+  intellect: number;
+  /** Fraction of the way from this level to the next. Never a "max" bar. */
+  intellectProgress: number;
   lastAction: string;
 }
 
@@ -69,13 +72,88 @@ interface BrainSave {
   losses: number;
   updates: number;
   version: number;
+  /**
+   * Older sessions may have written a display intellect clamped at 99.
+   * It is never read. Level is always recomputed from games, wins, and updates.
+   */
+  intellect?: number;
+  level?: number;
 }
 
 const KEY = "roadkeep_foe_brain_v1";
+/** Fixed on purpose: the learning rate never anneals to zero, so every match still updates Q. */
 const ALPHA = 0.36;
 const GAMMA = 0.88;
 const EPS_START = 0.24;
-const EPS_MIN = 0.03;
+/** Explore rate sinks toward this after the old level-99 mark and never reaches zero. */
+const EPS_FLOOR = 0.012;
+/** Experience that used to display as intellect 99 (`8 + experience`). */
+const OLD_CAP_EXPERIENCE = 91;
+
+/**
+ * Monotonic experience. Wins, games, and updates only increase, so intellect
+ * cannot go backwards after a loss.
+ */
+export function foeExperience(games: number, wins: number, updates: number) {
+  return Math.max(0, games) * 4 + Math.max(0, wins) * 3 + Math.max(0, updates) / 24;
+}
+
+/** Uncapped level. A new brain is 8; each full point of experience adds one level. */
+export function intellectFromExperience(experience: number) {
+  if (!Number.isFinite(experience) || experience <= 0) return 8;
+  return 8 + Math.floor(experience);
+}
+
+/** Progress toward the next level only (the fractional point of experience). */
+export function intellectProgressFromExperience(experience: number) {
+  if (!Number.isFinite(experience) || experience <= 0) return 0;
+  return experience - Math.floor(experience);
+}
+
+export function intellectFromCounters(counters: { games?: number; wins?: number; updates?: number }) {
+  return intellectFromExperience(foeExperience(counters.games ?? 0, counters.wins ?? 0, counters.updates ?? 0));
+}
+
+/**
+ * Explore rate. Through the old cap this matches the previous schedule
+ * (start 0.24, floor 0.03). Past that, the floor itself keeps falling toward
+ * EPS_FLOOR so exploitation gets sharper forever without stopping discovery.
+ */
+export function epsilonFrom(games: number, experience: number) {
+  const early = EPS_START - Math.max(0, games) * 0.022;
+  const throughOldCap = Math.min(EPS_START, Math.max(0.03, early));
+  if (!Number.isFinite(experience) || experience <= OLD_CAP_EXPERIENCE) return throughOldCap;
+  const past = experience - OLD_CAP_EXPERIENCE;
+  const veteran = EPS_FLOOR + (0.03 - EPS_FLOOR) / (1 + past / 420);
+  return Math.min(throughOldCap, veteran);
+}
+
+/**
+ * Seconds between foe decisions. The old curve holds through level 99
+ * (about 1.76s at 8, 0.72s at 99), then eases toward 0.40s. Never instant.
+ */
+export function thinkInterval(intellect: number) {
+  const iq = Number.isFinite(intellect) ? intellect : 8;
+  const classic = 1.85 - Math.min(iq, 99) * 0.0115;
+  if (iq <= 99) return Math.max(0.72, classic);
+  return 0.4 + (0.72 - 0.4) / (1 + (iq - 99) / 80);
+}
+
+/**
+ * Seconds a warband holds before releasing. Same curve through level 100
+ * (floor 6s), then eases toward 3.2s so veteran rushes commit sooner.
+ */
+export function rushCommitDelay(intellect: number) {
+  const iq = Number.isFinite(intellect) ? intellect : 8;
+  const classic = 10 - Math.min(iq, 100) * 0.04;
+  if (iq <= 100) return Math.max(6, classic);
+  return 3.2 + (6 - 3.2) / (1 + (iq - 100) / 120);
+}
+
+export function formatIntellect(n: number) {
+  const v = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 8;
+  return v.toLocaleString("en-US");
+}
 
 function band(n: number, edges: number[]) {
   for (let i = 0; i < edges.length; i++) if (n <= edges[i]) return i;
@@ -127,6 +205,8 @@ export class LearningBrain {
       this.wins = data.wins ?? 0;
       this.losses = data.losses ?? 0;
       this.updates = data.updates ?? 0;
+      // data.intellect / data.level are ignored. A save that displayed 99
+      // still has the raw counters, and the next read recomputes past 99.
     } catch {
       /* fresh brain */
     }
@@ -148,28 +228,75 @@ export class LearningBrain {
     }
   }
 
+  /** Raw experience. Not stored; always derived so a clamped display cannot stick. */
+  experience() {
+    return foeExperience(this.games, this.wins, this.updates);
+  }
+
   epsilon() {
-    return Math.max(EPS_MIN, EPS_START - this.games * 0.022);
+    return epsilonFrom(this.games, this.experience());
   }
 
   intellect() {
-    // Permanent experience only: games, updates, and wins never decrease, so
-    // the displayed IQ can no longer reverse after a loss.
-    const experience =
-      this.games * 4 +
-      this.wins * 3 +
-      Math.floor(this.updates / 24);
-    return Math.max(8, Math.min(99, 8 + experience));
+    return intellectFromExperience(this.experience());
+  }
+
+  /**
+   * Hand-authored nudge used when Q values are still small. Past the old cap
+   * it fades so the learned action wins more often. It never changes sign of
+   * experience and is not a resource or damage bonus.
+   */
+  private priorScale() {
+    const past = this.experience() - OLD_CAP_EXPERIENCE;
+    if (past <= 0) return 1;
+    return 1 / (1 + past / 220);
+  }
+
+  private actionBias(features: LearnFeatures, index: number) {
+    const name = LEARN_ACTIONS[index];
+    let v = 0;
+    if (features.foeTowers < 2 && name.startsWith("build")) v += 0.15;
+    if (features.foeBarracks > 0 && name.startsWith("train")) v += 0.22;
+    if (features.yourTowers >= 3 && (name === "train_ward" || name === "train_runner")) v += 0.42;
+    if (features.yourArmy >= 4 && name === "train_archer") v += 0.38;
+    if (features.yourRanged >= 2 && name === "train_ward") v += 0.5;
+    if (features.yourFast >= 2 && name === "upgrade_rate") v += 0.38;
+    if (features.yourHeavy >= 2 && name === "upgrade_damage") v += 0.38;
+    if (features.foeTowers >= 2 && name.startsWith("upgrade_")) v += 0.16;
+    if (features.yourBarracks > 0 && name === "train_rammer") v += 0.24;
+    if (features.foeGold > 170 && name === "wait") v -= 0.5;
+    if (features.hpLead < -50 && (name === "upgrade" || name === "build_ballista")) v += 0.3;
+    return v;
+  }
+
+  /** Rare explores after the old cap prefer strong actions, but stay stochastic. */
+  private sampleSoftmax(row: number[], features: LearnFeatures) {
+    const past = Math.max(0, this.experience() - OLD_CAP_EXPERIENCE);
+    const temperature = 0.28 + 0.9 / (1 + past / 160);
+    const scale = this.priorScale();
+    const scores = row.map((q, i) => q + this.actionBias(features, i) * scale);
+    const maxS = Math.max(...scores);
+    const weights = scores.map((s) => Math.exp(Math.max(-40, Math.min(40, (s - maxS) / temperature))));
+    let sum = 0;
+    for (const w of weights) sum += w;
+    let roll = Math.random() * sum;
+    for (let i = 0; i < weights.length; i++) {
+      roll -= weights[i];
+      if (roll <= 0) return i;
+    }
+    return weights.length - 1;
   }
 
   stats(): BrainStats {
+    const experience = this.experience();
     return {
       games: this.games,
       wins: this.wins,
       losses: this.losses,
       updates: this.updates,
-      epsilon: this.epsilon(),
-      intellect: this.intellect(),
+      epsilon: epsilonFrom(this.games, experience),
+      intellect: intellectFromExperience(experience),
+      intellectProgress: intellectProgressFromExperience(experience),
       lastAction: this.lastActionName,
     };
   }
@@ -203,24 +330,16 @@ export class LearningBrain {
 
     let idx: number;
     if (Math.random() < this.epsilon()) {
-      idx = Math.floor(Math.random() * LEARN_ACTIONS.length);
+      idx =
+        this.experience() > OLD_CAP_EXPERIENCE
+          ? this.sampleSoftmax(row, features)
+          : Math.floor(Math.random() * LEARN_ACTIONS.length);
     } else {
       idx = 0;
       let best = -Infinity;
+      const scale = this.priorScale();
       for (let i = 0; i < row.length; i++) {
-        // Soft prior: early game prefer economy/build, late prefer train
-        let v = row[i];
-        if (features.foeTowers < 2 && LEARN_ACTIONS[i].startsWith("build")) v += 0.15;
-        if (features.foeBarracks > 0 && LEARN_ACTIONS[i].startsWith("train")) v += 0.22;
-        if (features.yourTowers >= 3 && (LEARN_ACTIONS[i] === "train_ward" || LEARN_ACTIONS[i] === "train_runner")) v += 0.42;
-        if (features.yourArmy >= 4 && LEARN_ACTIONS[i] === "train_archer") v += 0.38;
-        if (features.yourRanged >= 2 && LEARN_ACTIONS[i] === "train_ward") v += 0.5;
-        if (features.yourFast >= 2 && LEARN_ACTIONS[i] === "upgrade_rate") v += 0.38;
-        if (features.yourHeavy >= 2 && LEARN_ACTIONS[i] === "upgrade_damage") v += 0.38;
-        if (features.foeTowers >= 2 && LEARN_ACTIONS[i].startsWith("upgrade_")) v += 0.16;
-        if (features.yourBarracks > 0 && LEARN_ACTIONS[i] === "train_rammer") v += 0.24;
-        if (features.foeGold > 170 && LEARN_ACTIONS[i] === "wait") v -= 0.5;
-        if (features.hpLead < -50 && (LEARN_ACTIONS[i] === "upgrade" || LEARN_ACTIONS[i] === "build_ballista")) v += 0.3;
+        const v = row[i] + this.actionBias(features, i) * scale;
         if (v > best) {
           best = v;
           idx = i;
