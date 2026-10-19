@@ -11,18 +11,6 @@ export const START_GOLD = 100;
 export const START_WOOD = 80;
 /** Bloons-style life pool: chips, not melts. ~10–15 min matches. */
 export const START_KEEP_HP = 280;
-/** Central hill. Soldiers never damage it; peons garrison it. */
-export const STRONGHOLD_HP = 420;
-/** Peons of any teams. A sixth peon cannot enter until a slot is free. */
-export const STRONGHOLD_GARRISON_MAX = 5;
-/** How close a peon must walk to the gate before they step inside. */
-export const STRONGHOLD_GARRISON_RADIUS = 18;
-/** Battle ring. Noticeably wider than the garrison gate. */
-export const STRONGHOLD_FIGHT_RADIUS = 120;
-/** Soldiers stop here so they melee each other, not the stronghold mesh. */
-export const STRONGHOLD_KEEPOUT = 36;
-/** Continuous ownership required to win by the hill. */
-export const STRONGHOLD_HOLD_SECONDS = 180;
 
 export const WOOD_GATHER_TIME = 1.2;
 export const COPPER_GATHER_TIME = 2.1;
@@ -114,16 +102,6 @@ export const MAX_TRAIN_QUEUE = 8;
 export const DAMAGE_MULT = [1, 1.28, 1.58];
 export const RATE_MULT = [1, 0.82, 0.65];
 export const UPGRADE_COST = [50, 85];
-
-/**
- * Levy attack at barracks power ranks 0, 1, and 2.
- * Base levy damage is 8. The old upgrade curve was ×1 / ×1.28 / ×1.58
- * (attacks 8, 10.24, 12.64). Only that upgrade bonus is halved, so the
- * attacks are 8, 9.12, and 10.32 (multipliers 1, 1.14, 1.29).
- * Levy hit points, and every other unit, still use DAMAGE_MULT.
- * AI wave buffs multiply this attack; they do not replace it.
- */
-export const LEVY_ATTACK_MULT = [1, 1.14, 1.29] as const;
 
 export interface UnitDef {
   hp: number;
@@ -240,57 +218,4 @@ export function formatCost(c: ResCost) {
   if (c.gold > 0) parts.push(`${c.gold}g`);
   if (c.wood > 0) parts.push(`${c.wood}w`);
   return parts.join(" · ") || "0";
-}
-
-/**
- * Unfair foe curve. Wave 0 (no committed attack yet) is 1×.
- * Each committed AI attack wave steps the tier. Wave 16 is the cap.
- */
-export const AI_ATTACK_WAVE_CAP = 16;
-/** Gold and wood floor once an AI reaches the cap. Refilled after every spend. */
-export const AI_INFINITE_RES = 999_999;
-
-export function aiAttackWaveTier(wave: number) {
-  return Math.max(0, Math.min(AI_ATTACK_WAVE_CAP, Math.floor(wave)));
-}
-
-/** Soldiers: 2× HP, +90% damage, +25% speed at wave 16. Linear in the tier. */
-export function aiSoldierBuff(wave: number) {
-  const t = aiAttackWaveTier(wave) / AI_ATTACK_WAVE_CAP;
-  return {
-    hp: 1 + t,
-    damage: 1 + t * 0.9,
-    speed: 1 + t * 0.25,
-  };
-}
-
-/** Peons: 2× HP, +60% gather, +40% work speed, +50% melee at wave 16. */
-export function aiPeonBuff(wave: number) {
-  const t = aiAttackWaveTier(wave) / AI_ATTACK_WAVE_CAP;
-  return {
-    hp: 1 + t,
-    gather: 1 + t * 0.6,
-    work: 1 + t * 0.4,
-    melee: 1 + t * 0.5,
-  };
-}
-
-/**
- * Bonus purse granted when attack wave `wave` commits (waves 1–15).
- * Wave 16+ does not use this; the sim floors gold and wood instead.
- */
-export function aiWaveIncome(wave: number) {
-  const w = aiAttackWaveTier(wave);
-  if (w <= 0 || w >= AI_ATTACK_WAVE_CAP) return { gold: 0, wood: 0 };
-  return { gold: 36 * w, wood: 24 * w };
-}
-
-export function aiWaveBuffLabel(wave: number) {
-  const w = Math.max(0, Math.floor(wave));
-  if (w <= 0) return "steady";
-  if (w >= AI_ATTACK_WAVE_CAP) return "unbounded";
-  if (w >= 12) return "crushing";
-  if (w >= 8) return "fierce";
-  if (w >= 4) return "honed";
-  return "stirring";
 }

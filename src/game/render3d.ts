@@ -1,6 +1,5 @@
 import * as THREE from "three";
-import { BUILD_RANGE, STARTER_GUARD_RANGE, STRONGHOLD_FIGHT_RADIUS, WORLD_H, WORLD_W } from "./balance";
-import { getMap } from "./map";
+import { BUILD_RANGE, STARTER_GUARD_RANGE, WORLD_H, WORLD_W } from "./balance";
 import { cloneAnimatedModel, cloneModel, ensureModelsLoaded } from "./assets3d";
 import type { Barricade, Building, GameState, Team, Unit } from "./types";
 import {
@@ -13,28 +12,22 @@ import {
   makeHouse,
   makeKeepMesh,
   makeMine,
-  makeStrongholdMesh,
   makeWatchtower,
 } from "./worldMesh";
 
 function teamColor(team: Team, lite = false) {
   if (team === "you") return lite ? 0x8ec8ff : 0x3a7ec8;
-  if (team === "east") return lite ? 0xf0c36a : 0xc4842a;
   return lite ? 0xf08090 : 0xa03040;
 }
 
-/** Active battlefield size. The duel stays 400×720; a skirmish widens this. */
-let viewW = WORLD_W;
-let viewH = WORLD_H;
-
 /** Map 2D sim coords (y down) â†’ Three.js XZ ground (Y up). Allocates â€” use only off the hot path. */
 function to3(x: number, y: number, h = 0) {
-  return new THREE.Vector3(x - viewW / 2, h, y - viewH / 2);
+  return new THREE.Vector3(x - WORLD_W / 2, h, y - WORLD_H / 2);
 }
 
 /** Allocation-free variant of to3 for per-frame placement. */
 function setPos3(obj: { position: THREE.Vector3 }, x: number, y: number, h = 0) {
-  obj.position.set(x - viewW / 2, h, y - viewH / 2);
+  obj.position.set(x - WORLD_W / 2, h, y - WORLD_H / 2);
 }
 
 type EntityKey = string;
@@ -161,8 +154,8 @@ export class GameRenderer {
   private floatSprites: { mesh: THREE.Sprite; life: number; id: number }[] = [];
   private floatIdSeen = new Set<number>();
   private knownUnits = new Map<number, { x: number; y: number; team: Team }>();
-  private knownKeepFlash: Partial<Record<Team, number>> = { you: 0, foe: 0 };
-  private knownKeepAttack: Partial<Record<Team, number>> = { you: 0, foe: 0 };
+  private knownKeepFlash = { you: 0, foe: 0 };
+  private knownKeepAttack = { you: 0, foe: 0 };
   private knownKick = new Map<number, number>();
   private knownCombatEvents = new Set<number>();
   private arrows: {
@@ -190,7 +183,7 @@ export class GameRenderer {
   private camPitch = 1.12; // ~64Â° from top â†’ proper RTS angle, not bird's-eye
   private camLook = new THREE.Vector3(0, 14, 55);
   private readonly camDistMin = 280;
-  private camDistMax = 900;
+  private readonly camDistMax = 900;
   private readonly camPitchMin = 0.72;
   private readonly camPitchMax = 1.35;
   private camShake = new THREE.Vector3();
@@ -355,65 +348,10 @@ export class GameRenderer {
 
   /** Best default RTS framing â€” oblique, biased toward your keep. */
   resetCamera() {
-    if (viewW > 700) {
-      this.frameTriangle({
-        players: 3,
-        worldW: viewW,
-        keeps: {
-          you: { pos: { x: viewW / 2, y: viewH - 140 } },
-          foe: { pos: { x: 160, y: 130 } },
-          east: { pos: { x: viewW - 160, y: 130 } },
-        },
-      } as GameState);
-      return;
-    }
-    if (viewW > 500) {
-      this.frameTriangle({
-        players: 2,
-        worldW: viewW,
-        keeps: {
-          you: { pos: { x: viewW * 0.69, y: viewH - 120 } },
-          foe: { pos: { x: viewW * 0.28, y: 120 } },
-        },
-      } as GameState);
-      return;
-    }
-    this.camDistMax = 900;
     this.camDist = 520;
     this.camYaw = 0.12;
     this.camPitch = 1.12;
     this.camLook.set(0, 14, 55);
-    this.sun.shadow.camera.left = -360;
-    this.sun.shadow.camera.right = 360;
-    this.sun.shadow.camera.top = 480;
-    this.sun.shadow.camera.bottom = -480;
-    this.sun.shadow.camera.updateProjectionMatrix();
-    this.applyCamera();
-  }
-
-  /** Pull back so every keep on the large map sits in frame. */
-  private frameTriangle(state: GameState) {
-    const teams: Team[] = ["you", "foe", "east"];
-    let sx = 0;
-    let sz = 0;
-    let n = 0;
-    for (const team of teams) {
-      const keep = state.keeps[team];
-      if (!keep) continue;
-      sx += keep.pos.x - viewW / 2;
-      sz += keep.pos.y - viewH / 2;
-      n += 1;
-    }
-    this.camDistMax = 1500;
-    this.camDist = state.players === 3 || state.worldW > 700 ? 1220 : 860;
-    this.camYaw = 0.06;
-    this.camPitch = 0.96;
-    this.camLook.set(n ? sx / n : 0, 18, n ? sz / n : 0);
-    this.sun.shadow.camera.left = -520;
-    this.sun.shadow.camera.right = 520;
-    this.sun.shadow.camera.top = 520;
-    this.sun.shadow.camera.bottom = -520;
-    this.sun.shadow.camera.updateProjectionMatrix();
     this.applyCamera();
   }
 
@@ -446,10 +384,8 @@ export class GameRenderer {
     const scale = this.camDist * 0.00145;
     this.camLook.addScaledVector(right, -dx * scale);
     this.camLook.addScaledVector(forward, -dy * scale);
-    const limX = viewW > 500 ? viewW / 2 - 90 : 160;
-    const limZ = viewH > 760 ? viewH / 2 - 90 : 280;
-    this.camLook.x = THREE.MathUtils.clamp(this.camLook.x, -limX, limX);
-    this.camLook.z = THREE.MathUtils.clamp(this.camLook.z, -limZ, limZ);
+    this.camLook.x = THREE.MathUtils.clamp(this.camLook.x, -160, 160);
+    this.camLook.z = THREE.MathUtils.clamp(this.camLook.z, -280, 280);
     this.applyCamera();
   }
 
@@ -773,19 +709,18 @@ export class GameRenderer {
     }
 
     // Keep hits
-    for (const team of (state.players === 3 ? ["you", "foe", "east"] : ["you", "foe"]) as Team[]) {
-      const keep = state.keeps[team];
-      if (!keep) continue;
-      const flash = keep.hitFlash;
-      if (flash > 0 && (this.knownKeepFlash[team] ?? 0) <= 0) {
-        const burst = team === "you" ? 0x66aaff : team === "east" ? 0xe0a040 : 0xff5577;
-        this.burst(keep.pos.x, keep.pos.y, 18, burst, 22, 70);
+    for (const team of ["you", "foe"] as Team[]) {
+      const flash = state.keeps[team].hitFlash;
+      if (flash > 0 && this.knownKeepFlash[team] <= 0) {
+        const k = state.keeps[team];
+        this.burst(k.pos.x, k.pos.y, 18, team === "you" ? 0x66aaff : 0xff5577, 22, 70);
       }
       this.knownKeepFlash[team] = flash;
 
+      const keep = state.keeps[team];
       const attack = keep.attackFlash;
       const target = keep.attackTarget;
-      if (attack > 0 && (this.knownKeepAttack[team] ?? 0) <= 0 && target) {
+      if (attack > 0 && this.knownKeepAttack[team] <= 0 && target) {
         const occupants = state.villagers.filter(
           (v) => v.team === team && v.state === "garrisoned",
         ).length;
@@ -891,10 +826,10 @@ export class GameRenderer {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hit = new THREE.Vector3();
     this.raycaster.ray.intersectPlane(this.groundPlane, hit);
-    if (!hit) return { x: viewW / 2, y: viewH / 2 };
+    if (!hit) return { x: WORLD_W / 2, y: WORLD_H / 2 };
     return {
-      x: hit.x + viewW / 2,
-      y: hit.z + viewH / 2,
+      x: hit.x + WORLD_W / 2,
+      y: hit.z + WORLD_H / 2,
     };
   }
 
@@ -905,17 +840,12 @@ export class GameRenderer {
     this.wallClock = now;
     this.sampleFrame(rawMs);
 
-    viewW = state.worldW || WORLD_W;
-    viewH = state.worldH || WORLD_H;
     if (state.mapId !== this.lastMapId) {
       this.rebuildBattlefield(state);
-      if (state.mapId.startsWith("hub-") || state.mapId.startsWith("tri-") || state.players === 3) this.frameTriangle(state);
-      else this.camDistMax = 900;
     }
     // FX before prune so deaths still have last-known sim coords
     this.syncCombatFx(state, step);
     this.syncKeeps(state);
-    this.syncStronghold(state);
     this.syncBuildings(state);
     this.syncPads(state);
     this.syncNodes(state);
@@ -969,20 +899,8 @@ export class GameRenderer {
     }
     this.torchLights = [];
     const seed = this.hashMapSeed(state.mapId);
-    const map = getMap(state.mapId);
-    if ((map.layout === "hub" || map.layout === "triangle") && map.roads && map.worldW && map.worldH) {
-      const paint = {
-        w: map.worldW,
-        h: map.worldH,
-        roads: map.roads.map((r) => r.points),
-        riverY: Math.round(map.worldH * 0.46),
-      };
-      this.worldGroup.add(buildTerrain(seed, paint));
-      this.worldGroup.add(buildScenery(seed, paint));
-    } else {
-      this.worldGroup.add(buildTerrain(seed));
-      this.worldGroup.add(buildScenery(seed));
-    }
+    this.worldGroup.add(buildTerrain(seed));
+    this.worldGroup.add(buildScenery(seed));
   }
 
   private hashMapSeed(mapId: string) {
@@ -1099,106 +1017,16 @@ export class GameRenderer {
 
   private syncKeeps(state: GameState) {
     const live = this.liveSet();
-    const teams: Team[] = state.players === 3 ? ["you", "foe", "east"] : ["you", "foe"];
-    for (const team of teams) {
-      const k = state.keeps[team];
-      if (!k) continue;
+    for (const team of ["you", "foe"] as Team[]) {
       const key = `keep-${team}`;
       live.add(key);
       const obj = this.ensure(key, () => this.makeKeep(team));
+      const k = state.keeps[team];
       setPos3(obj, k.pos.x, k.pos.y, 0);
       if (k.hitFlash > 0) obj.scale.setScalar(1.04);
       else obj.scale.setScalar(1);
     }
-    const showRaid = state.phase === "running" && state.raidOwner === "you" && state.raidTarget;
-    if (showRaid) {
-      const focus = state.keeps[state.raidTarget!];
-      if (focus && focus.hp > 0) {
-        const key = "attack-focus";
-        live.add(key);
-        const ring = this.ensure(key, () => {
-          const mesh = new THREE.Mesh(
-            new THREE.RingGeometry(16, 19, 28),
-            new THREE.MeshBasicMaterial({
-              color: 0xff6e67,
-              transparent: true,
-              opacity: 0.8,
-              side: THREE.DoubleSide,
-              depthWrite: false,
-            }),
-          );
-          mesh.rotation.x = -Math.PI / 2;
-          return mesh;
-        });
-        setPos3(ring, focus.pos.x, focus.pos.y, 0.45);
-      }
-    }
     this.prune("keep-", live);
-    this.prune("attack-focus", live);
-  }
-
-  private strongholdLabel() {
-    const canvas = document.createElement("canvas");
-    canvas.width = 256;
-    canvas.height = 64;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return new THREE.Group();
-    ctx.fillStyle = "rgba(16, 12, 10, 0.78)";
-    ctx.fillRect(8, 8, 240, 48);
-    ctx.fillStyle = "#f3e2bc";
-    ctx.font = "bold 32px sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("Stronghold", 128, 32);
-    const tex = new THREE.CanvasTexture(canvas);
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
-    sprite.scale.set(58, 14, 1);
-    sprite.position.y = 52;
-    return sprite;
-  }
-
-  private syncStronghold(state: GameState) {
-    const live = this.liveSet();
-    const hub = state.mapId.startsWith("hub-") || state.mapId.startsWith("tri-");
-    if (!hub || state.phase === "title") {
-      this.prune("stronghold", live);
-      return;
-    }
-    const owner = state.stronghold.owner;
-    const key = "stronghold";
-    live.add(key);
-    const mark = owner ?? "neutral";
-    let obj = this.entityMap.get(key);
-    if (!obj || obj.userData.owner !== mark) {
-      if (obj) {
-        this.dynamicRoot.remove(obj);
-        this.entityMap.delete(key);
-      }
-      const color = owner ? teamColor(owner, true) : 0xc8c2b4;
-      const group = new THREE.Group();
-      group.add(makeStrongholdMesh(color));
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(STRONGHOLD_FIGHT_RADIUS - 4, STRONGHOLD_FIGHT_RADIUS, 64),
-        new THREE.MeshBasicMaterial({
-          color,
-          transparent: true,
-          opacity: 0.4,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.4;
-      group.add(ring);
-      group.add(this.strongholdLabel());
-      group.userData.owner = mark;
-      this.entityMap.set(key, group);
-      this.dynamicRoot.add(group);
-      obj = group;
-    }
-    setPos3(obj, state.stronghold.pos.x, state.stronghold.pos.y, 0);
-    const flash = state.stronghold.hitFlash > 0 ? 1.05 : 1;
-    obj.scale.setScalar(flash);
   }
 
   private kitOr(key: "kTower" | "kBallista" | "kCatapult" | "kGate" | "kWall", height: number, fallback: () => THREE.Object3D) {
@@ -1240,7 +1068,7 @@ export class GameRenderer {
     let mat = this.padMaterials.get(id);
     if (!mat) {
       mat = new THREE.MeshStandardMaterial({
-        color: zone === "eco" ? 0xa8c86a : team === "you" ? 0x6eb4ff : team === "east" ? 0xd7a13a : 0xb44a55,
+        color: zone === "eco" ? 0xa8c86a : team === "you" ? 0x6eb4ff : 0xb44a55,
         transparent: true,
         opacity: 0.55,
         side: THREE.DoubleSide,
@@ -1554,25 +1382,6 @@ export class GameRenderer {
       } else {
         this.playAnimation(key, ["walk", "walk_lower", "run_lower"]);
       }
-      let selection = obj.userData.selection as THREE.Mesh | undefined;
-      if (!selection) {
-        selection = new THREE.Mesh(
-          new THREE.RingGeometry(6.2, 7.6, 28),
-          new THREE.MeshBasicMaterial({
-            color: 0xf0d8a8,
-            transparent: true,
-            opacity: 0.85,
-            side: THREE.DoubleSide,
-            depthWrite: false,
-          }),
-        );
-        selection.name = "soldier-selection";
-        selection.rotation.x = -Math.PI / 2;
-        selection.position.y = 0.25;
-        obj.add(selection);
-        obj.userData.selection = selection;
-      }
-      selection.visible = state.selectedUnitIds.includes(u.id);
     }
     this.prune("unit-", live);
   }
@@ -1580,7 +1389,7 @@ export class GameRenderer {
   private syncVillagers(state: GameState) {
     const live = this.liveSet();
     for (const v of state.villagers) {
-      if (v.state === "garrisoned" || v.state === "inStronghold") continue;
+      if (v.state === "garrisoned") continue;
       const key = `vil-${v.id}`;
       live.add(key);
       const obj = this.ensure(key, () => {
@@ -1652,8 +1461,8 @@ export class GameRenderer {
     const pos = this.commandLinePos;
     const col = this.commandLineCol;
     let seg = 0;
-    const hw = viewW / 2;
-    const hh = viewH / 2;
+    const hw = WORLD_W / 2;
+    const hh = WORLD_H / 2;
     if (state.selectedVillagerIds.length > 0) {
       for (const v of state.villagers) {
         if (seg >= MAX_COMMAND_LINES) break;

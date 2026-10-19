@@ -2,15 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { GameRenderer, type QualityInfo, type QualitySetting, type TouchDragMode } from "./game/render3d";
 import { GameSim, hitTest } from "./game/sim";
-import {
-  diplomacyKey,
-  type BuildingKind,
-  type CombatEventKind,
-  type RectHit,
-  type SkirmishSetup,
-  type TrainKind,
-  type UiSnapshot,
-} from "./game/types";
+import type { BuildingKind, CombatEventKind, RectHit, TrainKind, UiSnapshot } from "./game/types";
 import { BUILD_COST } from "./game/balance";
 import { Hud } from "./ui/Hud";
 import { BuildBar } from "./ui/BuildBar";
@@ -77,26 +69,10 @@ const defaultUi: UiSnapshot = {
   lastXpGain: 0,
   stats: { slain: 0, goldEarned: 0, waves: 0, yourKeep: 100, foeKeep: 100 },
   foeIntellect: 8,
-  foeIntellectPct: 0,
   foeGames: 0,
   foeWins: 0,
   foeExplore: 0.35,
   foeLastAction: "wait",
-  players: 2,
-  attackName: "Foe",
-  enemyKeeps: [],
-  foeWaveLine: "Foe wave 0 · steady",
-  strongholdName: "",
-  strongholdOwner: null,
-  strongholdPeons: 0,
-  strongholdPeonCap: 5,
-  strongholdHoldLeft: 180,
-  strongholdContested: false,
-  strongholdChannel: 0,
-  holdsStronghold: false,
-  raidName: null,
-  attackPrompt: null,
-  canOrderAttack: false,
 };
 
 const LONG_PRESS_MS = 350;
@@ -299,9 +275,8 @@ export default function App() {
       } else {
         const patrol = patrolModeRef.current;
         const hadPeons = state.selectedVillagerIds.length > 0;
-        const hadSoldiers = state.selectedUnitIds.length > 0;
         sim.commandSelected(world, hit, patrol);
-        if (hadPeons || hadSoldiers) {
+        if (hadPeons) {
           const kind: TapMarker["kind"] =
             hit?.kind === "node" ? "gather" : hit?.kind === "unit" ? "attack" : patrol ? "patrol" : "move";
           const label = kind === "gather" ? "Gather" : kind === "attack" ? "Attack" : kind === "patrol" ? "Patrol" : "Move";
@@ -491,12 +466,11 @@ export default function App() {
 
       if (touch && state.phase === "running") {
         const peonsSelected = state.selectedVillagerIds.length > 0;
-        const soldiersSelected = state.selectedUnitIds.length > 0;
         const ownPeon = hit?.kind === "villager" && state.villagers.some((v) => v.id === Number(hit.id) && v.team === "you");
         const ownStructure =
           (hit?.kind === "building" && state.buildings.some((b) => b.id === Number(hit.id) && b.team === "you")) ||
           (hit?.kind === "keep" && hit.id === "you");
-        if (!state.buildSelection && (peonsSelected || soldiersSelected) && !ownPeon && !ownStructure) {
+        if (!state.buildSelection && peonsSelected && !ownPeon && !ownStructure) {
           // Tap-to-order: ground → move, tree/mine → gather, enemy → attack.
           issueOrder(world, hit, p.x, p.y);
           return;
@@ -621,9 +595,6 @@ export default function App() {
         if (ev.key === "=" || ev.key === "+") r.zoomBy(0.9);
         if (ev.key === "-" || ev.key === "_") r.zoomBy(1.1);
         if (ev.key === "r" || ev.key === "R") r.resetCamera();
-        if ((ev.key === "t" || ev.key === "T") && sim.getState().phase === "running") {
-          sim.cycleAttackTarget();
-        }
         if (ev.key === "q" || ev.key === "Q") r.orbitBy(28, 0);
         if (ev.key === "e" || ev.key === "E") r.orbitBy(-28, 0);
         if (ev.key === "ArrowLeft") r.panBy(40, 0);
@@ -753,23 +724,6 @@ export default function App() {
       },
     },
   ];
-  if (ui.phase === "running" && ui.canOrderAttack && ui.attackPrompt) {
-    clusterActions.push({
-      id: "attack-keep",
-      icon: "⚔",
-      label: "Attack",
-      hint: ui.holdsStronghold
-        ? `Attack ${ui.attackPrompt}`
-        : "Hold the Stronghold to attack a keep",
-      disabled: !ui.holdsStronghold,
-      danger: true,
-      onPress: () => {
-        sim.orderKeepAttack();
-        refreshUi();
-        beep(440);
-      },
-    });
-  }
   if (fsSupported) {
     clusterActions.push({
       id: "fullscreen",
@@ -818,13 +772,7 @@ export default function App() {
           },
         });
       }
-      if (
-        hit?.kind === "unit" &&
-        state.units.some((u) => {
-          if (u.id !== Number(hit.id) || u.team === "you" || u.hp <= 0) return false;
-          return (state.diplomacy[diplomacyKey("you", u.team)] ?? "neutral") !== "ally";
-        })
-      ) {
+      if (hit?.kind === "unit" && state.units.some((u) => u.id === Number(hit.id) && u.team === "foe")) {
         radialItems.push({
           id: "attack",
           icon: "⚔",
@@ -919,11 +867,6 @@ export default function App() {
             sim.rushNextWave();
             refreshUi();
             beep(500);
-          }}
-          onAttack={() => {
-            sim.orderKeepAttack();
-            refreshUi();
-            beep(440);
           }}
         />
 
@@ -1091,8 +1034,7 @@ export default function App() {
               refreshUi();
               beep(440);
             }}
-            onStart={(setup: SkirmishSetup) => {
-              sim.applySkirmish(setup);
+            onStart={() => {
               sim.startMatch();
               refreshUi();
               beep(520);

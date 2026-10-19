@@ -1,9 +1,5 @@
-import { COPPER_REGEN, PINE_REGEN, ROAD_X, WORLD_H, WORLD_W } from "./balance";
+import { COPPER_REGEN, PINE_REGEN, ROAD_X, WORLD_H } from "./balance";
 import type { MapDef, MapId, Pad, ResourceNode, ResourceKind, Team } from "./types";
-
-/** Large skirmish battlefield. The duel map stays 400×720. */
-export const TRI_W = 860;
-export const TRI_H = 780;
 
 /** Deterministic RNG (mulberry32). */
 export function rngFromSeed(seed: number) {
@@ -219,214 +215,6 @@ export function generateMap(seed: number): MapDef {
     pads,
     nodes,
     startTowerPad: "keep-guard",
-    layout: "duel",
-    worldW: WORLD_W,
-    worldH: WORLD_H,
-  };
-}
-
-function vlen(v: { x: number; y: number }) {
-  return Math.hypot(v.x, v.y) || 1;
-}
-
-function vunit(v: { x: number; y: number }) {
-  const l = vlen(v);
-  return { x: v.x / l, y: v.y / l };
-}
-
-function vadd(a: { x: number; y: number }, b: { x: number; y: number }, scale = 1) {
-  return { x: a.x + b.x * scale, y: a.y + b.y * scale };
-}
-
-/** Same sine envelope as roadCenterX, laid along an arbitrary segment. */
-export function meanderPath(
-  seed: number,
-  lane: number,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-  steps = 28,
-) {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const len = Math.max(1, Math.hypot(dx, dy));
-  const px = -dy / len;
-  const py = dx / len;
-  const a = ((hashSeed(seed, lane, 17) % 2001) / 1000 - 1) * 25;
-  const b = ((hashSeed(seed, lane, 31) % 2001) / 1000 - 1) * 11;
-  const phase = ((hashSeed(seed, lane, 47) % 1000) / 1000) * Math.PI * 2;
-  const points: { x: number; y: number }[] = [];
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const envelope = Math.sin(Math.PI * t);
-    const off = envelope * (a * Math.sin(Math.PI * t + phase) + b * Math.sin(Math.PI * 3 * t - phase * 0.4));
-    points.push({
-      x: from.x + dx * t + px * off,
-      y: from.y + dy * t + py * off,
-    });
-  }
-  return points;
-}
-
-function distToPoly(x: number, y: number, pts: { x: number; y: number }[]) {
-  let best = Infinity;
-  for (let i = 1; i < pts.length; i++) {
-    const a = pts[i - 1];
-    const b = pts[i];
-    const abx = b.x - a.x;
-    const aby = b.y - a.y;
-    const t = Math.max(0, Math.min(1, ((x - a.x) * abx + (y - a.y) * aby) / Math.max(1, abx * abx + aby * aby)));
-    best = Math.min(best, Math.hypot(x - (a.x + abx * t), y - (a.y + aby * t)));
-  }
-  return best;
-}
-
-/**
- * Keeps face one central stronghold. 2-player and 3-player both use this hub.
- * Each base reuses the duel pad/node scatter, swung to face the center.
- * Roads reuse the duel meander, from each gate into that point.
- */
-export function generateHubMap(seed: number, players: 2 | 3): MapDef {
-  const id = `hub-${players}-${seed}` as MapId;
-  const cached = mapCache.get(id);
-  if (cached) return cached;
-  const map = buildHubMap(seed, players);
-  mapCache.set(map.id, map);
-  return map;
-}
-
-/** @deprecated 3-player hub. Older ids still resolve through getMap. */
-export function generateTriangleMap(seed: number): MapDef {
-  return generateHubMap(seed, 3);
-}
-
-function buildHubMap(seed: number, players: 2 | 3): MapDef {
-  const rng = rngFromSeed(seed ^ 0x731a);
-  const adj = pick(rng, ADJECTIVES);
-  const noun = pick(rng, NOUNS);
-  const three = players === 3;
-  const keeps = three
-    ? [
-        { team: "you" as const, x: 430, y: 640 },
-        { team: "foe" as const, x: 160, y: 130 },
-        { team: "east" as const, x: 700, y: 130 },
-      ]
-    : [
-        { team: "you" as const, x: 470, y: 640 },
-        { team: "foe" as const, x: 190, y: 120 },
-      ];
-  const worldW = three ? TRI_W : 680;
-  const worldH = three ? TRI_H : 760;
-  const centroid = {
-    x: keeps.reduce((s, k) => s + k.x, 0) / keeps.length,
-    y: keeps.reduce((s, k) => s + k.y, 0) / keeps.length,
-  };
-  const facing = new Map<Team, { f: { x: number; y: number }; r: { x: number; y: number } }>();
-  for (const k of keeps) {
-    const f = vunit({ x: centroid.x - k.x, y: centroid.y - k.y });
-    facing.set(k.team, { f, r: { x: -f.y, y: f.x } });
-  }
-  const pads: MapDef["pads"] = [];
-  const nodes: MapDef["nodes"] = [];
-  const placed: { x: number; y: number }[] = [];
-
-  const toWorld = (team: Team, along: number, lateral: number) => {
-    const k = keeps.find((c) => c.team === team)!;
-    const face = facing.get(team)!;
-    const p = vadd(vadd(k, face.f, along), face.r, lateral);
-    return {
-      x: clamp(p.x, 40, worldW - 40),
-      y: clamp(p.y, 40, worldH - 40),
-    };
-  };
-  const roads = keeps.map((k, i) => {
-    const face = facing.get(k.team)!;
-    const gate = vadd(k, face.f, 48);
-    return {
-      a: k.team,
-      b: "hold" as const,
-      points: meanderPath(seed, i, gate, centroid),
-    };
-  });
-  const nearRoad = (x: number, y: number, min: number) => roads.some((r) => distToPoly(x, y, r.points) < min);
-
-  for (const k of keeps) {
-    const team = k.team;
-    const eco = [
-      { id: `${team}-eco-0`, along: -52, lateral: 0 },
-      { id: `${team}-eco-1`, along: -46, lateral: -58 },
-      { id: `${team}-eco-2`, along: -46, lateral: 58 },
-    ];
-    for (const e of eco) {
-      const p = toWorld(team, e.along, e.lateral);
-      pads.push({ id: e.id, x: p.x, y: p.y, laneCoverage: 2, zone: "eco", team });
-      placed.push(p);
-    }
-    const guard = toWorld(team, 84, 0);
-    pads.push({ id: `${team}-keep-guard`, x: guard.x, y: guard.y, laneCoverage: 2, zone: "combat", team });
-    placed.push(guard);
-    const forward = toWorld(team, 158, 0);
-    if (!tooClose(forward.x, forward.y, placed, 36)) {
-      pads.push({ id: `${team}-forward`, x: forward.x, y: forward.y, laneCoverage: 2, zone: "combat", team });
-      placed.push(forward);
-    }
-    const bias = Math.floor(rng() * 3);
-    const extra = bias === 2 ? 3 : 4;
-    let guardN = 0;
-    let n = 0;
-    while (pads.filter((p) => p.team === team && p.zone !== "eco").length < 2 + extra && guardN++ < 40) {
-      n += 1;
-      const roll = rng();
-      const lateral = roll < 0.45 ? -(40 + rng() * 90) : roll < 0.9 ? 40 + rng() * 90 : (rng() - 0.5) * 50;
-      const along = 96 + rng() * 78;
-      const p = toWorld(team, along, lateral);
-      if (tooClose(p.x, p.y, placed, 34)) continue;
-      if (nearRoad(p.x, p.y, 26)) continue;
-      const lane: 0 | 1 | 2 = lateral < -20 ? 0 : lateral > 20 ? 1 : 2;
-      pads.push({ id: `${team}-c-${n}`, x: p.x, y: p.y, laneCoverage: lane, zone: "combat", team });
-      placed.push(p);
-    }
-
-    const pineCount = 2;
-    const copperCount = bias === 2 ? 2 : 1;
-    const placeNode = (id: string, kind: ResourceKind) => {
-      for (let attempt = 0; attempt < 40; attempt++) {
-        const lateral = (rng() - 0.5) * 280;
-        const along = 36 + rng() * 130;
-        const p = toWorld(team, along, lateral);
-        if (nearRoad(p.x, p.y, 30)) continue;
-        if (tooClose(p.x, p.y, placed, 40)) continue;
-        if (tooClose(p.x, p.y, nodes.map((nd) => ({ x: nd.x, y: nd.yourY })), 40)) continue;
-        const loads = kind === "pine" ? 8 + Math.floor(rng() * 6) : 6 + Math.floor(rng() * 5);
-        const gold = kind === "pine" ? 0 : 16 + Math.floor(rng() * 6);
-        const wood = kind === "pine" ? 9 + Math.floor(rng() * 4) : 0;
-        const gather = kind === "pine" ? 1.05 + rng() * 0.25 : 1.9 + rng() * 0.35;
-        const regen = kind === "pine" ? PINE_REGEN * (0.85 + rng() * 0.35) : COPPER_REGEN * (0.85 + rng() * 0.35);
-        nodes.push({ id, kind, x: p.x, yourY: p.y, loads, gold, wood, gather, regen, team });
-        return;
-      }
-    };
-    for (let i = 0; i < pineCount; i++) placeNode(`${team}-pine-${i}`, "pine");
-    for (let i = 0; i < copperCount; i++) placeNode(`${team}-ore-${i}`, "copper");
-    if (!nodes.some((n) => n.team === team && n.kind === "pine")) placeNode(`${team}-pine-safe`, "pine");
-    if (!nodes.some((n) => n.team === team && n.kind === "copper")) placeNode(`${team}-ore-safe`, "copper");
-  }
-
-  return {
-    id: `hub-${players}-${seed}` as MapId,
-    seed,
-    name: `${adj} ${noun}`,
-    tagline: three
-      ? "Three roads meet at the Stronghold. Only its holder can attack a keep."
-      : "Both roads meet at the Stronghold. Only its holder can attack a keep.",
-    pads,
-    nodes,
-    startTowerPad: "keep-guard",
-    layout: "hub",
-    worldW,
-    worldH,
-    keeps,
-    roads,
-    stronghold: { x: centroid.x, y: centroid.y },
   };
 }
 
@@ -436,10 +224,6 @@ const mapCache = new Map<string, MapDef>();
 export function getMap(id: MapId): MapDef {
   const cached = mapCache.get(id);
   if (cached) return cached;
-  const hub = /^hub-([23])-(\d+)$/.exec(id);
-  if (hub) return generateHubMap(Number(hub[2]), Number(hub[1]) as 2 | 3);
-  const tri = /^tri-(\d+)$/.exec(id);
-  if (tri) return generateHubMap(Number(tri[1]), 3);
   // Parse seed from id `seed-12345` or treat as numeric
   const m = /^seed-(\d+)$/.exec(id);
   const seed = m ? Number(m[1]) : hashSeed(id.length, 42);
@@ -462,20 +246,7 @@ export function previewMapsForLevel(level: number, scoutSalt: number): MapDef[] 
   return [getOrCreateCampaignMap(level, scoutSalt)];
 }
 
-function mapIsHub(map: MapDef) {
-  return map.layout === "hub" || map.layout === "triangle";
-}
-
 export function buildPads(map: MapDef): Pad[] {
-  if (mapIsHub(map)) {
-    return map.pads.map((p) => ({
-      id: p.id,
-      team: p.team ?? "you",
-      pos: { x: p.x, y: p.y },
-      laneCoverage: p.laneCoverage,
-      zone: p.zone ?? "combat",
-    }));
-  }
   const pads: Pad[] = [];
   for (const p of map.pads) {
     const zone = p.zone ?? "combat";
@@ -521,23 +292,6 @@ export function buildPads(map: MapDef): Pad[] {
 }
 
 export function buildNodes(map: MapDef): ResourceNode[] {
-  if (mapIsHub(map)) {
-    return map.nodes.map((n) => ({
-      id: n.id,
-      team: n.team ?? "you",
-      kind: n.kind,
-      pos: { x: n.x, y: n.yourY },
-      loadsLeft: n.loads,
-      maxLoads: n.loads,
-      maxWorkers: 2,
-      workers: 0,
-      gatherTime: n.gather,
-      goldPerLoad: n.gold,
-      woodPerLoad: n.wood,
-      regenEvery: n.regen,
-      regenAcc: 0,
-    }));
-  }
   const out: ResourceNode[] = [];
   for (const n of map.nodes) {
     const base = {
@@ -569,29 +323,12 @@ export function buildNodes(map: MapDef): ResourceNode[] {
 }
 
 export function keepPos(team: Team) {
-  if (team === "you") return { x: 200, y: 664 };
-  if (team === "east") return { x: 700, y: 130 };
-  return { x: 200, y: 56 };
-}
-
-export function keepPosFor(map: MapDef, team: Team) {
-  if (mapIsHub(map)) {
-    const k = map.keeps?.find((c) => c.team === team);
-    if (k) return { x: k.x, y: k.y };
-  }
-  return keepPos(team === "east" ? "foe" : team);
+  return team === "you" ? { x: 200, y: 664 } : { x: 200, y: 56 };
 }
 
 export function villagerStart(team: Team, idx: number) {
   if (team === "you") return { x: 170 + idx * 60, y: 630 };
   return { x: 170 + idx * 60, y: 90 };
-}
-
-export function villagerStartFor(map: MapDef, team: Team, idx: number) {
-  if (!mapIsHub(map)) return villagerStart(team, idx);
-  const k = keepPosFor(map, team);
-  const dir = team === "you" ? 1 : -1;
-  return { x: k.x - 28 + idx * 36, y: k.y + dir * 34 };
 }
 
 export function laneYGate(team: Team) {
@@ -607,15 +344,10 @@ export function laneXFor(team: Team, lane: 0 | 1) {
 }
 
 export function startPadId(map: MapDef, team: Team) {
-  if (mapIsHub(map)) return `${team}-keep-guard`;
   return `${team}-${map.startTowerPad}`;
 }
 
 export function startPadPos(map: MapDef, team: Team) {
-  if (mapIsHub(map)) {
-    const p = map.pads.find((x) => x.id === `${team}-keep-guard`) ?? map.pads.find((x) => x.team === team) ?? map.pads[0];
-    return { x: p.x, y: p.y };
-  }
   const p = map.pads.find((x) => x.id === map.startTowerPad) ?? map.pads[0];
   return { x: p.x, y: team === "you" ? p.y : WORLD_H - p.y };
 }

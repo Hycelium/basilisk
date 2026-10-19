@@ -1,4 +1,3 @@
-import { formatIntellect, veryHard } from "../game/learningAi";
 import type { QualityInfo, QualitySetting } from "../game/render3d";
 import type { UiSnapshot } from "../game/types";
 
@@ -12,17 +11,9 @@ interface HudProps {
   onSpeed: () => void;
   onSound: () => void;
   onRush: () => void;
-  onAttack: () => void;
 }
 
-function holdClock(seconds: number) {
-  const total = Math.max(0, Math.ceil(seconds));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound, onRush, onAttack }: HudProps) {
+export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound, onRush }: HudProps) {
   const hpPct = Math.max(0, Math.min(1, ui.yourHp / ui.yourMaxHp));
   const xpPct = ui.keepXpPct;
   const phaseLabel =
@@ -65,55 +56,17 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
           <span className="phase-tag">{phaseLabel}</span>
         </div>
         <div className="stat">
-          <span className="label">{ui.players === 3 ? ui.attackName.toUpperCase() : "FOE HP"}</span>
+          <span className="label">FOE HP</span>
           <span className="value">{ui.foeHp}</span>
-          {ui.players === 3 && (
-            <span className="phase-tag muted">
-              {ui.enemyKeeps.map((k) => `${k.name} ${k.down ? "down" : k.hp}`).join(" · ")}
-            </span>
-          )}
         </div>
         <div className="stat intellect">
           <span className="label">FOE IQ</span>
-          <span className="value">{formatIntellect(ui.foeIntellect)}</span>
-          <div className="bar iq" title="Progress to the next intellect level">
-            <div className="fill" style={{ width: `${ui.foeIntellectPct * 100}%` }} />
-          </div>
+          <span className="value">{ui.foeIntellect}</span>
           <span className="phase-tag muted">
             {ui.foeWins}W/{ui.foeGames}G · ε{explorePct}%
-            {veryHard(ui.foeIntellect) ? " · very hard" : ""}
           </span>
         </div>
       </div>
-      {ui.phase === "running" && ui.strongholdName && (
-        <div className="attack-line stronghold-line">
-          <span className="stronghold-text">
-            Stronghold: {ui.strongholdName} {ui.strongholdPeons}/{ui.strongholdPeonCap}
-          </span>
-          {(ui.strongholdOwner || ui.strongholdHoldLeft < 180) && (
-            <span className="hold-clock">{holdClock(ui.strongholdHoldLeft)}</span>
-          )}
-        </div>
-      )}
-      {ui.phase === "running" && ui.raidName && (
-        <div className="attack-line">
-          <span>Attacking: {ui.raidName}</span>
-        </div>
-      )}
-      {ui.phase === "running" && ui.canOrderAttack && ui.attackPrompt && (
-        <div className="attack-line">
-          <span>{ui.attackPrompt}</span>
-          <button
-            type="button"
-            onClick={onAttack}
-            disabled={!ui.holdsStronghold}
-            title={ui.holdsStronghold ? `Attack ${ui.attackPrompt}` : "Hold the Stronghold to attack a keep"}
-          >
-            Attack
-          </button>
-        </div>
-      )}
-      {ui.phase === "running" && <div className="foe-wave-line">{ui.foeWaveLine}</div>}
       <div className="hud-xp-row">
         <div className="stat keep-xp-stat">
           <span className="label">KEEP LV {ui.keepLevel}</span>

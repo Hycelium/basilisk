@@ -717,69 +717,6 @@ button:disabled {
   color: #c8a878;
 }
 
-.attack-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 44px;
-  margin: 6px 0 0;
-  padding: 0 4px 0 10px;
-  border: 1px solid #5a4a38;
-  border-radius: 10px;
-  background: rgba(16, 12, 10, 0.55);
-  color: #f0d8a8;
-  font-size: 14px;
-}
-
-.attack-line button {
-  min-width: 72px;
-  min-height: 44px;
-  padding: 0 14px;
-}
-
-.stronghold-line {
-  flex-wrap: nowrap;
-  min-height: 32px;
-  white-space: nowrap;
-}
-
-.stronghold-line .stronghold-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.stronghold-line .hold-clock {
-  flex: none;
-  font-variant-numeric: tabular-nums;
-  color: #f3e2bc;
-}
-
-.hud.compact .stronghold-line {
-  grid-column: 1 / -1;
-  min-height: 28px;
-  margin: 0;
-  padding: 0 8px;
-  font-size: 12px;
-}
-
-.cluster-btn[aria-label="Attack"] {
-  width: 44px;
-  height: 44px;
-}
-
-.foe-wave-line {
-  margin: 4px 2px 0;
-  padding: 2px 8px;
-  font-size: 12px;
-  line-height: 1.35;
-  color: #f0d8a8;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .hud-xp-row {
   margin-top: 6px;
 }
@@ -790,21 +727,6 @@ button:disabled {
 
 .stat.intellect .value {
   color: #e8b86a;
-}
-
-.bar.iq {
-  margin-left: auto;
-  margin-right: auto;
-  max-width: 72px;
-}
-
-.bar.iq .fill {
-  background: linear-gradient(90deg, #8a6230, #e8b86a);
-}
-
-.foe-iq-meter {
-  width: min(220px, 70%);
-  margin: 0 auto 8px;
 }
 
 .phase-tag.muted {
@@ -975,13 +897,6 @@ button:disabled {
   font-size: 9px;
   margin-top: 0;
   white-space: nowrap;
-}
-
-.hud.compact .foe-wave-line {
-  grid-column: 1 / -1;
-  margin: 0;
-  padding: 0 4px;
-  font-size: 11px;
 }
 
 .hud.compact .hud-xp-row {
@@ -1583,120 +1498,6 @@ button:disabled {
   overscroll-behavior: contain;
 }
 
-.skirmish-lead {
-  max-width: 360px;
-  margin: 0 auto 10px;
-  color: #cbb892;
-}
-
-.skirmish-field {
-  border: 1px solid #4a3c2c;
-  border-radius: 10px;
-  margin: 0 auto 8px;
-  padding: 6px 10px 10px;
-  max-width: 360px;
-  text-align: left;
-}
-
-.skirmish-field legend {
-  padding: 0 6px;
-  color: #e8c878;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.skirmish-field .seg {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-
-.skirmish-field .seg button {
-  min-height: 44px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-}
-
-.skirmish-field .seg button small {
-  font-size: 11px;
-  color: #b7a07a;
-}
-
-.skirmish-field .seg button.on {
-  outline: 2px solid #e8c878;
-}
-
-.dip-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.dip-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.dip-pair {
-  color: #f0e0c0;
-  font-size: 14px;
-}
-
-.skirmish-field .dip-seg {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  width: 100%;
-}
-
-.skirmish-field .dip-seg button {
-  min-height: 44px;
-  min-width: 0;
-  font-size: 13px;
-  padding-left: 4px;
-  padding-right: 4px;
-}
-
-.slot-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-width: 360px;
-  margin: 0 auto 10px;
-}
-
-.slot-row {
-  display: grid;
-  grid-template-columns: 28px 1fr minmax(140px, 1.2fr);
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-}
-
-.slot-idx {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: #2a2218;
-  color: #e8c878;
-  font-size: 13px;
-}
-
-.slot-row select {
-  min-height: 44px;
-  width: 100%;
-  background: #1a1612;
-  color: #f0e2c4;
-  border: 1px solid #5a4a38;
-  border-radius: 8px;
-  padding: 0 8px;
-}
-
 .layout-side .title-overlay,
 .layout-side .overlay {
   max-width: 520px;
@@ -1706,39 +1507,9 @@ button:disabled {
 }
 
 .layout-side.is-phone .title-overlay {
-  padding: 10px 12px calc(16px + env(safe-area-inset-bottom)) !important;
+  padding: 10px 12px !important;
   font-size: 13px;
   gap: 4px;
-}
-
-.layout-column.is-phone .title-overlay {
-  gap: 4px;
-  padding: 8px 10px 8px !important;
-}
-
-.layout-column.is-phone .skirmish-lead,
-.layout-column.is-phone .foe-brain-tease,
-.layout-column.is-phone .keep-lvl {
-  font-size: 12px;
-}
-
-.layout-column.is-phone .skirmish-field {
-  margin-bottom: 4px;
-  padding: 2px 8px 6px;
-}
-
-.layout-column.is-phone .slot-list {
-  margin-bottom: 4px;
-  gap: 4px;
-}
-
-.layout-column.is-phone .map-card {
-  padding: 6px 8px;
-}
-
-.layout-column.is-phone .title-overlay .cta {
-  margin-top: 4px;
-  scroll-margin-bottom: 8px;
 }
 
 .layout-side.is-phone .title-overlay h1 {

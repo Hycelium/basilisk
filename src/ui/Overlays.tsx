@@ -1,222 +1,49 @@
-import { useEffect, useState } from "react";
-import { formatIntellect, veryHard } from "../game/learningAi";
-import {
-  defaultDiplomacy,
-  diplomacyKey,
-  diplomacyPairs,
-  normalizeDiplomacy,
-  type MapSize,
-  type SeatControl,
-  type SkirmishSetup,
-  type Stance,
-  type Team,
-  type UiSnapshot,
-} from "../game/types";
+import type { UiSnapshot } from "../game/types";
 
 interface OverlaysProps {
   ui: UiSnapshot;
-  onStart: (setup: SkirmishSetup) => void;
+  onStart: () => void;
   onRestart: () => void;
   onRerollMap: () => void;
 }
 
-const SETUP_KEY = "roadkeep.skirmish";
-
-function loadSetup(): SkirmishSetup {
-  const fallback = { mapSize: "small" as const, players: 2 as const, diplomacy: defaultDiplomacy(2) };
-  try {
-    const raw = localStorage.getItem(SETUP_KEY);
-    if (!raw) return fallback;
-    const data = JSON.parse(raw) as Partial<SkirmishSetup>;
-    const mapSize: MapSize = data.mapSize === "large" ? "large" : "small";
-    const players = mapSize === "large" || data.players === 3 ? 3 : 2;
-    return {
-      mapSize: players === 3 ? "large" : "small",
-      players: players === 3 ? 3 : 2,
-      diplomacy: normalizeDiplomacy(data.diplomacy, players === 3 ? 3 : 2),
-    };
-  } catch {
-    return fallback;
-  }
-}
-
-function seatName(team: Team, players: 2 | 3) {
-  if (team === "you") return "You";
-  if (team === "east") return "East";
-  return players === 3 ? "North" : "Foe";
-}
-
-const STANCES: { id: Stance; label: string }[] = [
-  { id: "ally", label: "Ally" },
-  { id: "neutral", label: "Neutral" },
-  { id: "enemy", label: "Enemy" },
-];
-
-/**
- * Skirmish slots are the future lobby roster.
- * A later host can reuse this same list as Local / AI / Open.
- * "Human — room code later" is the Open seat. It stays disabled:
- * GitHub Pages cannot host a realtime room, so this build never joins one.
- * When that host exists, a room code fills an Open seat without a new menu.
- */
-const SEAT_OPTIONS: { id: SeatControl; label: string; enabled: boolean }[] = [
-  { id: "ai", label: "AI", enabled: true },
-  { id: "open", label: "Human — room code later", enabled: false },
-];
-
 export function Overlays({ ui, onStart, onRestart, onRerollMap }: OverlaysProps) {
-  const [setup, setSetup] = useState<SkirmishSetup>(loadSetup);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(SETUP_KEY, JSON.stringify(setup));
-    } catch {
-      /* private mode */
-    }
-  }, [setup]);
-
-  const chooseMap = (mapSize: MapSize) => {
-    const players: 2 | 3 = mapSize === "large" ? 3 : 2;
-    setSetup((prev) => ({
-      mapSize,
-      players,
-      diplomacy: normalizeDiplomacy(prev.diplomacy, players),
-    }));
-  };
-  const choosePlayers = (players: 2 | 3) => {
-    setSetup((prev) => ({
-      players,
-      mapSize: players === 3 ? "large" : "small",
-      diplomacy: normalizeDiplomacy(prev.diplomacy, players),
-    }));
-  };
-  const setStance = (a: Team, b: Team, stance: Stance) => {
-    const key = diplomacyKey(a, b);
-    setSetup((prev) => ({ ...prev, diplomacy: { ...prev.diplomacy, [key]: stance } }));
-  };
-
-  const slots: { name: string; control: SeatControl; fixed?: boolean }[] = [
-    { name: "You", control: "local", fixed: true },
-    { name: setup.players === 3 ? "North" : "Foe", control: "ai" },
-  ];
-  if (setup.players === 3) slots.push({ name: "East", control: "ai" });
-
   return (
     <>
       {ui.phase === "title" && (
-        <div className="overlay title-overlay skirmish-setup">
-          <h1>Skirmish</h1>
+        <div className="overlay title-overlay">
+          <h1>Roadkeep</h1>
           <p className="keep-lvl">
             Keep Level {ui.keepLevel} · XP {ui.keepXp}/{ui.keepXpNext}
           </p>
-          <p className="skirmish-lead">Set the field, then start. One button begins the match.</p>
-
-          <fieldset className="skirmish-field">
-            <legend>Map</legend>
-            <div className="seg" role="group" aria-label="Map size">
-              <button type="button" className={setup.mapSize === "small" ? "on" : ""} onClick={() => chooseMap("small")}>
-                Small
-                <small>1v1</small>
-              </button>
-              <button type="button" className={setup.mapSize === "large" ? "on" : ""} onClick={() => chooseMap("large")}>
-                Large
-                <small>3 keeps</small>
-              </button>
-            </div>
-          </fieldset>
-
-          <fieldset className="skirmish-field">
-            <legend>Players</legend>
-            <div className="seg" role="group" aria-label="Player count">
-              <button type="button" className={setup.players === 2 ? "on" : ""} onClick={() => choosePlayers(2)}>
-                2
-              </button>
-              <button type="button" className={setup.players === 3 ? "on" : ""} onClick={() => choosePlayers(3)}>
-                3
-              </button>
-            </div>
-          </fieldset>
-
-          <fieldset className="skirmish-field">
-            <legend>Diplomacy</legend>
-            <div className="dip-list">
-              {diplomacyPairs(setup.players).map(([a, b]) => {
-                const key = diplomacyKey(a, b);
-                const stance = setup.diplomacy[key] ?? "neutral";
-                const label = `${seatName(a, setup.players)} – ${seatName(b, setup.players)}`;
-                return (
-                  <div className="dip-row" key={key}>
-                    <span className="dip-pair">{label}</span>
-                    <div className="seg dip-seg" role="group" aria-label={label}>
-                      {STANCES.map((opt) => (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          className={stance === opt.id ? "on" : ""}
-                          aria-pressed={stance === opt.id}
-                          onClick={() => setStance(a, b, opt.id)}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </fieldset>
-
-          <div className="slot-list" role="list" aria-label="Player slots">
-            {slots.map((slot, index) => (
-              <div className="slot-row" role="listitem" key={`${slot.name}-${index}`}>
-                <span className="slot-idx">{index + 1}</span>
-                <span className="slot-name">{slot.name}</span>
-                {slot.fixed ? (
-                  <select aria-label={`${slot.name} control`} value="local" disabled>
-                    <option value="local">Local</option>
-                  </select>
-                ) : (
-                  <select aria-label={`${slot.name} control`} value="ai" onChange={() => undefined}>
-                    {SEAT_OPTIONS.map((opt) => (
-                      <option key={opt.id} value={opt.id} disabled={!opt.enabled}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-            ))}
-          </div>
+          <p>Every keep level forges a new battlefield. Infinite campaign maps.</p>
 
           <div className="map-card selected campaign-map">
-            <strong>{setup.mapSize === "large" ? "Three-keep field" : ui.mapName}</strong>
-            <span>
-              {setup.mapSize === "large"
-                ? "Three roads meet at the Stronghold. Only its holder can attack a keep."
-                : "Both roads meet at the Stronghold. Only its holder can attack a keep."}
+            <strong>{ui.mapName}</strong>
+            <span>{ui.mapTagline}</span>
+            <span className="map-meta">
+              Campaign Lv {ui.campaignLevel}
+              {ui.scoutSalt > 0 ? ` · Scout ${ui.scoutSalt}` : ""} · seed {ui.mapSeed}
             </span>
-            {setup.mapSize === "small" && (
-              <span className="map-meta">
-                Campaign Lv {ui.campaignLevel}
-                {ui.scoutSalt > 0 ? ` · Scout ${ui.scoutSalt}` : ""} · seed {ui.mapSeed}
-              </span>
-            )}
           </div>
 
-          {setup.mapSize === "small" && (
-            <button type="button" className="ghost reroll-btn" onClick={onRerollMap}>
-              Scout new terrain
-            </button>
-          )}
+          <button type="button" className="ghost reroll-btn" onClick={onRerollMap}>
+            Scout new terrain
+          </button>
 
           <p className="foe-brain-tease">
-            Foe intellect {formatIntellect(ui.foeIntellect)}
-            {veryHard(ui.foeIntellect) ? " · very hard" : ""}
+            Foe intellect {ui.foeIntellect}
             {ui.foeGames > 0 ? ` · ${ui.foeWins}W / ${ui.foeGames} games learned` : " · virgin Q-table"}
           </p>
 
-          <button type="button" className="cta" onClick={() => onStart(setup)}>
-            Start Skirmish
+          <ul className="tips">
+            <li>The foe Q-learns your builds across sessions</li>
+            <li>Level up → brand-new map layout forever</li>
+            <li>Scout new terrain → reroll pads &amp; resources at this level</li>
+          </ul>
+
+          <button type="button" className="cta" onClick={onStart}>
+            Take the field — {ui.mapName}
           </button>
         </div>
       )}
@@ -230,22 +57,13 @@ export function Overlays({ ui, onStart, onRestart, onRerollMap }: OverlaysProps)
             Waves: {ui.stats.waves}/{ui.totalWaves}
           </p>
           <p>
-            Your keep: {ui.stats.yourKeep}
-            {ui.enemyKeeps.length > 1
-              ? ui.enemyKeeps.map((k) => ` · ${k.name}: ${k.hp}`).join("")
-              : ` · Theirs: ${ui.stats.foeKeep}`}
+            Your keep: {ui.stats.yourKeep} · Theirs: {ui.stats.foeKeep}
           </p>
           {ui.lastXpGain > 0 && <p className="xp-gain">+{ui.lastXpGain} Keep XP</p>}
           <p className="keep-lvl">Keep Level {ui.keepLevel}</p>
           <p className="foe-brain-tease">
-            Foe intellect {formatIntellect(ui.foeIntellect)}
-            {veryHard(ui.foeIntellect) ? " · very hard" : ""} · remembered {ui.foeGames} sieges
+            Foe intellect {ui.foeIntellect} · remembered {ui.foeGames} sieges
           </p>
-          <div className="foe-iq-meter" title="Progress to the next intellect level">
-            <div className="bar iq">
-              <div className="fill" style={{ width: `${ui.foeIntellectPct * 100}%` }} />
-            </div>
-          </div>
           <p className="map-next-hint">Play again loads the map for your current keep level. The foe keeps learning.</p>
           <button type="button" className="cta" onClick={onRestart}>
             Play again

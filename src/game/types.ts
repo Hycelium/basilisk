@@ -1,56 +1,4 @@
-export type Team = "you" | "foe" | "east";
-/**
- * Seat control for the skirmish roster. A later lobby reuses the same list:
- * Local (this machine), AI, and Open (a human who joins with a room code).
- * Open is not selectable until a realtime host exists.
- */
-export type SeatControl = "local" | "ai" | "open";
-export type MapSize = "small" | "large";
-/** AoE2 stance for one unordered pair of seats. */
-export type Stance = "ally" | "neutral" | "enemy";
-/**
- * Keys are `diplomacyKey(a, b)`: "you|foe", "you|east", "foe|east".
- * Missing keys are Neutral. Every pair starts Neutral.
- */
-export type Diplomacy = Record<string, Stance>;
-export interface SkirmishSetup {
-  mapSize: MapSize;
-  players: 2 | 3;
-  diplomacy: Diplomacy;
-}
-
-const TEAM_ORDER: Team[] = ["you", "foe", "east"];
-
-export function diplomacyKey(a: Team, b: Team) {
-  const [x, y] = TEAM_ORDER.indexOf(a) < TEAM_ORDER.indexOf(b) ? [a, b] : [b, a];
-  return `${x}|${y}`;
-}
-
-export function diplomacyPairs(players: 2 | 3): [Team, Team][] {
-  const pairs: [Team, Team][] = [["you", "foe"]];
-  if (players === 3) pairs.push(["you", "east"], ["foe", "east"]);
-  return pairs;
-}
-
-export function defaultDiplomacy(players: 2 | 3): Diplomacy {
-  const out: Diplomacy = {};
-  for (const [a, b] of diplomacyPairs(players)) out[diplomacyKey(a, b)] = "neutral";
-  return out;
-}
-
-export function normalizeDiplomacy(raw: unknown, players: 2 | 3): Diplomacy {
-  const base = defaultDiplomacy(players);
-  if (!raw || typeof raw !== "object") return base;
-  const src = raw as Record<string, unknown>;
-  for (const key of Object.keys(base)) {
-    const value = src[key];
-    if (value === "ally" || value === "neutral" || value === "enemy") base[key] = value;
-  }
-  return base;
-}
-
-/** you and foe always exist. east is only present in a 3-player skirmish. */
-export type TeamBag<T> = { you: T; foe: T; east?: T };
+export type Team = "you" | "foe";
 export type WaveUnitKind = "raider" | "soldier" | "brute" | "runner" | "ward";
 export type TrainKind = "levy" | "runner" | "archer" | "ward" | "rammer";
 export type UnitKind = WaveUnitKind | TrainKind;
@@ -108,10 +56,6 @@ export interface Unit {
   engageFrom?: Vec2;
   aiHeldForRush?: boolean;
   aiStagingPoint?: Vec2;
-  /** 3-player march: the enemy keep this unit is sent toward. */
-  goalTeam?: Team;
-  /** Fight in the stronghold ring. Never permission to damage the building. */
-  hillPost?: boolean;
 }
 
 export type WavePhase = "build" | "spawning" | "fighting";
@@ -184,21 +128,7 @@ export interface Villager {
   speed: number;
   hp: number;
   maxHp: number;
-  state:
-    | "idle"
-    | "toNode"
-    | "gathering"
-    | "toKeep"
-    | "home"
-    | "defend"
-    | "toGarrison"
-    | "garrisoned"
-    | "toStronghold"
-    | "inStronghold"
-    | "toBarricade"
-    | "buildingBarricade"
-    | "moving"
-    | "patrolling";
+  state: "idle" | "toNode" | "gathering" | "toKeep" | "home" | "defend" | "toGarrison" | "garrisoned" | "toBarricade" | "buildingBarricade" | "moving" | "patrolling";
   targetNodeId?: string;
   targetEnemyId?: number;
   targetBarricadeId?: number;
@@ -281,7 +211,7 @@ export interface MapDef {
   seed: number;
   name: string;
   tagline: string;
-  pads: { id: string; x: number; y: number; laneCoverage: 0 | 1 | 2; zone?: PadZone; team?: Team }[];
+  pads: { id: string; x: number; y: number; laneCoverage: 0 | 1 | 2; zone?: PadZone }[];
   nodes: {
     id: string;
     kind: ResourceKind;
@@ -292,39 +222,8 @@ export interface MapDef {
     wood: number;
     gather: number;
     regen: number;
-    team?: Team;
   }[];
   startTowerPad: string;
-  /** Duel is the classic north/south map. Hub roads meet at the stronghold. */
-  layout?: "duel" | "triangle" | "hub";
-  worldW?: number;
-  worldH?: number;
-  keeps?: { team: Team; x: number; y: number }[];
-  /** `b: "hold"` is the road from a keep gate to the central stronghold. */
-  roads?: { a: Team; b: Team | "hold"; points: { x: number; y: number }[] }[];
-  stronghold?: { x: number; y: number };
-}
-
-export interface Stronghold {
-  pos: Vec2;
-  hp: number;
-  maxHp: number;
-  /**
-   * Team with strictly the most peons inside.
-   * A tie, or an empty stronghold, is unheld: the clock pauses and raids stop.
-   */
-  owner: Team | null;
-  /** Unused. Ownership flips with the peon count, not a capture channel. */
-  channelTeam: Team | null;
-  channel: number;
-  /**
-   * Seconds the current owning team has held it.
-   * Resets only when a different team takes the hill. Pauses while nobody holds it.
-   */
-  hold: number;
-  /** True when two teams tie for the most peons inside. */
-  contested: boolean;
-  hitFlash: number;
 }
 
 export interface GameState {
@@ -335,26 +234,9 @@ export interface GameState {
   speed: 1 | 2;
   soundOn: boolean;
   audioUnlocked: boolean;
-  keeps: TeamBag<Keep>;
-  gold: TeamBag<number>;
-  wood: TeamBag<number>;
-  /** 2 = the classic duel. 3 = free-for-all on the large map. */
-  players: 2 | 3;
-  /** Stance for each seat pair. Default Neutral so two AIs do not both open on the human. */
-  diplomacy: Diplomacy;
-  /** Central hill. Present on hub maps; unused on the title duel. */
-  stronghold: Stronghold;
-  /** Keep the holder is raiding. Null unless a raid is committed. */
-  raidTarget: Team | null;
-  /** Team that ordered the current raid. Only the stronghold owner may set this. */
-  raidOwner: Team | null;
-  /** Keep the human clicked. Attack commits a raid only while they hold the stronghold. */
-  pendingAttack: Team | null;
-  /** @deprecated Kept so older call sites compile. Raids use raidTarget. */
-  attackTarget: Team;
-  eliminated: Team[];
-  worldW: number;
-  worldH: number;
+  keeps: Record<Team, Keep>;
+  gold: Record<Team, number>;
+  wood: Record<Team, number>;
   units: Unit[];
   buildings: Building[];
   villagers: Villager[];
@@ -369,13 +251,9 @@ export interface GameState {
   pendingWaveUnits: WaveQueueItem[];
   allWavesLaunched: boolean;
   wavesCleared: number;
-  /** Committed AI attack waves this match. One counter per team. Not saved. */
-  aiAttackWaves: TeamBag<number>;
   buildSelection: BuildingKind | null;
   selectedBuildingId: number | null;
   selectedVillagerIds: number[];
-  /** Your soldiers. Right-clicking the stronghold sends them into the ring. */
-  selectedUnitIds: number[];
   /** When set, DetailSheet shows peon training at the keep. */
   selectedKeepTeam: Team | null;
   hoveredPadId: string | null;
@@ -383,7 +261,7 @@ export interface GameState {
   floatingTexts: FloatingText[];
   combatEvents: CombatEvent[];
   commandMarkers: CommandMarker[];
-  stats: TeamBag<TeamStats>;
+  stats: Record<Team, TeamStats>;
   pulseNodeUntil: number;
   firstVillagerAssigned: boolean;
   endReason: string;
@@ -472,39 +350,15 @@ export interface UiSnapshot {
     yourKeep: number;
     foeKeep: number;
   };
-  /** Persistent Q-learning foe — climbs as it plays you. No level ceiling. */
+  /** Persistent Q-learning foe — climbs as it plays you. */
   foeIntellect: number;
-  /** 0–1 progress toward the next intellect level. */
-  foeIntellectPct: number;
   foeGames: number;
   foeWins: number;
   foeExplore: number;
   foeLastAction: string;
-  players: 2 | 3;
-  attackName: string;
-  enemyKeeps: { team: Team; name: string; hp: number; down: boolean }[];
-  /** One running-match line, e.g. "Foe wave 4 · honed". */
-  foeWaveLine: string;
-  /** "You", "Tied", or "Unclaimed". */
-  strongholdName: string;
-  strongholdOwner: Team | null;
-  /** Holder's peons while held, otherwise total peons inside. */
-  strongholdPeons: number;
-  strongholdPeonCap: number;
-  /** Seconds left on the 3-minute hold. Pauses while the hill is unheld. */
-  strongholdHoldLeft: number;
-  strongholdContested: boolean;
-  /** Kept for older HUD fields. The hill no longer uses a capture channel. */
-  strongholdChannel: number;
-  holdsStronghold: boolean;
-  /** Set only while a keep raid is committed. */
-  raidName: string | null;
-  /** Clicked keep that can take an Attack order. Null for allies. */
-  attackPrompt: string | null;
-  canOrderAttack: boolean;
 }
 
 export interface RectHit {
-  kind: "keep" | "pad" | "building" | "node" | "unit" | "villager" | "stronghold";
+  kind: "keep" | "pad" | "building" | "node" | "unit" | "villager";
   id: string;
 }
