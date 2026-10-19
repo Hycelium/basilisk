@@ -150,6 +150,43 @@ export function rushCommitDelay(intellect: number) {
   return 3.2 + (6 - 3.2) / (1 + (iq - 100) / 120);
 }
 
+/**
+ * Level 10 is the very-hard line. The same brain stays very hard after that;
+ * further levels only tighten timing and fill waves. Below 10 it is still
+ * the learning opponent a new player can beat.
+ */
+export const VERY_HARD_LEVEL = 10;
+
+export function veryHard(intellect: number) {
+  return Number.isFinite(intellect) && intellect >= VERY_HARD_LEVEL;
+}
+
+/** How many levels past the very-hard line. Zero until then. */
+export function executionEdge(intellect: number) {
+  if (!veryHard(intellect)) return 0;
+  return intellect - VERY_HARD_LEVEL;
+}
+
+/**
+ * Units a warband waits to assemble. The old cap (7) stays below level 10.
+ * Past that the wave grows slowly and stops at 11 — a fuller rush, not a
+ * larger supply cap.
+ */
+export function waveSizeTarget(intellect: number) {
+  const iq = Number.isFinite(intellect) ? intellect : 8;
+  if (!veryHard(iq)) return Math.min(7, 4 + Math.floor(Math.max(0, iq) / 35));
+  return Math.min(11, 6 + Math.floor(executionEdge(iq) / 20));
+}
+
+/**
+ * Longest a very-hard warband holds while it builds a mixed wave.
+ * About 16s at level 10, tightening toward 9s as execution sharpens.
+ */
+export function veryHardHoldSeconds(intellect: number) {
+  const edge = executionEdge(intellect);
+  return 8.5 + 7.5 / (1 + edge / 36);
+}
+
 export function formatIntellect(n: number) {
   const v = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 8;
   return v.toLocaleString("en-US");
@@ -189,6 +226,8 @@ export class LearningBrain {
   private lastActionName: LearnAction = "wait";
   private matchRewardAcc = 0;
   private lastFeatures: LearnFeatures | null = null;
+  /** True when the latest choose() rolled exploration rather than the greedy action. */
+  private explored = false;
 
   constructor() {
     this.load();
@@ -328,8 +367,10 @@ export class LearningBrain {
       this.tdUpdate(this.lastKey, this.lastActionIdx, reward, key);
     }
 
+    const explore = Math.random() < this.epsilon();
+    this.explored = explore;
     let idx: number;
-    if (Math.random() < this.epsilon()) {
+    if (explore) {
       idx =
         this.experience() > OLD_CAP_EXPERIENCE
           ? this.sampleSoftmax(row, features)
@@ -352,6 +393,22 @@ export class LearningBrain {
     this.lastActionName = LEARN_ACTIONS[idx];
     this.lastFeatures = { ...features };
     return this.lastActionName;
+  }
+
+  /** Whether the action just returned by choose() was an explore roll. */
+  tookExplore() {
+    return this.explored;
+  }
+
+  /**
+   * The scripted policy actually did this, so the next TD update credits it
+   * instead of an explore roll we refused to apply.
+   */
+  commitAction(action: LearnAction) {
+    const idx = LEARN_ACTIONS.indexOf(action);
+    if (idx < 0 || !this.lastKey) return;
+    this.lastActionIdx = idx;
+    this.lastActionName = action;
   }
 
   private stepReward(f: LearnFeatures, previous: LearnFeatures | null) {

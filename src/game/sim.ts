@@ -57,7 +57,15 @@ import {
   villagerStart,
 } from "./map";
 import { foeBrainStats, notifyAiMatchEnd, notifyAiMatchStart, runAiTurn } from "./ai";
-import { formatIntellect, rushCommitDelay, thinkInterval } from "./learningAi";
+import {
+  executionEdge,
+  formatIntellect,
+  rushCommitDelay,
+  thinkInterval,
+  veryHard,
+  veryHardHoldSeconds,
+  waveSizeTarget,
+} from "./learningAi";
 import {
   awardMatchXp,
   bumpScoutSalt,
@@ -101,11 +109,70 @@ const KEEP_ARROW_RANGE = 185;
 const KEEP_ARROW_COOLDOWN = 1.15;
 const ARCHER_RANGE = 112;
 
+/** What the human is doing, kept between foe thinks. Single-player omniscience. */
+interface HumanAiRead {
+  levies: number;
+  runners: number;
+  rammers: number;
+  archers: number;
+  ballistae: number;
+  catapults: number;
+  watchtowers: number;
+  peonsField: number;
+  peonsGarrison: number;
+  peonsWood: number;
+  peonsGold: number;
+  forwardPeons: number;
+  barracks: number;
+  houses: number;
+  keepHp: number;
+  queuedLevies: number;
+  recentLevies: number;
+  hasRally: boolean;
+  /** Mean Y of the human army. Lower is closer to the foe keep. */
+  armyY: number;
+  rushLane: 0 | 1;
+  rush: boolean;
+  rushNear: boolean;
+  attrition: boolean;
+}
+
+function blankHumanRead(): HumanAiRead {
+  return {
+    levies: 0,
+    runners: 0,
+    rammers: 0,
+    archers: 0,
+    ballistae: 0,
+    catapults: 0,
+    watchtowers: 0,
+    peonsField: 0,
+    peonsGarrison: 0,
+    peonsWood: 0,
+    peonsGold: 0,
+    forwardPeons: 0,
+    barracks: 0,
+    houses: 0,
+    keepHp: 0,
+    queuedLevies: 0,
+    recentLevies: 0,
+    hasRally: false,
+    armyY: 664,
+    rushLane: 0,
+    rush: false,
+    rushNear: false,
+    attrition: false,
+  };
+}
+
 export class GameSim {
   private nextId = 1;
   private state: GameState;
   private aiTimer = 0;
   private aiRushDeadline = 0;
+  private aiRead: HumanAiRead = blankHumanRead();
+  private aiSeenLevyIds: number[] = [];
+  private aiSlainAtWave = 0;
   private activeMap: MapDef;
   private controlGroups = new Map<number, number[]>();
 
@@ -259,6 +326,9 @@ export class GameSim {
     this.nextId = 1;
     this.aiTimer = 0;
     this.aiRushDeadline = 0;
+    this.aiRead = blankHumanRead();
+    this.aiSeenLevyIds = [];
+    this.aiSlainAtWave = 0;
     this.state = this.makeFreshState(this.activeMap);
   }
 
@@ -1416,11 +1486,29 @@ export class GameSim {
 
   private updateUnitMovementAndMelee(dt: number, team: Team) {
     const enemyTeam = this.enemy(team);
+    const hardHold = veryHard(foeBrainStats().intellect);
     for (const u of this.state.units.filter((x) => x.team === team)) {
       u.attackTimer -= dt;
       const gateY = laneYGate(team);
       const enemies = this.state.units.filter((e) => e.team === enemyTeam && e.lane === u.lane);
       if (u.fromBarracks) {
+        // A very-hard wave stays stacked on its staging point. It only swings
+        // at someone already in reach, then resumes the hold. After release,
+        // the attack-move / leash path below carries the group.
+        if (hardHold && u.aiHeldForRush && u.aiStagingPoint) {
+          const hostile = this.pickMilitaryHostile(u, team);
+          const contact = u.kind === "archer" ? ARCHER_RANGE : 18;
+          if (hostile && dist(u.pos, hostile.pos) <= contact) {
+            this.fightMilitary(u, hostile, team, dt);
+            continue;
+          }
+          u.engageFrom = undefined;
+          u.targetUnitId = undefined;
+          if (dist(u.pos, u.aiStagingPoint) > 4) {
+            moveTowards(u.pos, u.aiStagingPoint, u.speed, dt);
+          }
+          continue;
+        }
         const hostile = this.pickMilitaryHostile(u, team);
         if (hostile) {
           this.fightMilitary(u, hostile, team, dt);
@@ -1641,9 +1729,18 @@ export class GameSim {
     const keep = this.teamKeep(team);
     // React before attackers reach the siege line. The old 160-Y trigger gave
     // distant workers too little time to reach the keep and garrison.
-    const threats = this.state.units
+    const closeThreats = this.state.units
       .filter((u) => u.team === "you" && u.pos.y <= FOE_SIEGE_Y + 170)
       .sort((a, b) => dist(a.pos, keep.pos) - dist(b.pos, keep.pos));
+    // Level 10+ already saw the levy rush on the last think. Pull a few peons
+    // once that rush is actually on the road, and send them back when it breaks.
+    const advancing =
+      veryHard(foeBrainStats().intellect) && this.aiRead.rushNear
+        ? this.state.units
+            .filter((u) => u.team === "you" && u.fromBarracks && u.hp > 0 && u.pos.y <= 480)
+            .sort((a, b) => dist(a.pos, keep.pos) - dist(b.pos, keep.pos))
+        : [];
+    const threats = closeThreats.length > 0 ? closeThreats : advancing;
     const peons = this.state.villagers.filter((v) => v.team === team && v.hp > 0);
 
     if (threats.length === 0) {
@@ -1669,7 +1766,10 @@ export class GameSim {
       0,
     );
     const critical = keep.hp < keep.maxHp * 0.45 || threatScore >= 6;
-    const economyReserve = critical ? 0 : peons.length > 2 ? 1 : 0;
+    const onlyAdvancing = closeThreats.length === 0;
+    // A rush that is still up the road takes one defender and leaves a worker
+    // on the grove. Units already at the gate use the old, tighter reserve.
+    const economyReserve = critical ? 0 : onlyAdvancing ? 1 : peons.length > 2 ? 1 : 0;
     const desiredGarrison = Math.min(
       KEEP_GARRISON_MAX,
       Math.max(1, Math.ceil(threatScore / 2)),
@@ -1681,7 +1781,13 @@ export class GameSim {
 
     if (committed < desiredGarrison) {
       const candidates = peons
-        .filter((v) => v.state !== "garrisoned" && v.state !== "toGarrison")
+        .filter(
+          (v) =>
+            v.state !== "garrisoned" &&
+            v.state !== "toGarrison" &&
+            v.state !== "toBarricade" &&
+            v.state !== "buildingBarricade",
+        )
         // Protect injured workers first, then minimize travel time to safety.
         .sort((a, b) => a.hp - b.hp || dist(a.pos, keep.pos) - dist(b.pos, keep.pos))
         .slice(0, desiredGarrison - committed);
@@ -2121,10 +2227,11 @@ export class GameSim {
     return this.state.units.filter((u) => u.team === "you" && u.pos.y <= maxY);
   }
 
-  aiBuildDefensiveBarricade() {
+  aiBuildDefensiveBarricade(preferredLane?: 0 | 1) {
     const cost = BUILD_COST.barricade;
     const existing = this.state.barricades.filter((b) => b.team === "foe");
-    const maxBarricades = this.state.waveIndex >= 4 ? 2 : 1;
+    const answeringRush = veryHard(foeBrainStats().intellect) && this.aiRead.rush;
+    const maxBarricades = answeringRush || this.state.waveIndex >= 4 ? 2 : 1;
     if (existing.length >= maxBarricades) return false;
     if (this.state.gold.foe < cost.gold + 20 || this.state.wood.foe < cost.wood + 30) return false;
     if (this.aiObservedHumanUnits(205).length > 0) return false;
@@ -2134,7 +2241,9 @@ export class GameSim {
     for (const unit of observed) lanePressure[unit.lane] += unit.kind === "rammer" ? 3 : 1;
     for (const barricade of existing) lanePressure[barricade.lane] = -100;
     let lane = (lanePressure[1] > lanePressure[0] ? 1 : 0) as 0 | 1;
-    if (lanePressure[0] === lanePressure[1]) {
+    if (preferredLane !== undefined && !existing.some((b) => b.lane === preferredLane)) {
+      lane = preferredLane;
+    } else if (lanePressure[0] === lanePressure[1]) {
       lane = ((this.state.waveIndex + existing.length) % 2) as 0 | 1;
     }
     if (existing.some((b) => b.lane === lane)) lane = (lane === 0 ? 1 : 0);
@@ -2188,6 +2297,189 @@ export class GameSim {
     return true;
   }
 
+  /** Live human read. Kept on the sim so the next think still knows the plan. */
+  readHumanForAi(): HumanAiRead {
+    const s = this.state;
+    const yours = s.buildings.filter((b) => b.team === "you");
+    const humanUnits = s.units.filter((u) => u.team === "you" && u.hp > 0);
+    const levies = humanUnits.filter((u) => u.kind === "levy");
+    const barracksLevies = levies.filter((u) => u.fromBarracks);
+    const peons = s.villagers.filter((v) => v.team === "you" && v.hp > 0);
+    const fieldPeons = peons.filter((v) => v.state !== "garrisoned");
+    const onResource = (kind: "pine" | "copper") =>
+      fieldPeons.filter((v) => {
+        const node = s.nodes.find((n) => n.id === v.targetNodeId);
+        return (
+          node?.kind === kind &&
+          (v.state === "toNode" || v.state === "gathering" || v.state === "toKeep")
+        );
+      }).length;
+    const humanBarracks = yours.filter((b) => b.kind === "barracks");
+    const queuedLevies = humanBarracks.reduce(
+      (n, b) => n + b.queue.filter((job) => job.kind === "levy").length,
+      0,
+    );
+    const levyIds = barracksLevies.map((u) => u.id);
+    const recentLevies = levyIds.filter((id) => !this.aiSeenLevyIds.includes(id)).length;
+    this.aiSeenLevyIds = levyIds;
+
+    const moving = barracksLevies.filter((u) => u.pos.y < 580);
+    const near = barracksLevies.filter((u) => u.pos.y <= 460);
+    const massing =
+      humanBarracks.length > 0 &&
+      (queuedLevies >= 2 ||
+        barracksLevies.length >= 3 ||
+        (recentLevies >= 2 && barracksLevies.length >= 2));
+    const movingUp = moving.length >= 3;
+    const rush = massing || movingUp;
+    const rushNear = near.length >= 2 || (movingUp && moving.some((u) => u.pos.y <= 420));
+
+    const laneScore = [0, 0];
+    for (const unit of moving.length > 0 ? moving : barracksLevies) laneScore[unit.lane] += 1;
+    const rushLane = (laneScore[1] > laneScore[0] ? 1 : 0) as 0 | 1;
+
+    const army = humanUnits.filter((u) => u.pos.y > 80 && u.pos.y < 660);
+    const armyY = army.length
+      ? army.reduce((sum, u) => sum + u.pos.y, 0) / army.length
+      : s.keeps.you.pos.y;
+    const parked = army.filter((u) => u.fromBarracks && u.pos.y > 220 && u.pos.y < 560);
+    const foeTrading = s.units.filter(
+      (u) => u.team === "foe" && u.fromBarracks && u.hp > 0 && !u.aiHeldForRush,
+    );
+    const losingPieces =
+      s.stats.foe.slain > this.aiSlainAtWave && foeTrading.length < parked.length;
+    let attrition =
+      parked.length >= 4 || (parked.length >= 3 && (losingPieces || foeTrading.length > 0));
+    if (this.aiRead.attrition && parked.length >= 2) attrition = true;
+    if (parked.length < 2) attrition = false;
+
+    this.aiRead = {
+      levies: barracksLevies.length,
+      runners: humanUnits.filter((u) => u.kind === "runner").length,
+      rammers: humanUnits.filter((u) => u.kind === "rammer").length,
+      archers: humanUnits.filter((u) => u.kind === "archer").length,
+      ballistae: yours.filter((b) => b.kind === "ballista").length,
+      catapults: yours.filter((b) => b.kind === "catapult").length,
+      watchtowers: yours.filter((b) => b.kind === "watchtower").length,
+      peonsField: fieldPeons.length,
+      peonsGarrison: peons.length - fieldPeons.length,
+      peonsWood: onResource("pine"),
+      peonsGold: onResource("copper"),
+      forwardPeons: fieldPeons.filter((v) => v.pos.y < 520).length,
+      barracks: humanBarracks.length,
+      houses: yours.filter((b) => b.kind === "house").length,
+      keepHp: s.keeps.you.hp,
+      queuedLevies,
+      recentLevies,
+      hasRally: humanBarracks.some((b) => !!b.rallyPoint),
+      armyY,
+      rushLane,
+      rush,
+      rushNear,
+      attrition,
+    };
+    return this.aiRead;
+  }
+
+  foeWaveHolding() {
+    return this.state.units.some(
+      (u) => u.team === "foe" && u.fromBarracks && u.aiHeldForRush && u.hp > 0,
+    );
+  }
+
+  /** Towers, a barricade on the rush lane, and a barracks so archers can answer. */
+  aiAnswerLevyRush() {
+    if (!veryHard(foeBrainStats().intellect) || !this.aiRead.rush) return false;
+    const read = this.aiRead;
+    let acted = false;
+    const defenses = this.getBuildings("foe").filter(
+      (b) => b.kind === "watchtower" || b.kind === "ballista" || b.kind === "catapult",
+    );
+    const wantTowers = read.rushNear ? 3 : 2;
+    if (defenses.length < wantTowers) {
+      const kind = defenses.length >= 2 ? "ballista" : "watchtower";
+      if (this.placeAiBuilding(kind, 0)) acted = true;
+    }
+    if (this.aiBuildDefensiveBarricade(read.rushLane)) acted = true;
+    const barracks = this.getBuildings("foe").filter((b) => b.kind === "barracks");
+    if (barracks.length === 0 && defenses.length >= 1) {
+      if (this.placeAiBuilding("barracks", 0)) acted = true;
+    }
+    return acted;
+  }
+
+  private wavePool() {
+    const bars = this.state.buildings.filter((b) => b.team === "foe" && b.kind === "barracks");
+    const queued = bars.flatMap((b) => b.queue.map((job) => job.kind));
+    const force = this.state.units.filter((u) => u.team === "foe" && u.fromBarracks && u.hp > 0);
+    const count = (kind: TrainKind) =>
+      force.filter((u) => u.kind === kind).length + queued.filter((k) => k === kind).length;
+    return {
+      levy: count("levy"),
+      runner: count("runner"),
+      archer: count("archer"),
+      ward: count("ward"),
+      rammer: count("rammer"),
+      total: force.length + queued.length,
+    };
+  }
+
+  /** Next roles for one mixed wave, chosen from the human's field. Empty when the wave is full. */
+  private waveKindOrder(skill: number): TrainKind[] {
+    const read = this.aiRead;
+    const have = this.wavePool();
+    const target = waveSizeTarget(skill);
+    if (have.total >= target) return [];
+    const towers = read.watchtowers + read.ballistae + read.catapults;
+    const wantSiege = towers >= 2 || read.ballistae + read.catapults > 0;
+    const wantRunner = read.archers >= 2 || read.forwardPeons >= 2 || read.peonsField >= 4;
+    const order: TrainKind[] = [];
+    const push = (kind: TrainKind, cap: number) => {
+      if (have[kind] < cap) order.push(kind);
+    };
+    if (read.rush) {
+      // Archers and a ward shoot and soak the levy mass. Rams are only for buildings.
+      push("archer", 2);
+      push("ward", 1);
+      push("levy", 2);
+      if (wantSiege) push("rammer", 1);
+    } else {
+      if (wantSiege) push("rammer", 1);
+      push("archer", read.levies >= 3 ? 2 : 1);
+      if (wantRunner) push("runner", 1);
+      if (read.archers >= 2) push("ward", 1);
+      push("levy", Math.max(2, target - 3));
+    }
+    if (order.length === 0 && have.total < target) {
+      const fillers: TrainKind[] = ["levy", "archer", "runner", "ward", "rammer"];
+      fillers.sort((a, b) => have[a] - have[b]);
+      order.push(fillers[0]);
+    }
+    return order;
+  }
+
+  /** Queue the missing pieces of the current wave. Returns the last kind actually bought. */
+  aiFillWave(skill: number): TrainKind | null {
+    const bars = this.state.buildings.filter((b) => b.team === "foe" && b.kind === "barracks");
+    if (bars.length === 0) return null;
+    if (bars.every((b) => b.queue.length >= 3)) return null;
+    const slots = 1 + Math.min(2, Math.floor(executionEdge(skill) / 18));
+    let last: TrainKind | null = null;
+    for (let n = 0; n < slots; n++) {
+      const order = this.waveKindOrder(skill);
+      let placed = false;
+      for (const kind of order) {
+        if (this.aiEnqueueTrain(kind, 0)) {
+          last = kind;
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) break;
+    }
+    return last;
+  }
+
   aiCoordinateRush(skill: number) {
     const held = this.state.units.filter(
       (u) => u.team === "foe" && u.fromBarracks && u.aiHeldForRush && u.hp > 0,
@@ -2196,6 +2488,12 @@ export class GameSim {
       this.aiRushDeadline = 0;
       return false;
     }
+    if (!veryHard(skill)) return this.releaseLearningWarband(skill, held);
+    return this.releaseVeryHardWave(skill, held);
+  }
+
+  /** Level 8–9. Small groups, and a timeout that does not demand a mixed wave. */
+  private releaseLearningWarband(skill: number, held: Unit[]) {
     if (this.aiRushDeadline <= 0) {
       this.aiRushDeadline = this.state.time + rushCommitDelay(skill);
     }
@@ -2207,10 +2505,82 @@ export class GameSim {
     const timedOut = this.state.time >= this.aiRushDeadline;
     const release =
       (immediateDefense && held.length >= 2) ||
-      (held.length >= groupSize && (hasFrontline && hasSupport)) ||
+      (held.length >= groupSize && hasFrontline && hasSupport) ||
       (timedOut && held.length >= 3);
     if (!release) return false;
 
+    const targetLane = this.laneByHumanDefense();
+    held.forEach((unit, index) => {
+      unit.aiHeldForRush = false;
+      unit.aiStagingPoint = undefined;
+      unit.rallyPoint = undefined;
+      unit.engageFrom = undefined;
+      unit.targetUnitId = undefined;
+      unit.lane = index % 3 === 2 ? (targetLane === 0 ? 1 : 0) : targetLane;
+    });
+    this.aiRushDeadline = 0;
+    this.addToast(`Enemy warband rushes the ${targetLane === 0 ? "west" : "east"} road!`);
+    return true;
+  }
+
+  /**
+   * Level 10+. One staging point, one commit time. Release when the mix is
+   * full, or when the safety timer says the hold has gone on long enough.
+   * A standing human army is not a reason to send the next single recruit.
+   */
+  private releaseVeryHardWave(skill: number, held: Unit[]) {
+    const targetLane = this.veryHardWaveLane();
+    const y = 148;
+    const staging = {
+      x: lanePathX(this.activeMap.seed, "foe", targetLane, y),
+      y,
+    };
+    for (const unit of held) {
+      unit.lane = targetLane;
+      unit.aiStagingPoint = { ...staging };
+    }
+    if (this.aiRushDeadline <= 0) {
+      this.aiRushDeadline = this.state.time + veryHardHoldSeconds(skill);
+    }
+
+    const target = waveSizeTarget(skill);
+    const kinds = new Set(held.map((u) => u.kind));
+    const front = held.some(
+      (u) => u.kind === "levy" || u.kind === "runner" || u.kind === "ward" || u.kind === "rammer",
+    );
+    const ranged = held.some((u) => u.kind === "archer");
+    const siege = held.some((u) => u.kind === "rammer");
+    const towers = this.aiRead.watchtowers + this.aiRead.ballistae + this.aiRead.catapults;
+    const siegeWanted = towers >= 2 || this.aiRead.ballistae + this.aiRead.catapults > 0;
+    const rammer = UNIT_DEFS.rammer;
+    const siegeAffordable =
+      this.state.gold.foe >= (rammer.cost ?? 40) && this.state.wood.foe >= (rammer.woodCost ?? 0);
+    const mixReady =
+      front && ranged && kinds.size >= 2 && (!siegeWanted || siege || !siegeAffordable);
+    const timedOut = this.state.time >= this.aiRushDeadline;
+    // A standing army is not a trickle target: wait for a real group. The
+    // extra grace still lets a pair leave so the hold cannot last forever.
+    const safetyMin = this.aiRead.attrition ? 3 : 2;
+    const overdue = this.state.time >= this.aiRushDeadline + 8;
+    const safety = (timedOut && held.length >= safetyMin) || (overdue && held.length >= 2);
+    const full = mixReady && held.length >= target;
+    if (!(full || (mixReady && timedOut) || safety)) return false;
+
+    for (const unit of held) {
+      unit.aiHeldForRush = false;
+      unit.aiStagingPoint = undefined;
+      unit.rallyPoint = undefined;
+      unit.engageFrom = undefined;
+      unit.targetUnitId = undefined;
+      unit.lane = targetLane;
+    }
+    this.aiRushDeadline = 0;
+    this.aiSlainAtWave = this.state.stats.foe.slain;
+    this.addToast(`Enemy warband rushes the ${targetLane === 0 ? "west" : "east"} road!`);
+    return true;
+  }
+
+  private laneByHumanDefense(): 0 | 1 {
     const pads = this.getPads("you");
     const laneDefense = [0, 0];
     for (const building of this.getBuildings("you")) {
@@ -2227,18 +2597,21 @@ export class GameSim {
     for (const barricade of this.state.barricades.filter((b) => b.team === "you" && b.built)) {
       laneDefense[barricade.lane] += 1.5;
     }
-    const targetLane = (laneDefense[1] < laneDefense[0] ? 1 : 0) as 0 | 1;
-    held.forEach((unit, index) => {
-      unit.aiHeldForRush = false;
-      unit.aiStagingPoint = undefined;
-      unit.rallyPoint = undefined;
-      unit.engageFrom = undefined;
-      unit.targetUnitId = undefined;
-      unit.lane = index % 3 === 2 ? (targetLane === 0 ? 1 : 0) : targetLane;
-    });
-    this.aiRushDeadline = 0;
-    this.addToast(`Enemy warband rushes the ${targetLane === 0 ? "west" : "east"} road!`);
-    return true;
+    return (laneDefense[1] < laneDefense[0] ? 1 : 0) as 0 | 1;
+  }
+
+  /** Hit the lane the human army is actually on; otherwise the softer keep road. */
+  private veryHardWaveLane(): 0 | 1 {
+    const human = this.state.units.filter(
+      (u) => u.team === "you" && u.hp > 0 && u.pos.y > 180 && u.pos.y < 600,
+    );
+    if ((this.aiRead.rush || this.aiRead.attrition) && human.length > 0) {
+      const lanes = [0, 0];
+      for (const unit of human) lanes[unit.lane] += 1;
+      if (lanes[0] !== lanes[1]) return (lanes[1] > lanes[0] ? 1 : 0) as 0 | 1;
+      if (this.aiRead.rush) return this.aiRead.rushLane;
+    }
+    return this.laneByHumanDefense();
   }
 
   aiUpgradeDefense(preference: "damage" | "rate" | "adaptive" = "adaptive") {
@@ -2348,10 +2721,10 @@ export class GameSim {
     }
   }
 
-  aiEnqueueTrain(kind: TrainKind) {
+  aiEnqueueTrain(kind: TrainKind, reserve = AI_RESERVE) {
     const def = UNIT_DEFS[kind];
     const cost: ResCost = { gold: def.cost ?? 30, wood: def.woodCost ?? 0 };
-    if (this.state.gold.foe < cost.gold + AI_RESERVE) return false;
+    if (this.state.gold.foe < cost.gold + reserve) return false;
     if (this.state.wood.foe < cost.wood) return false;
     const bars = this.state.buildings.filter((b) => b.team === "foe" && b.kind === "barracks");
     if (bars.length === 0) return false;
@@ -2359,6 +2732,9 @@ export class GameSim {
   }
 
   aiTrainUnits() {
+    if (veryHard(foeBrainStats().intellect)) {
+      return this.aiFillWave(foeBrainStats().intellect) !== null;
+    }
     const bars = this.state.buildings.filter((b) => b.team === "foe" && b.kind === "barracks");
     if (bars.length === 0) return false;
     if (bars.every((b) => b.queue.length >= 3)) return false;

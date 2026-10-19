@@ -1,4 +1,4 @@
-import { formatIntellect } from "../game/learningAi";
+import { formatIntellect, veryHard } from "../game/learningAi";
 import type { QualityInfo, QualitySetting } from "../game/render3d";
 import type { UiSnapshot } from "../game/types";
 
@@ -68,6 +68,7 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
           </div>
           <span className="phase-tag muted">
             {ui.foeWins}W/{ui.foeGames}G · ε{explorePct}%
+            {veryHard(ui.foeIntellect) ? " · very hard" : ""}
           </span>
         </div>
       </div>

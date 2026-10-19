@@ -1,4 +1,4 @@
-import { formatIntellect } from "../game/learningAi";
+import { formatIntellect, veryHard } from "../game/learningAi";
 import type { UiSnapshot } from "../game/types";
 
 interface OverlaysProps {
@@ -34,6 +34,7 @@ export function Overlays({ ui, onStart, onRestart, onRerollMap }: OverlaysProps)
 
           <p className="foe-brain-tease">
             Foe intellect {formatIntellect(ui.foeIntellect)}
+            {veryHard(ui.foeIntellect) ? " · very hard" : ""}
             {ui.foeGames > 0 ? ` · ${ui.foeWins}W / ${ui.foeGames} games learned` : " · virgin Q-table"}
           </p>
           <div className="foe-iq-meter" title="Progress to the next intellect level">
@@ -68,7 +69,8 @@ export function Overlays({ ui, onStart, onRestart, onRerollMap }: OverlaysProps)
           {ui.lastXpGain > 0 && <p className="xp-gain">+{ui.lastXpGain} Keep XP</p>}
           <p className="keep-lvl">Keep Level {ui.keepLevel}</p>
           <p className="foe-brain-tease">
-            Foe intellect {formatIntellect(ui.foeIntellect)} · remembered {ui.foeGames} sieges
+            Foe intellect {formatIntellect(ui.foeIntellect)}
+            {veryHard(ui.foeIntellect) ? " · very hard" : ""} · remembered {ui.foeGames} sieges
           </p>
           <div className="foe-iq-meter" title="Progress to the next intellect level">
             <div className="bar iq">

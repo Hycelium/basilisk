@@ -1,5 +1,5 @@
 import type { GameSim } from "./sim";
-import { getFoeBrain, type LearnAction, type LearnFeatures } from "./learningAi";
+import { getFoeBrain, veryHard, type LearnAction, type LearnFeatures } from "./learningAi";
 import type { TrainKind } from "./types";
 
 function featuresFrom(sim: GameSim): LearnFeatures {
@@ -91,20 +91,37 @@ function fallbackMacro(sim: GameSim) {
   sim.aiTrainUnits();
 }
 
+function learnedFrom(kind: TrainKind | null, rush: boolean): LearnAction {
+  if (kind === "levy") return "train_levy";
+  if (kind === "runner") return "train_runner";
+  if (kind === "archer") return "train_archer";
+  if (kind === "ward") return "train_ward";
+  if (kind === "rammer") return "train_rammer";
+  return rush ? "build_watch" : "wait";
+}
+
 export function runAiTurn(sim: GameSim, _reserve: number) {
   const brain = getFoeBrain();
   const skill = brain.stats().intellect;
+  const hard = veryHard(skill);
   const state = sim.getState();
-  sim.aiAssignWorkers();
+  const read = sim.readHumanForAi();
+  // Awareness is always recorded. Only level 10+ lets it pull workers or
+  // replace the learning book, so a new brain stays beatable.
+  const rush = hard && read.rush;
+  const rushNear = hard && read.rushNear;
+
+  if (!rushNear) sim.aiAssignWorkers();
 
   // Defensive opening book: establish population, saturate economy, and cover
-  // both lanes before spending heavily on aggression.
+  // both lanes before spending heavily on aggression. A real levy rush skips
+  // new houses so gold is not sitting in eco while levies walk the road.
   const houses = sim.getBuildings("foe").filter((b) => b.kind === "house").length;
   const desiredHouses = state.waveIndex >= 4 ? 3 : state.waveIndex >= 2 ? 2 : 1;
-  if (houses < desiredHouses && state.wood.foe >= 55) {
+  if (!rush && houses < desiredHouses && state.wood.foe >= 55) {
     sim.placeAiBuilding("house", 0);
   }
-  if (sim.peonSlotsUsed("foe") < sim.peonCap("foe")) {
+  if (!rushNear && sim.peonSlotsUsed("foe") < sim.peonCap("foe")) {
     sim.enqueuePeon("foe");
   }
 
@@ -120,29 +137,55 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
         : defenses.length >= 2 && state.waveIndex >= 2;
     sim.placeAiBuilding(heavyCoverage ? "ballista" : "watchtower", skill >= 45 ? 0 : 10);
   }
-  if (defenses.length >= (skill > 160 ? 1 : 2) && state.waveIndex >= 1) {
+  if (rush) {
+    sim.aiAnswerLevyRush();
+  } else if (defenses.length >= (skill > 160 ? 1 : 2) && state.waveIndex >= 1) {
     sim.aiBuildDefensiveBarricade();
   }
 
   const barracks = sim.getBuildings("foe").filter((b) => b.kind === "barracks");
-  if (barracks.length === 0 && state.waveIndex >= 1 && defenses.length >= 2) {
-    sim.placeAiBuilding("barracks", 10);
+  let filled: TrainKind | null = null;
+  if (barracks.length === 0 && state.waveIndex >= 1 && defenses.length >= (rush ? 1 : 2)) {
+    sim.placeAiBuilding("barracks", rush ? 0 : 10);
   } else if (barracks.length > 0) {
     // Keep production active; failed attempts are harmless when resources are
-    // reserved or queues are full.
-    sim.aiTrainUnits();
+    // reserved or queues are full. Very hard fills a mixed wave instead of
+    // whatever single kind the last observe suggested.
+    if (hard) filled = sim.aiFillWave(skill);
+    else sim.aiTrainUnits();
   }
   sim.aiCoordinateRush(skill);
 
+  const holding = hard && sim.foeWaveHolding();
   const action = brain.choose(featuresFrom(sim));
-  applyAction(sim, action);
+  // Explore must not spend the gold a levy rush needs, or queue a stray unit
+  // that would walk out alone. Greedy Q may still nudge an upgrade or a
+  // counter that matches the rush.
+  const contradictsRush =
+    rush &&
+    (action === "wait" ||
+      action === "econ" ||
+      action === "train_levy" ||
+      action === "train_runner" ||
+      action === "train_rammer" ||
+      action === "build_catapult");
+  if ((rush || holding) && brain.tookExplore()) {
+    brain.commitAction(learnedFrom(filled, rush));
+  } else if (contradictsRush) {
+    brain.commitAction(learnedFrom(filled, true));
+  } else {
+    applyAction(sim, action);
+  }
 
   // Experienced brains spend a second action on the learned plan instead of
   // floating gold. The gate keeps falling past level 99, with a floor so they
   // still hold a reserve.
   const followGold = skill <= 99 ? 120 : Math.max(72, 120 - (skill - 99) * 0.28);
   if (skill >= 45 && state.gold.foe > followGold) {
-    if (!sim.aiUpgradeDefense("adaptive")) sim.aiTrainUnits();
+    if (!sim.aiUpgradeDefense("adaptive")) {
+      if (hard) sim.aiFillWave(skill);
+      else sim.aiTrainUnits();
+    }
   }
 }
 
