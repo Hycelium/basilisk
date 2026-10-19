@@ -1,4 +1,18 @@
-export type Team = "you" | "foe";
+export type Team = "you" | "foe" | "east";
+/**
+ * Seat control for the skirmish roster. A later lobby reuses the same list:
+ * Local (this machine), AI, and Open (a human who joins with a room code).
+ * Open is not selectable until a realtime host exists.
+ */
+export type SeatControl = "local" | "ai" | "open";
+export type MapSize = "small" | "large";
+export interface SkirmishSetup {
+  mapSize: MapSize;
+  players: 2 | 3;
+}
+
+/** you and foe always exist. east is only present in a 3-player skirmish. */
+export type TeamBag<T> = { you: T; foe: T; east?: T };
 export type WaveUnitKind = "raider" | "soldier" | "brute" | "runner" | "ward";
 export type TrainKind = "levy" | "runner" | "archer" | "ward" | "rammer";
 export type UnitKind = WaveUnitKind | TrainKind;
@@ -56,6 +70,8 @@ export interface Unit {
   engageFrom?: Vec2;
   aiHeldForRush?: boolean;
   aiStagingPoint?: Vec2;
+  /** 3-player march: the enemy keep this unit is sent toward. */
+  goalTeam?: Team;
 }
 
 export type WavePhase = "build" | "spawning" | "fighting";
@@ -211,7 +227,7 @@ export interface MapDef {
   seed: number;
   name: string;
   tagline: string;
-  pads: { id: string; x: number; y: number; laneCoverage: 0 | 1 | 2; zone?: PadZone }[];
+  pads: { id: string; x: number; y: number; laneCoverage: 0 | 1 | 2; zone?: PadZone; team?: Team }[];
   nodes: {
     id: string;
     kind: ResourceKind;
@@ -222,8 +238,15 @@ export interface MapDef {
     wood: number;
     gather: number;
     regen: number;
+    team?: Team;
   }[];
   startTowerPad: string;
+  /** Duel is the classic north/south map. Triangle is the 3-keep skirmish. */
+  layout?: "duel" | "triangle";
+  worldW?: number;
+  worldH?: number;
+  keeps?: { team: Team; x: number; y: number }[];
+  roads?: { a: Team; b: Team; points: { x: number; y: number }[] }[];
 }
 
 export interface GameState {
@@ -234,9 +257,16 @@ export interface GameState {
   speed: 1 | 2;
   soundOn: boolean;
   audioUnlocked: boolean;
-  keeps: Record<Team, Keep>;
-  gold: Record<Team, number>;
-  wood: Record<Team, number>;
+  keeps: TeamBag<Keep>;
+  gold: TeamBag<number>;
+  wood: TeamBag<number>;
+  /** 2 = the classic duel. 3 = free-for-all on the large map. */
+  players: 2 | 3;
+  /** Enemy keep the human army is sent toward. Northwest AI in a 3-player match. */
+  attackTarget: Team;
+  eliminated: Team[];
+  worldW: number;
+  worldH: number;
   units: Unit[];
   buildings: Building[];
   villagers: Villager[];
@@ -261,7 +291,7 @@ export interface GameState {
   floatingTexts: FloatingText[];
   combatEvents: CombatEvent[];
   commandMarkers: CommandMarker[];
-  stats: Record<Team, TeamStats>;
+  stats: TeamBag<TeamStats>;
   pulseNodeUntil: number;
   firstVillagerAssigned: boolean;
   endReason: string;
@@ -358,6 +388,9 @@ export interface UiSnapshot {
   foeWins: number;
   foeExplore: number;
   foeLastAction: string;
+  players: 2 | 3;
+  attackName: string;
+  enemyKeeps: { team: Team; name: string; hp: number; down: boolean }[];
 }
 
 export interface RectHit {

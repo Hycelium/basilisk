@@ -9,11 +9,15 @@ export interface ViewTransform {
 }
 
 function teamAccent(team: Team) {
-  return team === "you" ? "#7ec0ff" : "#ef6a7a";
+  if (team === "you") return "#7ec0ff";
+  if (team === "east") return "#e0a040";
+  return "#ef6a7a";
 }
 
 function teamDeep(team: Team) {
-  return team === "you" ? "#255a96" : "#8e2436";
+  if (team === "you") return "#255a96";
+  if (team === "east") return "#8a5a18";
+  return "#8e2436";
 }
 
 function hash(n: number) {
@@ -500,7 +504,7 @@ export class GameRenderer {
   }
 
   private drawKeep3d(ctx: CanvasRenderingContext2D, x: number, y: number, team: Team, label: string, state: GameState) {
-    const flash = state.keeps[team].hitFlash;
+    const flash = state.keeps[team]?.hitFlash ?? 0;
     const stoneL = flash > 0 ? "#8a5050" : "#6a6674";
     const stoneR = flash > 0 ? "#5a3030" : "#3a3844";
     const stoneT = flash > 0 ? "#9a7070" : "#8a8694";

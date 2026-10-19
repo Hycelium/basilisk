@@ -1,14 +1,24 @@
 import type { GameSim } from "./sim";
-import { getFoeBrain, veryHard, type LearnAction, type LearnFeatures } from "./learningAi";
-import type { TrainKind } from "./types";
+import { getFoeBrain, veryHard, type EpisodeMemory, type LearnAction, type LearnFeatures } from "./learningAi";
+import type { Team, TrainKind } from "./types";
 
-function featuresFrom(sim: GameSim): LearnFeatures {
+function featuresFrom(sim: GameSim, team: Team = "foe"): LearnFeatures {
   const s = sim.getState();
-  const yours = s.buildings.filter((b) => b.team === "you");
-  const foes = s.buildings.filter((b) => b.team === "foe");
+  const opp = sim.opponentOf(team);
+  const yours = s.buildings.filter((b) => b.team === opp);
+  const foes = s.buildings.filter((b) => b.team === team);
   // Composition knowledge is limited to units that have crossed toward the
   // foe's half of the map; production queues remain hidden.
-  const observedArmy = s.units.filter((u) => u.team === "you" && u.pos.y <= 430);
+  const home = s.keeps[team];
+  const observedArmy = sim.isTriangle()
+    ? s.units.filter(
+        (u) =>
+          u.team === opp &&
+          u.hp > 0 &&
+          !!home &&
+          Math.hypot(u.pos.x - home.pos.x, u.pos.y - home.pos.y) < 340,
+      )
+    : s.units.filter((u) => u.team === "you" && u.pos.y <= 430);
   const isCombatStructure = (kind: (typeof yours)[number]["kind"]) =>
     kind !== "barracks" && kind !== "house" && kind !== "barricade";
   return {
@@ -16,12 +26,12 @@ function featuresFrom(sim: GameSim): LearnFeatures {
     yourArmy: observedArmy.length,
     yourBarracks: yours.filter((b) => b.kind === "barracks").length,
     foeTowers: foes.filter((b) => isCombatStructure(b.kind)).length,
-    foeArmy: s.units.filter((u) => u.team === "foe").length,
+    foeArmy: s.units.filter((u) => u.team === team).length,
     foeBarracks: foes.filter((b) => b.kind === "barracks").length,
-    foeGold: s.gold.foe,
-    yourGold: s.gold.you,
+    foeGold: s.gold[team] ?? 0,
+    yourGold: s.gold[opp] ?? 0,
     wave: s.waveIndex,
-    hpLead: s.keeps.foe.hp - s.keeps.you.hp,
+    hpLead: (s.keeps[team]?.hp ?? 0) - (s.keeps[opp]?.hp ?? 0),
     yourFast: observedArmy.filter((u) => u.kind === "runner" || u.kind === "raider").length,
     yourHeavy: observedArmy.filter((u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer").length,
     yourRanged: observedArmy.filter((u) => u.kind === "archer").length,
@@ -79,7 +89,7 @@ function applyAction(sim: GameSim, action: LearnAction) {
 
 /** If the chosen micro-action fails (no gold / no pad), keep pressure. */
 function fallbackMacro(sim: GameSim) {
-  const foes = sim.getBuildings("foe");
+  const foes = sim.getBuildings(sim.currentAiSide());
   if (foes.length < 2) {
     sim.placeAiBuilding("watchtower");
     return;
@@ -100,11 +110,12 @@ function learnedFrom(kind: TrainKind | null, rush: boolean): LearnAction {
   return rush ? "build_watch" : "wait";
 }
 
-export function runAiTurn(sim: GameSim, _reserve: number) {
+export function runAiTurn(sim: GameSim, _reserve: number, team: Team = "foe", episode?: EpisodeMemory) {
   const brain = getFoeBrain();
   const skill = brain.stats().intellect;
   const hard = veryHard(skill);
   const state = sim.getState();
+  sim.setAiSide(team);
   const read = sim.readHumanForAi();
   // Awareness is always recorded. Only level 10+ lets it pull workers or
   // replace the learning book, so a new brain stays beatable.
@@ -116,17 +127,17 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
   // Defensive opening book: establish population, saturate economy, and cover
   // both lanes before spending heavily on aggression. A real levy rush skips
   // new houses so gold is not sitting in eco while levies walk the road.
-  const houses = sim.getBuildings("foe").filter((b) => b.kind === "house").length;
+  const houses = sim.getBuildings(team).filter((b) => b.kind === "house").length;
   const desiredHouses = state.waveIndex >= 4 ? 3 : state.waveIndex >= 2 ? 2 : 1;
-  if (!rush && houses < desiredHouses && state.wood.foe >= 55) {
+  if (!rush && houses < desiredHouses && (state.wood[team] ?? 0) >= 55) {
     sim.placeAiBuilding("house", 0);
   }
-  if (!rushNear && sim.peonSlotsUsed("foe") < sim.peonCap("foe")) {
-    sim.enqueuePeon("foe");
+  if (!rushNear && sim.peonSlotsUsed(team) < sim.peonCap(team)) {
+    sim.enqueuePeon(team);
   }
 
   const defenses = sim
-    .getBuildings("foe")
+    .getBuildings(team)
     .filter((b) => b.kind === "watchtower" || b.kind === "ballista" || b.kind === "catapult");
   const desiredDefenses = state.waveIndex < 2 ? 2 : state.waveIndex < 5 ? 3 : 4;
   if (defenses.length < desiredDefenses) {
@@ -143,7 +154,7 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
     sim.aiBuildDefensiveBarricade();
   }
 
-  const barracks = sim.getBuildings("foe").filter((b) => b.kind === "barracks");
+  const barracks = sim.getBuildings(team).filter((b) => b.kind === "barracks");
   let filled: TrainKind | null = null;
   if (barracks.length === 0 && state.waveIndex >= 1 && defenses.length >= (rush ? 1 : 2)) {
     sim.placeAiBuilding("barracks", rush ? 0 : 10);
@@ -157,7 +168,8 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
   sim.aiCoordinateRush(skill);
 
   const holding = hard && sim.foeWaveHolding();
-  const action = brain.choose(featuresFrom(sim));
+  const features = featuresFrom(sim, team);
+  const action = episode ? brain.chooseEpisode(episode, features) : brain.choose(features);
   // Explore must not spend the gold a levy rush needs, or queue a stray unit
   // that would walk out alone. Greedy Q may still nudge an upgrade or a
   // counter that matches the rush.
@@ -169,10 +181,15 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
       action === "train_runner" ||
       action === "train_rammer" ||
       action === "build_catapult");
-  if ((rush || holding) && brain.tookExplore()) {
-    brain.commitAction(learnedFrom(filled, rush));
+  const explored = episode ? episode.explored : brain.tookExplore();
+  const commit = (next: LearnAction) => {
+    if (episode) brain.commitEpisode(episode, next);
+    else brain.commitAction(next);
+  };
+  if ((rush || holding) && explored) {
+    commit(learnedFrom(filled, rush));
   } else if (contradictsRush) {
-    brain.commitAction(learnedFrom(filled, true));
+    commit(learnedFrom(filled, true));
   } else {
     applyAction(sim, action);
   }
@@ -181,7 +198,7 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
   // floating gold. The gate keeps falling past level 99, with a floor so they
   // still hold a reserve.
   const followGold = skill <= 99 ? 120 : Math.max(72, 120 - (skill - 99) * 0.28);
-  if (skill >= 45 && state.gold.foe > followGold) {
+  if (skill >= 45 && (state.gold[team] ?? 0) > followGold) {
     if (!sim.aiUpgradeDefense("adaptive")) {
       if (hard) sim.aiFillWave(skill);
       else sim.aiTrainUnits();

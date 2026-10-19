@@ -135,7 +135,7 @@ export function DetailSheet({
     );
   }
 
-  const isEnemy = ui.selectedBuildingTeam === "foe";
+  const isEnemy = ui.selectedBuildingTeam !== null && ui.selectedBuildingTeam !== "you";
   const isBarracks = ui.selectedBuildingKind === "barracks";
   const isHouse = ui.selectedBuildingKind === "house";
 

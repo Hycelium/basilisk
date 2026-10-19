@@ -12,9 +12,10 @@ interface HudProps {
   onSpeed: () => void;
   onSound: () => void;
   onRush: () => void;
+  onCycleTarget: () => void;
 }
 
-export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound, onRush }: HudProps) {
+export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound, onRush, onCycleTarget }: HudProps) {
   const hpPct = Math.max(0, Math.min(1, ui.yourHp / ui.yourMaxHp));
   const xpPct = ui.keepXpPct;
   const phaseLabel =
@@ -57,8 +58,13 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
           <span className="phase-tag">{phaseLabel}</span>
         </div>
         <div className="stat">
-          <span className="label">FOE HP</span>
+          <span className="label">{ui.players === 3 ? ui.attackName.toUpperCase() : "FOE HP"}</span>
           <span className="value">{ui.foeHp}</span>
+          {ui.players === 3 && (
+            <span className="phase-tag muted">
+              {ui.enemyKeeps.map((k) => `${k.name} ${k.down ? "down" : k.hp}`).join(" · ")}
+            </span>
+          )}
         </div>
         <div className="stat intellect">
           <span className="label">FOE IQ</span>
@@ -72,6 +78,14 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
           </span>
         </div>
       </div>
+      {ui.players === 3 && ui.phase === "running" && (
+        <div className="attack-line">
+          <span>Attacking: {ui.attackName}</span>
+          <button type="button" onClick={onCycleTarget} title="Switch enemy keep (T)">
+            Switch
+          </button>
+        </div>
+      )}
       <div className="hud-xp-row">
         <div className="stat keep-xp-stat">
           <span className="label">KEEP LV {ui.keepLevel}</span>

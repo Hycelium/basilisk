@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { BUILD_RANGE, STARTER_GUARD_RANGE, WORLD_H, WORLD_W } from "./balance";
+import { getMap } from "./map";
 import { cloneAnimatedModel, cloneModel, ensureModelsLoaded } from "./assets3d";
 import type { Barricade, Building, GameState, Team, Unit } from "./types";
 import {
@@ -17,17 +18,22 @@ import {
 
 function teamColor(team: Team, lite = false) {
   if (team === "you") return lite ? 0x8ec8ff : 0x3a7ec8;
+  if (team === "east") return lite ? 0xf0c36a : 0xc4842a;
   return lite ? 0xf08090 : 0xa03040;
 }
 
+/** Active battlefield size. The duel stays 400×720; a skirmish widens this. */
+let viewW = WORLD_W;
+let viewH = WORLD_H;
+
 /** Map 2D sim coords (y down) â†’ Three.js XZ ground (Y up). Allocates â€” use only off the hot path. */
 function to3(x: number, y: number, h = 0) {
-  return new THREE.Vector3(x - WORLD_W / 2, h, y - WORLD_H / 2);
+  return new THREE.Vector3(x - viewW / 2, h, y - viewH / 2);
 }
 
 /** Allocation-free variant of to3 for per-frame placement. */
 function setPos3(obj: { position: THREE.Vector3 }, x: number, y: number, h = 0) {
-  obj.position.set(x - WORLD_W / 2, h, y - WORLD_H / 2);
+  obj.position.set(x - viewW / 2, h, y - viewH / 2);
 }
 
 type EntityKey = string;
@@ -154,8 +160,8 @@ export class GameRenderer {
   private floatSprites: { mesh: THREE.Sprite; life: number; id: number }[] = [];
   private floatIdSeen = new Set<number>();
   private knownUnits = new Map<number, { x: number; y: number; team: Team }>();
-  private knownKeepFlash = { you: 0, foe: 0 };
-  private knownKeepAttack = { you: 0, foe: 0 };
+  private knownKeepFlash: Partial<Record<Team, number>> = { you: 0, foe: 0 };
+  private knownKeepAttack: Partial<Record<Team, number>> = { you: 0, foe: 0 };
   private knownKick = new Map<number, number>();
   private knownCombatEvents = new Set<number>();
   private arrows: {
@@ -183,7 +189,7 @@ export class GameRenderer {
   private camPitch = 1.12; // ~64Â° from top â†’ proper RTS angle, not bird's-eye
   private camLook = new THREE.Vector3(0, 14, 55);
   private readonly camDistMin = 280;
-  private readonly camDistMax = 900;
+  private camDistMax = 900;
   private readonly camPitchMin = 0.72;
   private readonly camPitchMax = 1.35;
   private camShake = new THREE.Vector3();
@@ -348,10 +354,53 @@ export class GameRenderer {
 
   /** Best default RTS framing â€” oblique, biased toward your keep. */
   resetCamera() {
+    if (viewW > 500) {
+      this.frameTriangle({
+        players: 3,
+        keeps: {
+          you: { pos: { x: viewW / 2, y: viewH - 140 } },
+          foe: { pos: { x: 160, y: 130 } },
+          east: { pos: { x: viewW - 160, y: 130 } },
+        },
+      } as GameState);
+      return;
+    }
+    this.camDistMax = 900;
     this.camDist = 520;
     this.camYaw = 0.12;
     this.camPitch = 1.12;
     this.camLook.set(0, 14, 55);
+    this.sun.shadow.camera.left = -360;
+    this.sun.shadow.camera.right = 360;
+    this.sun.shadow.camera.top = 480;
+    this.sun.shadow.camera.bottom = -480;
+    this.sun.shadow.camera.updateProjectionMatrix();
+    this.applyCamera();
+  }
+
+  /** Pull back so every keep on the large map sits in frame. */
+  private frameTriangle(state: GameState) {
+    const teams: Team[] = ["you", "foe", "east"];
+    let sx = 0;
+    let sz = 0;
+    let n = 0;
+    for (const team of teams) {
+      const keep = state.keeps[team];
+      if (!keep) continue;
+      sx += keep.pos.x - viewW / 2;
+      sz += keep.pos.y - viewH / 2;
+      n += 1;
+    }
+    this.camDistMax = 1500;
+    this.camDist = 1220;
+    this.camYaw = 0.06;
+    this.camPitch = 0.96;
+    this.camLook.set(n ? sx / n : 0, 18, n ? sz / n : 0);
+    this.sun.shadow.camera.left = -520;
+    this.sun.shadow.camera.right = 520;
+    this.sun.shadow.camera.top = 520;
+    this.sun.shadow.camera.bottom = -520;
+    this.sun.shadow.camera.updateProjectionMatrix();
     this.applyCamera();
   }
 
@@ -384,8 +433,10 @@ export class GameRenderer {
     const scale = this.camDist * 0.00145;
     this.camLook.addScaledVector(right, -dx * scale);
     this.camLook.addScaledVector(forward, -dy * scale);
-    this.camLook.x = THREE.MathUtils.clamp(this.camLook.x, -160, 160);
-    this.camLook.z = THREE.MathUtils.clamp(this.camLook.z, -280, 280);
+    const limX = viewW > 500 ? viewW / 2 - 90 : 160;
+    const limZ = viewH > 760 ? viewH / 2 - 90 : 280;
+    this.camLook.x = THREE.MathUtils.clamp(this.camLook.x, -limX, limX);
+    this.camLook.z = THREE.MathUtils.clamp(this.camLook.z, -limZ, limZ);
     this.applyCamera();
   }
 
@@ -709,18 +760,19 @@ export class GameRenderer {
     }
 
     // Keep hits
-    for (const team of ["you", "foe"] as Team[]) {
-      const flash = state.keeps[team].hitFlash;
-      if (flash > 0 && this.knownKeepFlash[team] <= 0) {
-        const k = state.keeps[team];
-        this.burst(k.pos.x, k.pos.y, 18, team === "you" ? 0x66aaff : 0xff5577, 22, 70);
+    for (const team of (state.players === 3 ? ["you", "foe", "east"] : ["you", "foe"]) as Team[]) {
+      const keep = state.keeps[team];
+      if (!keep) continue;
+      const flash = keep.hitFlash;
+      if (flash > 0 && (this.knownKeepFlash[team] ?? 0) <= 0) {
+        const burst = team === "you" ? 0x66aaff : team === "east" ? 0xe0a040 : 0xff5577;
+        this.burst(keep.pos.x, keep.pos.y, 18, burst, 22, 70);
       }
       this.knownKeepFlash[team] = flash;
 
-      const keep = state.keeps[team];
       const attack = keep.attackFlash;
       const target = keep.attackTarget;
-      if (attack > 0 && this.knownKeepAttack[team] <= 0 && target) {
+      if (attack > 0 && (this.knownKeepAttack[team] ?? 0) <= 0 && target) {
         const occupants = state.villagers.filter(
           (v) => v.team === team && v.state === "garrisoned",
         ).length;
@@ -826,10 +878,10 @@ export class GameRenderer {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hit = new THREE.Vector3();
     this.raycaster.ray.intersectPlane(this.groundPlane, hit);
-    if (!hit) return { x: WORLD_W / 2, y: WORLD_H / 2 };
+    if (!hit) return { x: viewW / 2, y: viewH / 2 };
     return {
-      x: hit.x + WORLD_W / 2,
-      y: hit.z + WORLD_H / 2,
+      x: hit.x + viewW / 2,
+      y: hit.z + viewH / 2,
     };
   }
 
@@ -840,8 +892,12 @@ export class GameRenderer {
     this.wallClock = now;
     this.sampleFrame(rawMs);
 
+    viewW = state.worldW || WORLD_W;
+    viewH = state.worldH || WORLD_H;
     if (state.mapId !== this.lastMapId) {
       this.rebuildBattlefield(state);
+      if (state.players === 3) this.frameTriangle(state);
+      else this.camDistMax = 900;
     }
     // FX before prune so deaths still have last-known sim coords
     this.syncCombatFx(state, step);
@@ -899,8 +955,20 @@ export class GameRenderer {
     }
     this.torchLights = [];
     const seed = this.hashMapSeed(state.mapId);
-    this.worldGroup.add(buildTerrain(seed));
-    this.worldGroup.add(buildScenery(seed));
+    const map = getMap(state.mapId);
+    if (map.layout === "triangle" && map.roads && map.worldW && map.worldH) {
+      const paint = {
+        w: map.worldW,
+        h: map.worldH,
+        roads: map.roads.map((r) => r.points),
+        riverY: Math.round(map.worldH * 0.46),
+      };
+      this.worldGroup.add(buildTerrain(seed, paint));
+      this.worldGroup.add(buildScenery(seed, paint));
+    } else {
+      this.worldGroup.add(buildTerrain(seed));
+      this.worldGroup.add(buildScenery(seed));
+    }
   }
 
   private hashMapSeed(mapId: string) {
@@ -1017,16 +1085,41 @@ export class GameRenderer {
 
   private syncKeeps(state: GameState) {
     const live = this.liveSet();
-    for (const team of ["you", "foe"] as Team[]) {
+    const teams: Team[] = state.players === 3 ? ["you", "foe", "east"] : ["you", "foe"];
+    for (const team of teams) {
+      const k = state.keeps[team];
+      if (!k) continue;
       const key = `keep-${team}`;
       live.add(key);
       const obj = this.ensure(key, () => this.makeKeep(team));
-      const k = state.keeps[team];
       setPos3(obj, k.pos.x, k.pos.y, 0);
       if (k.hitFlash > 0) obj.scale.setScalar(1.04);
       else obj.scale.setScalar(1);
     }
+    if (state.players === 3 && state.phase !== "title") {
+      const focus = state.keeps[state.attackTarget];
+      if (focus && focus.hp > 0) {
+        const key = "attack-focus";
+        live.add(key);
+        const ring = this.ensure(key, () => {
+          const mesh = new THREE.Mesh(
+            new THREE.RingGeometry(16, 19, 28),
+            new THREE.MeshBasicMaterial({
+              color: 0xff6e67,
+              transparent: true,
+              opacity: 0.8,
+              side: THREE.DoubleSide,
+              depthWrite: false,
+            }),
+          );
+          mesh.rotation.x = -Math.PI / 2;
+          return mesh;
+        });
+        setPos3(ring, focus.pos.x, focus.pos.y, 0.45);
+      }
+    }
     this.prune("keep-", live);
+    this.prune("attack-focus", live);
   }
 
   private kitOr(key: "kTower" | "kBallista" | "kCatapult" | "kGate" | "kWall", height: number, fallback: () => THREE.Object3D) {
@@ -1068,7 +1161,7 @@ export class GameRenderer {
     let mat = this.padMaterials.get(id);
     if (!mat) {
       mat = new THREE.MeshStandardMaterial({
-        color: zone === "eco" ? 0xa8c86a : team === "you" ? 0x6eb4ff : 0xb44a55,
+        color: zone === "eco" ? 0xa8c86a : team === "you" ? 0x6eb4ff : team === "east" ? 0xd7a13a : 0xb44a55,
         transparent: true,
         opacity: 0.55,
         side: THREE.DoubleSide,
@@ -1461,8 +1554,8 @@ export class GameRenderer {
     const pos = this.commandLinePos;
     const col = this.commandLineCol;
     let seg = 0;
-    const hw = WORLD_W / 2;
-    const hh = WORLD_H / 2;
+    const hw = viewW / 2;
+    const hh = viewH / 2;
     if (state.selectedVillagerIds.length > 0) {
       for (const v of state.villagers) {
         if (seg >= MAX_COMMAND_LINES) break;

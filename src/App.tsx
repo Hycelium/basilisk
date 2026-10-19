@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { GameRenderer, type QualityInfo, type QualitySetting, type TouchDragMode } from "./game/render3d";
 import { GameSim, hitTest } from "./game/sim";
-import type { BuildingKind, CombatEventKind, RectHit, TrainKind, UiSnapshot } from "./game/types";
+import type { BuildingKind, CombatEventKind, RectHit, SkirmishSetup, TrainKind, UiSnapshot } from "./game/types";
 import { BUILD_COST } from "./game/balance";
 import { Hud } from "./ui/Hud";
 import { BuildBar } from "./ui/BuildBar";
@@ -74,6 +74,9 @@ const defaultUi: UiSnapshot = {
   foeWins: 0,
   foeExplore: 0.35,
   foeLastAction: "wait",
+  players: 2,
+  attackName: "Foe",
+  enemyKeeps: [],
 };
 
 const LONG_PRESS_MS = 350;
@@ -596,6 +599,9 @@ export default function App() {
         if (ev.key === "=" || ev.key === "+") r.zoomBy(0.9);
         if (ev.key === "-" || ev.key === "_") r.zoomBy(1.1);
         if (ev.key === "r" || ev.key === "R") r.resetCamera();
+        if ((ev.key === "t" || ev.key === "T") && sim.getState().players === 3 && sim.getState().phase === "running") {
+          sim.cycleAttackTarget();
+        }
         if (ev.key === "q" || ev.key === "Q") r.orbitBy(28, 0);
         if (ev.key === "e" || ev.key === "E") r.orbitBy(-28, 0);
         if (ev.key === "ArrowLeft") r.panBy(40, 0);
@@ -725,6 +731,19 @@ export default function App() {
       },
     },
   ];
+  if (ui.players === 3 && ui.phase === "running") {
+    clusterActions.push({
+      id: "target",
+      icon: "◎",
+      label: ui.attackName,
+      hint: `Attacking ${ui.attackName}. Switch enemy keep (T)`,
+      onPress: () => {
+        sim.cycleAttackTarget();
+        refreshUi();
+        beep(440);
+      },
+    });
+  }
   if (fsSupported) {
     clusterActions.push({
       id: "fullscreen",
@@ -773,7 +792,7 @@ export default function App() {
           },
         });
       }
-      if (hit?.kind === "unit" && state.units.some((u) => u.id === Number(hit.id) && u.team === "foe")) {
+      if (hit?.kind === "unit" && state.units.some((u) => u.id === Number(hit.id) && u.team !== "you")) {
         radialItems.push({
           id: "attack",
           icon: "⚔",
@@ -868,6 +887,11 @@ export default function App() {
             sim.rushNextWave();
             refreshUi();
             beep(500);
+          }}
+          onCycleTarget={() => {
+            sim.cycleAttackTarget();
+            refreshUi();
+            beep(440);
           }}
         />
 
@@ -1035,7 +1059,8 @@ export default function App() {
               refreshUi();
               beep(440);
             }}
-            onStart={() => {
+            onStart={(setup: SkirmishSetup) => {
+              sim.applySkirmish(setup);
               sim.startMatch();
               refreshUi();
               beep(520);

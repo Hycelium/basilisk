@@ -438,21 +438,105 @@ export class LearningBrain {
   }
 
   endMatch(wonByFoe: boolean | null) {
-    if (this.lastKey) {
-      let terminal = this.matchRewardAcc * 0.05;
-      if (wonByFoe === true) terminal += 4;
-      else if (wonByFoe === false) terminal -= 3;
-      else terminal -= 0.35;
-      const row = this.row(this.lastKey);
-      row[this.lastActionIdx] += ALPHA * (terminal - row[this.lastActionIdx]);
-      this.updates += 1;
-    }
+    this.settleEpisode(this.episodeView(), wonByFoe);
     this.games += 1;
     if (wonByFoe === true) this.wins += 1;
     if (wonByFoe === false) this.losses += 1;
     this.save();
     this.lastKey = null;
   }
+
+  /**
+   * A second thinker for the same match. It reads and writes the one Q table
+   * but keeps its own last action, so two AIs can differ without a second save.
+   */
+  chooseEpisode(ep: EpisodeMemory, features: LearnFeatures): LearnAction {
+    const key = stateKey(features);
+    const row = this.row(key);
+    if (ep.lastKey) {
+      const reward = this.stepReward(features, ep.lastFeatures);
+      ep.matchRewardAcc += reward;
+      this.tdUpdate(ep.lastKey, ep.lastActionIdx, reward, key);
+    }
+    const explore = Math.random() < this.epsilon();
+    ep.explored = explore;
+    let idx: number;
+    if (explore) {
+      idx =
+        this.experience() > OLD_CAP_EXPERIENCE
+          ? this.sampleSoftmax(row, features)
+          : Math.floor(Math.random() * LEARN_ACTIONS.length);
+    } else {
+      idx = 0;
+      let best = -Infinity;
+      const scale = this.priorScale();
+      for (let i = 0; i < row.length; i++) {
+        const v = row[i] + this.actionBias(features, i) * scale;
+        if (v > best) {
+          best = v;
+          idx = i;
+        }
+      }
+    }
+    ep.lastKey = key;
+    ep.lastActionIdx = idx;
+    ep.lastActionName = LEARN_ACTIONS[idx];
+    ep.lastFeatures = { ...features };
+    return ep.lastActionName;
+  }
+
+  commitEpisode(ep: EpisodeMemory, action: LearnAction) {
+    const idx = LEARN_ACTIONS.indexOf(action);
+    if (idx < 0 || !ep.lastKey) return;
+    ep.lastActionIdx = idx;
+    ep.lastActionName = action;
+  }
+
+  /** Terminal reward into the shared Q table. Does not count a game or save. */
+  settleEpisode(ep: EpisodeMemory, wonByThisAi: boolean | null) {
+    if (ep.lastKey) {
+      let terminal = ep.matchRewardAcc * 0.05;
+      if (wonByThisAi === true) terminal += 4;
+      else if (wonByThisAi === false) terminal -= 3;
+      else terminal -= 0.35;
+      const row = this.row(ep.lastKey);
+      row[ep.lastActionIdx] += ALPHA * (terminal - row[ep.lastActionIdx]);
+      this.updates += 1;
+    }
+    ep.lastKey = null;
+  }
+
+  private episodeView(): EpisodeMemory {
+    return {
+      lastKey: this.lastKey,
+      lastActionIdx: this.lastActionIdx,
+      lastActionName: this.lastActionName,
+      matchRewardAcc: this.matchRewardAcc,
+      lastFeatures: this.lastFeatures,
+      explored: this.explored,
+    };
+  }
+}
+
+/** Per-AI episodic state. The Q table stays on the shared brain. */
+export interface EpisodeMemory {
+  lastKey: string | null;
+  lastActionIdx: number;
+  lastActionName: LearnAction;
+  matchRewardAcc: number;
+  lastFeatures: LearnFeatures | null;
+  explored: boolean;
+}
+
+export function blankEpisode(): EpisodeMemory {
+  return {
+    lastKey: null,
+    lastActionIdx: 0,
+    lastActionName: "wait",
+    matchRewardAcc: 0,
+    lastFeatures: null,
+    explored: false,
+  };
 }
 
 let brainSingleton: LearningBrain | null = null;
