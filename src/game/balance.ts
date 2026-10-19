@@ -103,6 +103,20 @@ export const DAMAGE_MULT = [1, 1.28, 1.58];
 export const RATE_MULT = [1, 0.82, 0.65];
 export const UPGRADE_COST = [50, 85];
 
+/**
+ * Levy attack at barracks power ranks 0, 1, and 2.
+ * Rank 0 stays at ×1, so an unupgraded levy still deals its base damage.
+ * Rank 2 is half the old max-upgrade attack (8 × 1.58 = 12.64 → 6.32).
+ * Rank 1 keeps the old middle step's share of the span from rank 0 to that new max.
+ * Levy hit points, and every other unit, still use DAMAGE_MULT.
+ * AI wave buffs multiply this attack; they do not replace it.
+ */
+export const LEVY_ATTACK_MULT = [
+  1,
+  1 + ((1.28 - 1) / (1.58 - 1)) * (1.58 / 2 - 1),
+  1.58 / 2,
+] as const;
+
 export interface UnitDef {
   hp: number;
   speed: number;

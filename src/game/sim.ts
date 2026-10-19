@@ -11,6 +11,7 @@ import {
   BUILD_RANGE,
   CATAPULT_SPLASH_RADIUS,
   DAMAGE_MULT,
+  LEVY_ATTACK_MULT,
   FIRST_BUILD,
   FOE_SIEGE_Y,
   HOUSE_POP,
@@ -1041,7 +1042,8 @@ export class GameSim {
     const speed = def.speed * tier.speed;
     if (fromBarracks && barracks) {
       hp *= DAMAGE_MULT[barracks.damageRank];
-      damage *= DAMAGE_MULT[barracks.damageRank];
+      damage *=
+        kind === "levy" ? LEVY_ATTACK_MULT[barracks.damageRank] : DAMAGE_MULT[barracks.damageRank];
       cooldown *= RATE_MULT[barracks.rateRank];
     }
     const aiHeldForRush = team !== "you" && fromBarracks;
