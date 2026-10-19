@@ -1,4 +1,6 @@
 import {
+  AI_ATTACK_WAVE_CAP,
+  AI_INFINITE_RES,
   AI_RESERVE,
   ARCHER_VS_SIEGE,
   BASE_PEON_CAP,
@@ -44,6 +46,10 @@ import {
   WAVE_UNIT_GAP,
   WORLD_H,
   WORLD_W,
+  aiPeonBuff,
+  aiSoldierBuff,
+  aiWaveBuffLabel,
+  aiWaveIncome,
   type ResCost,
 } from "./balance";
 import {
@@ -289,6 +295,7 @@ export class GameSim {
       pendingWaveUnits: [],
       allWavesLaunched: false,
       wavesCleared: 0,
+      aiAttackWaves: { you: 0, foe: 0, ...(triangle ? { east: 0 } : {}) },
       buildSelection: null,
       selectedBuildingId: null,
       selectedVillagerIds: [],
@@ -762,6 +769,7 @@ export class GameSim {
     if (gold === undefined || wood === undefined) return;
     this.state.gold[team] = gold - cost.gold;
     this.state.wood[team] = wood - cost.wood;
+    this.keepAiResources(team);
   }
 
   enqueuePeon(team: Team = "you") {
@@ -856,13 +864,14 @@ export class GameSim {
       keep.peonQueue.shift();
       if (this.state.villagers.filter((v) => v.team === team).length >= this.peonCap(team)) continue;
       const idx = this.state.villagers.filter((v) => v.team === team).length;
+      const peonHp = VILLAGER_HP * (team === "you" ? 1 : aiPeonBuff(this.attackWave(team)).hp);
       this.state.villagers.push({
         id: this.next(),
         team,
         pos: villagerStartFor(this.activeMap, team, idx % 3),
         speed: VILLAGER_SPEED,
-        hp: VILLAGER_HP,
-        maxHp: VILLAGER_HP,
+        hp: peonHp,
+        maxHp: peonHp,
         state: "idle",
         timer: 0,
         carryingGold: 0,
@@ -1025,9 +1034,11 @@ export class GameSim {
 
   private spawnUnit(team: Team, kind: UnitKind, lane: 0 | 1, fromBarracks: boolean, barracks?: Building) {
     const def = UNIT_DEFS[kind];
-    let hp = def.hp;
-    let damage = def.damage;
+    const tier = aiSoldierBuff(team === "you" ? 0 : this.attackWave(team));
+    let hp = def.hp * tier.hp;
+    let damage = def.damage * tier.damage;
     let cooldown = def.cooldown;
+    const speed = def.speed * tier.speed;
     if (fromBarracks && barracks) {
       hp *= DAMAGE_MULT[barracks.damageRank];
       damage *= DAMAGE_MULT[barracks.damageRank];
@@ -1050,7 +1061,7 @@ export class GameSim {
       pos: spawnPos,
       hp,
       maxHp: hp,
-      speed: def.speed,
+      speed,
       damage,
       bounty: def.bounty,
       attackCooldown: cooldown,
@@ -1362,7 +1373,10 @@ export class GameSim {
   }
 
   private buildingDamage(b: Building) {
-    return BUILD_DAMAGE[b.kind] * DAMAGE_MULT[b.damageRank];
+    const raw = BUILD_DAMAGE[b.kind] * DAMAGE_MULT[b.damageRank];
+    if (b.team === "you") return raw;
+    if (b.kind !== "watchtower" && b.kind !== "ballista" && b.kind !== "catapult") return raw;
+    return raw * aiSoldierBuff(this.attackWave(b.team)).damage;
   }
 
   private buildingCooldown(b: Building) {
@@ -1550,10 +1564,10 @@ export class GameSim {
     const threat = this.nearestPeonThreat(team, v.pos, PEON_MELEE_RANGE);
     if (!threat) return false;
     if (v.attackTimer <= 0) {
-      threat.hp -= PEON_DAMAGE;
+      threat.hp -= this.peonDamage(team);
       v.attackTimer = PEON_ATTACK_CD;
       this.emitCombat("meleeHit", v.pos, threat.pos, team);
-      this.addFloat(`-${PEON_DAMAGE}`, threat.pos.x, threat.pos.y - 7, "#e8c070");
+      this.addFloat(`-${Math.round(this.peonDamage(team))}`, threat.pos.x, threat.pos.y - 7, "#e8c070");
     }
     return true;
   }
@@ -1577,7 +1591,7 @@ export class GameSim {
         target = onRoute;
         v.targetEnemyId = onRoute.id;
       } else {
-        moveTowards(v.pos, anchor, v.speed, dt);
+        moveTowards(v.pos, anchor, this.peonPace(team, v.speed), dt);
         return;
       }
     }
@@ -1593,17 +1607,17 @@ export class GameSim {
     }
     if (target) {
       if (dist(v.pos, target.pos) > PEON_MELEE_RANGE) {
-        moveTowards(v.pos, target.pos, PEON_FIGHT_SPEED, dt);
+        moveTowards(v.pos, target.pos, this.peonPace(team, PEON_FIGHT_SPEED), dt);
       } else if (v.attackTimer <= 0) {
-        target.hp -= PEON_DAMAGE;
+        target.hp -= this.peonDamage(team);
         v.attackTimer = PEON_ATTACK_CD;
         this.emitCombat("meleeHit", v.pos, target.pos, team);
-        this.addFloat(`-${PEON_DAMAGE}`, target.pos.x, target.pos.y - 8, "#c8e090");
+        this.addFloat(`-${Math.round(this.peonDamage(team))}`, target.pos.x, target.pos.y - 8, "#c8e090");
       }
       return;
     }
     const destination = v.patrolToB ? v.patrolB : v.patrolA;
-    moveTowards(v.pos, destination, v.speed, dt);
+    moveTowards(v.pos, destination, this.peonPace(team, v.speed), dt);
     if (dist(v.pos, destination) < 3) v.patrolToB = !v.patrolToB;
   }
 
@@ -1623,16 +1637,16 @@ export class GameSim {
     }
     v.targetEnemyId = target?.id;
     if (!target) {
-      if (dist(v.pos, guard) > 3) moveTowards(v.pos, guard, v.speed, dt);
+      if (dist(v.pos, guard) > 3) moveTowards(v.pos, guard, this.peonPace(team, v.speed), dt);
       return true;
     }
     if (dist(v.pos, target.pos) > PEON_MELEE_RANGE) {
-      moveTowards(v.pos, target.pos, PEON_FIGHT_SPEED, dt);
+      moveTowards(v.pos, target.pos, this.peonPace(team, PEON_FIGHT_SPEED), dt);
     } else if (v.attackTimer <= 0) {
-      target.hp -= PEON_DAMAGE;
+      target.hp -= this.peonDamage(team);
       v.attackTimer = PEON_ATTACK_CD;
       this.emitCombat("meleeHit", v.pos, target.pos, team);
-      this.addFloat(`-${PEON_DAMAGE}`, target.pos.x, target.pos.y - 8, "#c8e090");
+      this.addFloat(`-${Math.round(this.peonDamage(team))}`, target.pos.x, target.pos.y - 8, "#c8e090");
     }
     return true;
   }
@@ -2194,7 +2208,7 @@ export class GameSim {
         return;
       }
       if (v.state === "toGarrison") {
-        moveTowards(v.pos, keep.pos, v.speed, dt);
+        moveTowards(v.pos, keep.pos, this.peonPace(team, v.speed), dt);
         if (dist(v.pos, keep.pos) < 8) {
           if (v.carryingGold > 0) {
             this.state.gold[team] = (this.state.gold[team] ?? 0) + v.carryingGold;
@@ -2219,10 +2233,10 @@ export class GameSim {
           return;
         }
         if (v.state === "toBarricade") {
-          moveTowards(v.pos, site.pos, v.speed, dt);
+          moveTowards(v.pos, site.pos, this.peonPace(team, v.speed), dt);
           if (dist(v.pos, site.pos) < 6) v.state = "buildingBarricade";
         } else {
-          site.buildProgress = Math.min(site.buildTime, site.buildProgress + dt);
+          site.buildProgress = Math.min(site.buildTime, site.buildProgress + dt * this.peonWork(team));
           if (site.buildProgress >= site.buildTime) {
             site.built = true;
             site.builderId = undefined;
@@ -2237,7 +2251,7 @@ export class GameSim {
 
       if (v.state === "moving" && v.moveTarget) {
         if (this.peonRetaliate(v, team)) return;
-        moveTowards(v.pos, v.moveTarget, v.speed, dt);
+        moveTowards(v.pos, v.moveTarget, this.peonPace(team, v.speed), dt);
         if (dist(v.pos, v.moveTarget) < 3) {
           v.moveTarget = undefined;
           v.state = "idle";
@@ -2269,12 +2283,12 @@ export class GameSim {
           return;
         }
         if (dist(v.pos, target.pos) > PEON_MELEE_RANGE) {
-          moveTowards(v.pos, target.pos, PEON_FIGHT_SPEED, dt);
+          moveTowards(v.pos, target.pos, this.peonPace(team, PEON_FIGHT_SPEED), dt);
         } else if (v.attackTimer <= 0) {
           // Barracks soldiers and wave creeps both take peon damage — no immunity.
-          target.hp -= PEON_DAMAGE;
+          target.hp -= this.peonDamage(team);
           v.attackTimer = PEON_ATTACK_CD;
-          this.addFloat(`-${PEON_DAMAGE}`, target.pos.x, target.pos.y - 8, "#c8e090");
+          this.addFloat(`-${Math.round(this.peonDamage(team))}`, target.pos.x, target.pos.y - 8, "#c8e090");
         }
         return;
       }
@@ -2290,10 +2304,10 @@ export class GameSim {
       }
       if (v.state === "toNode" && node) {
         if (node.loadsLeft <= 0) {
-          if (dist(v.pos, node.pos) > 4) moveTowards(v.pos, node.pos, v.speed, dt);
+          if (dist(v.pos, node.pos) > 4) moveTowards(v.pos, node.pos, this.peonPace(team, v.speed), dt);
           return;
         }
-        moveTowards(v.pos, node.pos, v.speed, dt);
+        moveTowards(v.pos, node.pos, this.peonPace(team, v.speed), dt);
         if (dist(v.pos, node.pos) < 3) {
           v.state = "gathering";
           v.timer = node.gatherTime;
@@ -2303,7 +2317,7 @@ export class GameSim {
           v.state = "toNode";
           return;
         }
-        v.timer -= dt;
+        v.timer -= dt * this.peonGatherRate(team);
         if (v.timer <= 0) {
           node.loadsLeft -= 1;
           const brain = foeBrainStats();
@@ -2316,7 +2330,7 @@ export class GameSim {
           v.state = "toKeep";
         }
       } else if (v.state === "toKeep") {
-        moveTowards(v.pos, keep.pos, v.speed, dt);
+        moveTowards(v.pos, keep.pos, this.peonPace(team, v.speed), dt);
         if (dist(v.pos, keep.pos) < 8) {
           if (v.carryingGold > 0) {
             this.state.gold[team] = (this.state.gold[team] ?? 0) + v.carryingGold;
@@ -2343,7 +2357,7 @@ export class GameSim {
           else v.state = "idle";
         }
       } else if (v.state === "home") {
-        moveTowards(v.pos, keep.pos, v.speed, dt);
+        moveTowards(v.pos, keep.pos, this.peonPace(team, v.speed), dt);
         if (dist(v.pos, keep.pos) < 6) v.state = "idle";
       }
     });
@@ -2565,6 +2579,84 @@ export class GameSim {
     const gold = this.state.gold[team];
     if (gold === undefined) return;
     this.state.gold[team] = gold - amount;
+    this.keepAiResources(team);
+  }
+
+  private attackWave(team: Team) {
+    return this.state.aiAttackWaves[team] ?? 0;
+  }
+
+  /** Wave 16+ refills gold and wood so training and buildings are never blocked. */
+  private keepAiResources(team: Team) {
+    if (team === "you" || this.attackWave(team) < AI_ATTACK_WAVE_CAP) return;
+    if ((this.state.gold[team] ?? 0) < AI_INFINITE_RES) this.state.gold[team] = AI_INFINITE_RES;
+    if ((this.state.wood[team] ?? 0) < AI_INFINITE_RES) this.state.wood[team] = AI_INFINITE_RES;
+  }
+
+  /**
+   * One committed AI attack wave. Steps that team's tier, then retunes
+   * soldiers and peons already on the field. Future spawns read the new tier.
+   */
+  private commitAiAttackWave(team: Team) {
+    if (team === "you") return;
+    const prev = this.attackWave(team);
+    const next = prev + 1;
+    this.state.aiAttackWaves[team] = next;
+    const fromSoldier = aiSoldierBuff(prev);
+    const toSoldier = aiSoldierBuff(next);
+    const hpRatio = toSoldier.hp / fromSoldier.hp;
+    const damageRatio = toSoldier.damage / fromSoldier.damage;
+    const speedRatio = toSoldier.speed / fromSoldier.speed;
+    for (const unit of this.state.units) {
+      if (unit.team !== team || unit.hp <= 0) continue;
+      unit.maxHp *= hpRatio;
+      unit.hp *= hpRatio;
+      unit.damage *= damageRatio;
+      unit.speed *= speedRatio;
+    }
+    const peonRatio = aiPeonBuff(next).hp / aiPeonBuff(prev).hp;
+    for (const villager of this.state.villagers) {
+      if (villager.team !== team || villager.hp <= 0) continue;
+      villager.maxHp *= peonRatio;
+      villager.hp *= peonRatio;
+    }
+    if (next >= AI_ATTACK_WAVE_CAP) {
+      this.state.gold[team] = AI_INFINITE_RES;
+      this.state.wood[team] = AI_INFINITE_RES;
+      return;
+    }
+    const income = aiWaveIncome(next);
+    this.state.gold[team] = (this.state.gold[team] ?? 0) + income.gold;
+    this.state.wood[team] = (this.state.wood[team] ?? 0) + income.wood;
+  }
+
+  private peonWork(team: Team) {
+    if (team === "you") return 1;
+    return aiPeonBuff(this.attackWave(team)).work;
+  }
+
+  private peonGatherRate(team: Team) {
+    if (team === "you") return 1;
+    return aiPeonBuff(this.attackWave(team)).gather;
+  }
+
+  private peonPace(team: Team, base: number) {
+    return base * this.peonWork(team);
+  }
+
+  private peonDamage(team: Team) {
+    if (team === "you") return PEON_DAMAGE;
+    return PEON_DAMAGE * aiPeonBuff(this.attackWave(team)).melee;
+  }
+
+  private foeWaveHudLine() {
+    const teams: Team[] = this.isTriangle() ? ["foe", "east"] : ["foe"];
+    return teams
+      .map((team) => {
+        const wave = this.attackWave(team);
+        return `${this.teamName(team)} wave ${wave} · ${aiWaveBuffLabel(wave)}`;
+      })
+      .join(" · ");
   }
 
   getBuildings(team: Team) {
@@ -2895,8 +2987,11 @@ export class GameSim {
       this.aiRushDeadline = 0;
       return false;
     }
-    if (!veryHard(skill)) return this.releaseLearningWarband(skill, held);
-    return this.releaseVeryHardWave(skill, held);
+    const released = !veryHard(skill)
+      ? this.releaseLearningWarband(skill, held)
+      : this.releaseVeryHardWave(skill, held);
+    if (released) this.commitAiAttackWave(this.aiSide);
+    return released;
   }
 
   /** Level 8–9. Small groups, and a timeout that does not demand a mixed wave. */
@@ -3313,6 +3408,7 @@ export class GameSim {
       players: s.players,
       attackName: this.teamName(focus),
       enemyKeeps,
+      foeWaveLine: this.foeWaveHudLine(),
     };
   }
 }

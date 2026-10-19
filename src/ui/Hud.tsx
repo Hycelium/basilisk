@@ -86,6 +86,7 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
           </button>
         </div>
       )}
+      {ui.phase === "running" && <div className="foe-wave-line">{ui.foeWaveLine}</div>}
       <div className="hud-xp-row">
         <div className="stat keep-xp-stat">
           <span className="label">KEEP LV {ui.keepLevel}</span>

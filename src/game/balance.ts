@@ -219,3 +219,56 @@ export function formatCost(c: ResCost) {
   if (c.wood > 0) parts.push(`${c.wood}w`);
   return parts.join(" · ") || "0";
 }
+
+/**
+ * Unfair foe curve. Wave 0 (no committed attack yet) is 1×.
+ * Each committed AI attack wave steps the tier. Wave 16 is the cap.
+ */
+export const AI_ATTACK_WAVE_CAP = 16;
+/** Gold and wood floor once an AI reaches the cap. Refilled after every spend. */
+export const AI_INFINITE_RES = 999_999;
+
+export function aiAttackWaveTier(wave: number) {
+  return Math.max(0, Math.min(AI_ATTACK_WAVE_CAP, Math.floor(wave)));
+}
+
+/** Soldiers: 2× HP, +90% damage, +25% speed at wave 16. Linear in the tier. */
+export function aiSoldierBuff(wave: number) {
+  const t = aiAttackWaveTier(wave) / AI_ATTACK_WAVE_CAP;
+  return {
+    hp: 1 + t,
+    damage: 1 + t * 0.9,
+    speed: 1 + t * 0.25,
+  };
+}
+
+/** Peons: 2× HP, +60% gather, +40% work speed, +50% melee at wave 16. */
+export function aiPeonBuff(wave: number) {
+  const t = aiAttackWaveTier(wave) / AI_ATTACK_WAVE_CAP;
+  return {
+    hp: 1 + t,
+    gather: 1 + t * 0.6,
+    work: 1 + t * 0.4,
+    melee: 1 + t * 0.5,
+  };
+}
+
+/**
+ * Bonus purse granted when attack wave `wave` commits (waves 1–15).
+ * Wave 16+ does not use this; the sim floors gold and wood instead.
+ */
+export function aiWaveIncome(wave: number) {
+  const w = aiAttackWaveTier(wave);
+  if (w <= 0 || w >= AI_ATTACK_WAVE_CAP) return { gold: 0, wood: 0 };
+  return { gold: 36 * w, wood: 24 * w };
+}
+
+export function aiWaveBuffLabel(wave: number) {
+  const w = Math.max(0, Math.floor(wave));
+  if (w <= 0) return "steady";
+  if (w >= AI_ATTACK_WAVE_CAP) return "unbounded";
+  if (w >= 12) return "crushing";
+  if (w >= 8) return "fierce";
+  if (w >= 4) return "honed";
+  return "stirring";
+}

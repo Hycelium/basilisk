@@ -738,6 +738,17 @@ button:disabled {
   padding: 0 14px;
 }
 
+.foe-wave-line {
+  margin: 4px 2px 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #f0d8a8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .hud-xp-row {
   margin-top: 6px;
 }
@@ -933,6 +944,13 @@ button:disabled {
   font-size: 9px;
   margin-top: 0;
   white-space: nowrap;
+}
+
+.hud.compact .foe-wave-line {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0 4px;
+  font-size: 11px;
 }
 
 .hud.compact .hud-xp-row {

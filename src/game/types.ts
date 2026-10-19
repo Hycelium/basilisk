@@ -281,6 +281,8 @@ export interface GameState {
   pendingWaveUnits: WaveQueueItem[];
   allWavesLaunched: boolean;
   wavesCleared: number;
+  /** Committed AI attack waves this match. One counter per team. Not saved. */
+  aiAttackWaves: TeamBag<number>;
   buildSelection: BuildingKind | null;
   selectedBuildingId: number | null;
   selectedVillagerIds: number[];
@@ -391,6 +393,8 @@ export interface UiSnapshot {
   players: 2 | 3;
   attackName: string;
   enemyKeeps: { team: Team; name: string; hp: number; down: boolean }[];
+  /** One running-match line, e.g. "Foe wave 4 · honed". */
+  foeWaveLine: string;
 }
 
 export interface RectHit {

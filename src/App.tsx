@@ -77,6 +77,7 @@ const defaultUi: UiSnapshot = {
   players: 2,
   attackName: "Foe",
   enemyKeeps: [],
+  foeWaveLine: "Foe wave 0 · steady",
 };
 
 const LONG_PRESS_MS = 350;
