@@ -34,6 +34,10 @@ import {
   START_GOLD,
   START_KEEP_HP,
   START_WOOD,
+  STRONGHOLD_CAPTURE_RADIUS,
+  STRONGHOLD_CAPTURE_SECONDS,
+  STRONGHOLD_HOLD_SECONDS,
+  STRONGHOLD_HP,
   STARTER_GUARD_RANGE,
   TRAIN_ORDER,
   UNIT_DEFS,
@@ -56,7 +60,7 @@ import {
 import {
   buildNodes,
   buildPads,
-  generateTriangleMap,
+  generateHubMap,
   getOrCreateCampaignMap,
   keepPosFor,
   lanePathX,
@@ -90,21 +94,26 @@ import {
   xpForNextLevel,
   xpProgress,
 } from "./progress";
-import type {
-  Building,
-  BuildingKind,
-  GameState,
-  MapDef,
-  Pad,
-  RectHit,
-  ResourceNode,
-  Team,
-  TrainKind,
-  UiSnapshot,
-  SkirmishSetup,
-  Unit,
-  UnitKind,
-  Villager,
+import {
+  defaultDiplomacy,
+  diplomacyKey,
+  normalizeDiplomacy,
+  type Building,
+  type BuildingKind,
+  type GameState,
+  type MapDef,
+  type Pad,
+  type RectHit,
+  type ResourceNode,
+  type SkirmishSetup,
+  type Stance,
+  type Stronghold,
+  type Team,
+  type TrainKind,
+  type UiSnapshot,
+  type Unit,
+  type UnitKind,
+  type Villager,
 } from "./types";
 
 function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
@@ -194,6 +203,10 @@ export class GameSim {
   private sideAi = new Map<Team, { timer: number; rushDeadline: number; read: HumanAiRead; seenLevyIds: number[]; slainAtWave: number }>();
   private activeMap: MapDef;
   private controlGroups = new Map<number, number[]>();
+  private setupDiplomacy = defaultDiplomacy(2);
+  private grudges: { victim: Team; aggressor: Team; x: number; y: number; until: number }[] = [];
+  private captureBonus = 0;
+  private captureBonusTeam: Team | null = null;
 
   constructor() {
     const meta = loadMeta();
@@ -203,8 +216,23 @@ export class GameSim {
 
   private makeFreshState(map: MapDef): GameState {
     const meta = loadMeta();
-    const triangle = map.layout === "triangle";
-    const teams: Team[] = triangle ? ["you", "foe", "east"] : ["you", "foe"];
+    const three = (map.keeps ?? []).some((k) => k.team === "east");
+    const teams: Team[] = three ? ["you", "foe", "east"] : ["you", "foe"];
+    const holdPos = map.stronghold ?? {
+      x: (map.worldW ?? WORLD_W) / 2,
+      y: (map.worldH ?? WORLD_H) / 2,
+    };
+    const stronghold: Stronghold = {
+      pos: { x: holdPos.x, y: holdPos.y },
+      hp: STRONGHOLD_HP,
+      maxHp: STRONGHOLD_HP,
+      owner: null,
+      channelTeam: null,
+      channel: 0,
+      hold: 0,
+      contested: false,
+      hitFlash: 0,
+    };
     const pads = buildPads(map);
     const nodes = buildNodes(map);
     const buildings: Building[] = [];
@@ -255,12 +283,12 @@ export class GameSim {
       attackFlash: 0,
       peonQueue: [] as { timeLeft: number; totalTime: number }[],
     });
-    const freshGold = () => ({ you: START_GOLD, foe: START_GOLD, ...(triangle ? { east: START_GOLD } : {}) });
-    const freshWood = () => ({ you: START_WOOD, foe: START_WOOD, ...(triangle ? { east: START_WOOD } : {}) });
+    const freshGold = () => ({ you: START_GOLD, foe: START_GOLD, ...(three ? { east: START_GOLD } : {}) });
+    const freshWood = () => ({ you: START_WOOD, foe: START_WOOD, ...(three ? { east: START_WOOD } : {}) });
     const freshStats = () => ({
       you: { slain: 0, goldEarned: 0 },
       foe: { slain: 0, goldEarned: 0 },
-      ...(triangle ? { east: { slain: 0, goldEarned: 0 } } : {}),
+      ...(three ? { east: { slain: 0, goldEarned: 0 } } : {}),
     });
     return {
       phase: "title",
@@ -273,11 +301,16 @@ export class GameSim {
       keeps: {
         you: keepFor("you"),
         foe: keepFor("foe"),
-        ...(triangle ? { east: keepFor("east") } : {}),
+        ...(three ? { east: keepFor("east") } : {}),
       },
       gold: freshGold(),
       wood: freshWood(),
-      players: triangle ? 3 : 2,
+      players: three ? 3 : 2,
+      diplomacy: { ...this.setupDiplomacy },
+      stronghold,
+      raidTarget: null,
+      raidOwner: null,
+      pendingAttack: null,
       attackTarget: "foe",
       eliminated: [],
       worldW: map.worldW ?? WORLD_W,
@@ -296,7 +329,7 @@ export class GameSim {
       pendingWaveUnits: [],
       allWavesLaunched: false,
       wavesCleared: 0,
-      aiAttackWaves: { you: 0, foe: 0, ...(triangle ? { east: 0 } : {}) },
+      aiAttackWaves: { you: 0, foe: 0, ...(three ? { east: 0 } : {}) },
       buildSelection: null,
       selectedBuildingId: null,
       selectedVillagerIds: [],
@@ -341,22 +374,23 @@ export class GameSim {
     this.aiSide = "foe";
     this.episodes.clear();
     this.sideAi.clear();
+    this.grudges = [];
+    this.captureBonus = 0;
+    this.captureBonusTeam = null;
+    this.setupDiplomacy = defaultDiplomacy(2);
     this.state = this.makeFreshState(this.activeMap);
   }
 
   /**
    * Build the match the skirmish menu asked for.
-   * Small is the existing duel. Large is the three-keep free-for-all.
+   * Both sizes use the hub: every road meets at the stronghold.
    */
   applySkirmish(setup: SkirmishSetup) {
-    const players = setup.mapSize === "small" ? 2 : 3;
-    if (players === 2) {
-      this.reloadCampaignMap();
-      return;
-    }
+    const players: 2 | 3 = setup.players === 3 || setup.mapSize === "large" ? 3 : 2;
     const meta = loadMeta();
     const seed = seedForCampaign(meta.level, meta.scoutSalt);
-    this.activeMap = generateTriangleMap(seed);
+    this.activeMap = generateHubMap(seed, players);
+    this.setupDiplomacy = normalizeDiplomacy(setup.diplomacy, players);
     this.nextId = 1;
     this.aiTimer = 0;
     this.aiRushDeadline = 0;
@@ -366,15 +400,20 @@ export class GameSim {
     this.aiSide = "foe";
     this.episodes.clear();
     this.sideAi.clear();
-    for (const team of ["foe", "east"] as Team[]) {
-      this.sideAi.set(team, {
-        timer: 0.4 + (team === "east" ? 0.35 : 0),
-        rushDeadline: 0,
-        read: blankHumanRead(),
-        seenLevyIds: [],
-        slainAtWave: 0,
-      });
-      this.episodes.set(team, blankEpisode());
+    this.grudges = [];
+    this.captureBonus = 0;
+    this.captureBonusTeam = null;
+    if (players === 3) {
+      for (const team of ["foe", "east"] as Team[]) {
+        this.sideAi.set(team, {
+          timer: 0.4 + (team === "east" ? 0.35 : 0),
+          rushDeadline: 0,
+          read: blankHumanRead(),
+          seenLevyIds: [],
+          slainAtWave: 0,
+        });
+        this.episodes.set(team, blankEpisode());
+      }
     }
     this.state = this.makeFreshState(this.activeMap);
   }
@@ -396,13 +435,17 @@ export class GameSim {
     this.state.buildTimer = FIRST_BUILD;
     notifyAiMatchStart();
     const iq = foeBrainStats().intellect;
+    this.addToast("Roads meet at the Stronghold. Hold it to attack a keep.");
     if (this.isTriangle()) {
-      this.addToast(`Skirmish — North and East. Attacking ${this.teamName(this.state.attackTarget)}.`);
       this.addToast(`Foe intellect ${formatIntellect(iq)} — both enemies learn from one book`);
     } else {
       this.addToast(`Build phase — ${FIRST_BUILD}s until wave 1`);
       this.addToast(`Foe intellect ${formatIntellect(iq)} — learning your patterns`);
     }
+  }
+
+  usesHub() {
+    return this.activeMap.layout === "hub" || this.activeMap.layout === "triangle";
   }
 
   isTriangle() {
@@ -432,11 +475,14 @@ export class GameSim {
   }
 
   cycleAttackTarget() {
-    if (!this.isTriangle() || this.state.phase !== "running") return;
-    const options = (["foe", "east"] as Team[]).filter((t) => this.keepAlive(t));
-    if (options.length < 2) return;
-    const i = options.indexOf(this.state.attackTarget);
-    this.setAttackTarget(options[(i + 1) % options.length]);
+    if (!this.usesHub() || this.state.phase !== "running") return;
+    const options = this.activeTeams().filter(
+      (t) => t !== "you" && this.keepAlive(t) && this.stance("you", t) !== "ally",
+    );
+    if (options.length === 0) return;
+    const current = this.state.pendingAttack;
+    const i = current ? options.indexOf(current) : -1;
+    this.selectPendingAttack(options[(i + 1) % options.length]);
   }
 
   setSound(on: boolean) {
@@ -498,6 +544,14 @@ export class GameSim {
       this.state.selectedKeepTeam = "you";
       this.state.selectedBuildingId = null;
       this.state.selectedVillagerIds = [];
+      this.state.buildSelection = null;
+      return;
+    }
+    if (hit.kind === "keep") {
+      this.selectPendingAttack(hit.id as Team);
+      this.state.selectedBuildingId = null;
+      this.state.selectedVillagerIds = [];
+      this.state.selectedKeepTeam = null;
       this.state.buildSelection = null;
       return;
     }
@@ -578,16 +632,9 @@ export class GameSim {
     const selected = this.state.villagers.filter(
       (v) => v.team === "you" && this.state.selectedVillagerIds.includes(v.id),
     );
-    if (this.isTriangle()) {
-      if (hit?.kind === "keep" && hit.id !== "you") {
-        this.setAttackTarget(hit.id as Team);
-      } else if (hit?.kind === "unit") {
-        const clicked = this.state.units.find((u) => u.id === Number(hit.id) && u.hp > 0);
-        if (clicked && this.isHostile("you", clicked.team)) this.setAttackTarget(clicked.team);
-      } else if (patrol) {
-        const near = this.enemyKeepNear(world);
-        if (near) this.setAttackTarget(near);
-      }
+    if (hit?.kind === "keep" && hit.id !== "you") {
+      this.selectPendingAttack(hit.id as Team);
+      return;
     }
     if (selected.length === 0) {
       const barracks = this.state.buildings.find(
@@ -595,8 +642,6 @@ export class GameSim {
       );
       if (barracks) {
         barracks.rallyPoint = { ...world };
-        const nearKeep = this.isTriangle() ? this.enemyKeepNear(world) : null;
-        if (nearKeep) this.setAttackTarget(nearKeep);
         this.state.commandMarkers.push({ id: this.next(), kind: "rally", pos: { ...world }, life: 1.4 });
         this.addToast("Barracks rally point set.");
       }
@@ -624,7 +669,9 @@ export class GameSim {
     }
 
     if (hit?.kind === "unit") {
-      const enemy = this.state.units.find((u) => u.id === Number(hit.id) && u.hp > 0 && this.isHostile("you", u.team));
+      const enemy = this.state.units.find(
+        (u) => u.id === Number(hit.id) && u.hp > 0 && u.team !== "you" && this.stance("you", u.team) !== "ally",
+      );
       if (enemy) {
         for (const v of selected) {
           this.releasePeonTask(v);
@@ -681,7 +728,79 @@ export class GameSim {
     this.tryPlaceBarricade(world);
   }
 
+  private placeHubBarricade(world: { x: number; y: number }) {
+    const roads = this.activeMap.roads ?? [];
+    let bestD = Infinity;
+    let best: { lane: 0 | 1; x: number; y: number } | null = null;
+    for (let index = 0; index < roads.length; index++) {
+      const lane = (index % 2) as 0 | 1;
+      for (const point of roads[index].points) {
+        const d = dist(world, point);
+        if (d < bestD) {
+          bestD = d;
+          best = { lane, x: point.x, y: point.y };
+        }
+      }
+    }
+    if (!best || bestD > 34) {
+      this.addToast("Place the barricade directly across a road.");
+      return;
+    }
+    const pos = { x: best.x, y: best.y };
+    if (this.state.barricades.some((b) => dist(b.pos, pos) < 45)) {
+      this.addToast("Too close to another barricade.");
+      return;
+    }
+    const cost = BUILD_COST.barricade;
+    if (!this.canAfford("you", cost)) {
+      this.addToast(`Need ${cost.gold}g ${cost.wood}w for a barricade.`);
+      return;
+    }
+    const builder = this.state.villagers
+      .filter(
+        (v) =>
+          v.team === "you" &&
+          v.state !== "garrisoned" &&
+          v.state !== "toGarrison" &&
+          v.state !== "toBarricade" &&
+          v.state !== "buildingBarricade",
+      )
+      .sort((a, b) => dist(a.pos, pos) - dist(b.pos, pos))[0];
+    if (!builder) {
+      this.addToast("No peon is available to build.");
+      return;
+    }
+    if (builder.targetNodeId) {
+      const node = this.state.nodes.find((n) => n.id === builder.targetNodeId);
+      if (node) node.workers = Math.max(0, node.workers - 1);
+    }
+    this.spendRes("you", cost);
+    const barricade = {
+      id: this.next(),
+      team: "you" as Team,
+      lane: best.lane,
+      pos,
+      hp: 6,
+      maxHp: 6,
+      buildProgress: 0,
+      buildTime: 3,
+      built: false,
+      builderId: builder.id,
+    };
+    this.state.barricades.push(barricade);
+    builder.targetNodeId = undefined;
+    builder.targetEnemyId = undefined;
+    builder.targetBarricadeId = barricade.id;
+    builder.state = "toBarricade";
+    this.state.buildSelection = null;
+    this.addToast("Peon dispatched to construct the barricade.");
+  }
+
   private tryPlaceBarricade(world: { x: number; y: number }) {
+    if (this.usesHub()) {
+      this.placeHubBarricade(world);
+      return;
+    }
     if (world.y < FOE_SIEGE_Y || world.y > YOU_SIEGE_Y) {
       this.addToast("Barricades must be placed on the road between the keeps.");
       return;
@@ -931,7 +1050,97 @@ export class GameSim {
   }
 
   private isHostile(a: Team, b: Team) {
-    return a !== b && this.keepAlive(a) && this.keepAlive(b);
+    if (a === b || !this.keepAlive(a) || !this.keepAlive(b)) return false;
+    if (!this.usesHub()) return true;
+    return this.stance(a, b) === "enemy";
+  }
+
+  private stance(a: Team, b: Team): Stance {
+    if (a === b) return "ally";
+    if (!this.usesHub()) return "enemy";
+    return this.state.diplomacy[diplomacyKey(a, b)] ?? "neutral";
+  }
+
+  /** Neutral fight-back stays at the contact. Allies are never valid targets. */
+  private mayFight(a: Team, b: Team, pos: { x: number; y: number }) {
+    if (a === b || !this.keepAlive(a) || !this.keepAlive(b)) return false;
+    const stance = this.stance(a, b);
+    if (stance === "ally") return false;
+    if (stance === "enemy") return true;
+    return this.grudgeActive(a, b, pos);
+  }
+
+  private noteAggression(aggressor: Team, victim: Team, pos: { x: number; y: number }) {
+    if (aggressor === victim || this.stance(aggressor, victim) !== "neutral") return;
+    const until = this.state.time + 7;
+    const existing = this.grudges.find((g) => g.victim === victim && g.aggressor === aggressor);
+    if (existing) {
+      existing.until = until;
+      existing.x = pos.x;
+      existing.y = pos.y;
+      return;
+    }
+    this.grudges.push({ victim, aggressor, x: pos.x, y: pos.y, until });
+  }
+
+  private grudgeActive(victim: Team, aggressor: Team, pos: { x: number; y: number }) {
+    this.grudges = this.grudges.filter((g) => g.until > this.state.time);
+    return this.grudges.some(
+      (g) => g.victim === victim && g.aggressor === aggressor && Math.hypot(g.x - pos.x, g.y - pos.y) < 120,
+    );
+  }
+
+  /** Clicked keep. Does not move the army. */
+  selectPendingAttack(team: Team) {
+    if (!this.keepAlive(team) || team === "you") return;
+    if (this.stance("you", team) === "ally") {
+      this.state.pendingAttack = null;
+      this.addToast(`${this.teamName(team)} is an ally.`);
+      return;
+    }
+    this.state.pendingAttack = team;
+    this.state.attackTarget = team;
+  }
+
+  /**
+   * Attack button. Only the stronghold holder sends a keep raid.
+   * A non-holder returns without retargeting the army.
+   */
+  orderKeepAttack() {
+    const team = this.state.pendingAttack;
+    if (!team || team === "you" || !this.keepAlive(team)) return false;
+    if (this.stance("you", team) === "ally") return false;
+    if (this.state.stronghold.owner !== "you") return false;
+    this.commitRaid("you", team);
+    return true;
+  }
+
+  private commitRaid(owner: Team, target: Team) {
+    this.state.raidOwner = owner;
+    this.state.raidTarget = target;
+    this.state.attackTarget = target;
+    for (const u of this.state.units) {
+      if (u.team !== owner || u.hp <= 0) continue;
+      u.goalTeam = target;
+      u.targetUnitId = undefined;
+      u.engageFrom = undefined;
+      u.targetKeep = true;
+      u.aiHeldForRush = false;
+      u.aiStagingPoint = undefined;
+    }
+    const keep = this.teamKeep(target);
+    this.state.commandMarkers.push({ id: this.next(), kind: "attack", pos: { ...keep.pos }, life: 1.6 });
+    this.addToast(`Attacking: ${this.teamName(target)}`);
+  }
+
+  private clearRaid() {
+    const target = this.state.raidTarget;
+    this.state.raidTarget = null;
+    this.state.raidOwner = null;
+    if (!target) return;
+    for (const u of this.state.units) {
+      if (u.goalTeam === target) u.goalTeam = undefined;
+    }
   }
 
   teamName(team: Team) {
@@ -969,56 +1178,34 @@ export class GameSim {
     return this.pressureTarget(u.team);
   }
 
-  private roadBetween(a: Team, b: Team) {
-    return this.activeMap.roads?.find((r) => (r.a === a && r.b === b) || (r.a === b && r.b === a));
+  private teamRoad(team: Team) {
+    return this.activeMap.roads?.find((r) => r.a === team);
   }
 
-  private pointAlong(from: Team, to: Team, t: number) {
-    const road = this.roadBetween(from, to);
-    const keep = this.teamKeep(to);
-    if (!road) return { ...keep.pos };
-    const forward = road.a === from;
-    const pts = road.points;
-    const idx = Math.max(0, Math.min(pts.length - 1, Math.round(t * (pts.length - 1))));
-    const point = forward ? pts[idx] : pts[pts.length - 1 - idx];
+  private pointOnTeamRoad(team: Team, t: number) {
+    const road = this.teamRoad(team);
+    const hold = this.state.stronghold.pos;
+    if (!road || road.points.length === 0) return { ...hold };
+    const idx = Math.max(0, Math.min(road.points.length - 1, Math.round(t * (road.points.length - 1))));
+    const point = road.points[idx];
     return { x: point.x, y: point.y };
   }
 
-  private enemyKeepNear(pos: { x: number; y: number }, radius = 78): Team | null {
-    let best: Team | null = null;
-    let bestD = radius;
-    for (const team of ["foe", "east"] as Team[]) {
-      if (!this.keepAlive(team)) continue;
-      const d = dist(pos, this.teamKeep(team).pos);
-      if (d <= bestD) {
-        bestD = d;
-        best = team;
-      }
-    }
-    return best;
-  }
-
   setAttackTarget(team: Team) {
-    if (!this.isTriangle() || !this.keepAlive(team) || team === "you") return;
-    const changed = this.state.attackTarget !== team;
-    this.state.attackTarget = team;
-    for (const u of this.state.units) {
-      if (u.team !== "you" || u.hp <= 0) continue;
-      u.goalTeam = team;
-      u.targetUnitId = undefined;
-      u.engageFrom = undefined;
-      u.targetKeep = false;
-    }
-    if (changed) {
-      const keep = this.teamKeep(team);
-      this.state.commandMarkers.push({ id: this.next(), kind: "attack", pos: { ...keep.pos }, life: 1.6 });
-      this.addToast(`Attacking: ${this.teamName(team)}`);
-    }
+    this.selectPendingAttack(team);
   }
 
   private eliminateTeam(team: Team) {
     if (team === "you" || this.state.eliminated.includes(team)) return;
     this.state.eliminated.push(team);
+    if (this.state.stronghold.owner === team) {
+      this.state.stronghold.owner = null;
+      this.state.stronghold.hold = 0;
+      this.state.stronghold.channel = 0;
+      this.state.stronghold.channelTeam = null;
+      this.addToast("The Stronghold is unclaimed.");
+    }
+    if (this.state.raidTarget === team || this.state.raidOwner === team) this.clearRaid();
     for (const v of this.state.villagers) {
       if (v.team !== team || !v.targetNodeId) continue;
       const node = this.state.nodes.find((n) => n.id === v.targetNodeId);
@@ -1027,9 +1214,10 @@ export class GameSim {
     this.state.units = this.state.units.filter((u) => u.team !== team);
     this.state.villagers = this.state.villagers.filter((v) => v.team !== team);
     this.addToast(`${this.teamName(team)} is eliminated.`);
-    if (this.state.attackTarget === team) {
-      const other = (["foe", "east"] as Team[]).find((t) => t !== team && this.keepAlive(t));
-      if (other) this.setAttackTarget(other);
+    if (this.state.pendingAttack === team) {
+      const other = this.activeTeams().find((t) => t !== "you" && t !== team && this.keepAlive(t) && this.stance("you", t) !== "ally");
+      this.state.pendingAttack = other ?? null;
+      if (other) this.state.attackTarget = other;
     }
   }
 
@@ -1048,9 +1236,12 @@ export class GameSim {
     }
     const aiHeldForRush = team !== "you" && fromBarracks;
     const stagingY = 138 + lane * 8;
-    const goal = team === "you" ? this.livingAttackTarget() : this.pressureTarget(team);
-    const spawnPos = this.isTriangle()
-      ? this.pointAlong(team, goal, 0.07)
+    const raid =
+      this.usesHub() && this.state.raidOwner === team && this.state.stronghold.owner === team
+        ? this.state.raidTarget ?? undefined
+        : undefined;
+    const spawnPos = this.usesHub()
+      ? this.pointOnTeamRoad(team, 0.08)
       : {
           x: lanePathX(this.activeMap.seed, team, lane, laneStartY(team)),
           y: laneStartY(team),
@@ -1076,10 +1267,10 @@ export class GameSim {
       ignoreEnemyCreeps: !fromBarracks,
       rallyPoint: barracks?.rallyPoint ? { ...barracks.rallyPoint } : undefined,
       aiHeldForRush,
-      goalTeam: this.isTriangle() ? goal : undefined,
+      goalTeam: raid,
       aiStagingPoint: aiHeldForRush
-        ? this.isTriangle()
-          ? this.pointAlong(team, goal, 0.16)
+        ? this.usesHub()
+          ? this.pointOnTeamRoad(team, raid ? 0.18 : 0.7)
           : {
               x: lanePathX(this.activeMap.seed, team, lane, stagingY),
               y: stagingY,
@@ -1399,7 +1590,7 @@ export class GameSim {
 
   private unitSiegingKeep(u: Unit, defendingTeam: Team) {
     if (u.targetKeep) return true;
-    if (this.isTriangle()) return dist(u.pos, this.teamKeep(defendingTeam).pos) < 130;
+    if (this.usesHub()) return dist(u.pos, this.teamKeep(defendingTeam).pos) < 130;
     if (defendingTeam === "you") return u.pos.y >= YOU_SIEGE_Y;
     return u.pos.y <= FOE_SIEGE_Y;
   }
@@ -1413,7 +1604,7 @@ export class GameSim {
     if (occupants === 0 || keep.attackTimer > 0) return;
 
     const targets = this.state.units
-      .filter((u) => u.team !== team && dist(u.pos, keep.pos) <= KEEP_ARROW_RANGE)
+      .filter((u) => this.mayFight(team, u.team, u.pos) && dist(u.pos, keep.pos) <= KEEP_ARROW_RANGE)
       .sort((a, b) => dist(a.pos, keep.pos) - dist(b.pos, keep.pos));
     const target = targets[0];
     if (!target) return;
@@ -1422,6 +1613,7 @@ export class GameSim {
     // meaningfully safer without replacing dedicated towers.
     const raw = 4 + occupants * 2.5;
     const dealt = this.applyTowerDamage(target, raw);
+    this.noteAggression(team, target.team, target.pos);
     this.addFloat(`-${Math.round(dealt)}`, target.pos.x, target.pos.y - 8, "#f6dfa0");
     keep.attackTarget = { ...target.pos };
     keep.attackFlash = 0.18;
@@ -1429,8 +1621,11 @@ export class GameSim {
     this.emitCombat("arrow", keep.pos, target.pos, team);
   }
 
-  private hostileTo(team: Team, other: Team) {
-    return this.isTriangle() ? this.isHostile(team, other) : other === this.enemy(team);
+  private hostileTo(team: Team, other: Team, pos?: { x: number; y: number }) {
+    if (other === team) return false;
+    if (!this.usesHub()) return other === this.enemy(team);
+    if (!pos) return this.stance(team, other) === "enemy" && this.keepAlive(team) && this.keepAlive(other);
+    return this.mayFight(team, other, pos);
   }
 
   private doTowerCombat(dt: number, team: Team) {
@@ -1446,7 +1641,7 @@ export class GameSim {
       // Watchtower arrows never target peons. Only heavy emplacements can
       // punish an eco raid.
       const peons = this.state.villagers.filter((v) => {
-        if (!this.hostileTo(team, v.team)) return false;
+        if (!this.hostileTo(team, v.team, v.pos)) return false;
         if (v.state === "garrisoned") return false;
         return dist(v.pos, t.pos) <= reach;
       });
@@ -1455,6 +1650,7 @@ export class GameSim {
         const peon = peons[0];
         const raw = this.buildingDamage(t) * (t.kind === "catapult" ? 0.82 : 1);
         peon.hp -= raw;
+        this.noteAggression(team, peon.team, peon.pos);
         this.emitCombat(
           t.kind === "catapult" ? "ramImpact" : "arrow",
           t.pos,
@@ -1473,7 +1669,7 @@ export class GameSim {
       }
 
       const inRange = this.state.units.filter((u) => {
-        if (!this.hostileTo(team, u.team)) return false;
+        if (!this.hostileTo(team, u.team, u.pos)) return false;
         if (!t.canRefund && dist(u.pos, keep.pos) <= KEEP_THREAT_RADIUS + 30) return true;
         return dist(u.pos, t.pos) <= reach;
       });
@@ -1494,11 +1690,13 @@ export class GameSim {
             let splash = raw;
             if (this.unitSiegingKeep(u, team)) splash *= 0.85;
             const dealt = this.applyTowerDamage(u, splash);
+            this.noteAggression(team, u.team, u.pos);
             this.addFloat(`-${Math.round(dealt)}`, u.pos.x, u.pos.y - 8, "#f39c72");
           }
         }
       } else {
         const dealt = this.applyTowerDamage(target, raw);
+        this.noteAggression(team, target.team, target.pos);
         this.emitCombat(
           t.kind === "watchtower" ? "arrow" : t.kind === "ballista" ? "ramImpact" : "meleeHit",
           t.pos,
@@ -1551,11 +1749,11 @@ export class GameSim {
       }
     };
     for (const u of this.state.units) {
-      if (u.team === team || u.hp <= 0) continue;
+      if (u.hp <= 0 || !this.mayFight(team, u.team, u.pos)) continue;
       consider(u, dist(u.pos, pos));
     }
     for (const v of this.state.villagers) {
-      if (v.team === team || v.hp <= 0 || v.state === "garrisoned") continue;
+      if (v.hp <= 0 || v.state === "garrisoned" || !this.mayFight(team, v.team, v.pos)) continue;
       consider(v, dist(v.pos, pos));
     }
     return best;
@@ -1567,6 +1765,7 @@ export class GameSim {
     if (!threat) return false;
     if (v.attackTimer <= 0) {
       threat.hp -= this.peonDamage(team);
+      this.noteAggression(team, threat.team, threat.pos);
       v.attackTimer = PEON_ATTACK_CD;
       this.emitCombat("meleeHit", v.pos, threat.pos, team);
       this.addFloat(`-${Math.round(this.peonDamage(team))}`, threat.pos.x, threat.pos.y - 7, "#e8c070");
@@ -1612,6 +1811,7 @@ export class GameSim {
         moveTowards(v.pos, target.pos, this.peonPace(team, PEON_FIGHT_SPEED), dt);
       } else if (v.attackTimer <= 0) {
         target.hp -= this.peonDamage(team);
+        this.noteAggression(team, target.team, target.pos);
         v.attackTimer = PEON_ATTACK_CD;
         this.emitCombat("meleeHit", v.pos, target.pos, team);
         this.addFloat(`-${Math.round(this.peonDamage(team))}`, target.pos.x, target.pos.y - 8, "#c8e090");
@@ -1646,6 +1846,7 @@ export class GameSim {
       moveTowards(v.pos, target.pos, this.peonPace(team, PEON_FIGHT_SPEED), dt);
     } else if (v.attackTimer <= 0) {
       target.hp -= this.peonDamage(team);
+      this.noteAggression(team, target.team, target.pos);
       v.attackTimer = PEON_ATTACK_CD;
       this.emitCombat("meleeHit", v.pos, target.pos, team);
       this.addFloat(`-${Math.round(this.peonDamage(team))}`, target.pos.x, target.pos.y - 8, "#c8e090");
@@ -1655,8 +1856,8 @@ export class GameSim {
 
   private militaryAccepts(u: Unit, ent: Unit | Villager, enemyTeam: Team) {
     if (ent.hp <= 0) return false;
-    if (this.isTriangle()) {
-      if (!this.isHostile(u.team, ent.team)) return false;
+    if (this.usesHub()) {
+      if (!this.mayFight(u.team, ent.team, ent.pos)) return false;
     } else if (ent.team !== enemyTeam) return false;
     if ("fromBarracks" in ent) return !u.ignoreEnemyCreeps || ent.fromBarracks;
     return (u.fromBarracks || u.kind === "archer") && ent.state !== "garrisoned";
@@ -1731,6 +1932,7 @@ export class GameSim {
     }
     if (u.attackTimer > 0) return;
     target.hp -= u.damage;
+    this.noteAggression(team, target.team, target.pos);
     u.attackTimer = u.attackCooldown;
     const ranged = u.kind === "archer";
     this.emitCombat(ranged ? "arrow" : "meleeHit", u.pos, target.pos, team);
@@ -1742,30 +1944,20 @@ export class GameSim {
     );
   }
 
-  private marchOnRoad(u: Unit, from: Team, goal: Team, dt: number) {
-    const keep = this.teamKeep(goal);
-    if (dist(u.pos, keep.pos) < 46) {
-      if (u.attackTimer <= 0) {
-        const dmg = u.damage * u.keepMult;
-        keep.hp -= dmg;
-        keep.hitFlash = 0.2;
-        this.emitCombat(u.kind === "rammer" ? "ramImpact" : "keepImpact", u.pos, keep.pos, from);
-        if (goal === "you") {
-          this.state.redFlash = 0.18;
-          this.state.shake = 0.15;
-        }
-        u.attackTimer = u.attackCooldown + u.siegeGap;
-        this.addFloat(`-${Math.round(dmg)}`, keep.pos.x, keep.pos.y - 18, "#ff9d9d");
-      }
+  private raidKeepFor(u: Unit): Team | null {
+    const goal = u.goalTeam;
+    if (!goal || goal === u.team) return null;
+    if (this.state.raidOwner !== u.team || this.state.stronghold.owner !== u.team) return null;
+    if (this.state.raidTarget !== goal || !this.keepAlive(goal)) return null;
+    if (this.stance(u.team, goal) === "ally") return null;
+    return goal;
+  }
+
+  private stepAlong(u: Unit, pts: { x: number; y: number }[], forward: boolean, fallback: { x: number; y: number }, dt: number) {
+    if (pts.length === 0) {
+      moveTowards(u.pos, fallback, u.speed, dt);
       return;
     }
-    const road = this.roadBetween(from, goal);
-    if (!road) {
-      moveTowards(u.pos, keep.pos, u.speed, dt);
-      return;
-    }
-    const forward = road.a === from;
-    const pts = road.points;
     let best = 0;
     let bestD = Infinity;
     for (let i = 0; i < pts.length; i++) {
@@ -1778,7 +1970,89 @@ export class GameSim {
     const index = forward ? best : pts.length - 1 - best;
     const next = Math.min(pts.length - 1, index + 2);
     const point = forward ? pts[next] : pts[pts.length - 1 - next];
-    moveTowards(u.pos, next === index ? keep.pos : point, u.speed, dt);
+    moveTowards(u.pos, next === index ? fallback : point, u.speed, dt);
+  }
+
+  private pressureStronghold(u: Unit, dt: number) {
+    const sh = this.state.stronghold;
+    const owner = sh.owner;
+    if (owner && (owner === u.team || this.stance(u.team, owner) === "ally")) return;
+    if (u.attackTimer > 0) return;
+    const dmg = u.damage * 0.55;
+    sh.hp = Math.max(sh.maxHp * 0.35, sh.hp - dmg);
+    sh.hitFlash = 0.2;
+    u.attackTimer = u.attackCooldown;
+    if (!sh.contested) {
+      this.captureBonusTeam = u.team;
+      this.captureBonus += Math.min(0.4, dmg / 26);
+    }
+    this.emitCombat("keepImpact", u.pos, sh.pos, u.team);
+    this.addFloat(`-${Math.round(dmg)}`, sh.pos.x, sh.pos.y - 16, "#f0d8a8");
+    if (dt < 0) return;
+  }
+
+  private followHubToStronghold(u: Unit, dt: number) {
+    const sh = this.state.stronghold;
+    if (dist(u.pos, sh.pos) <= STRONGHOLD_CAPTURE_RADIUS - 6) {
+      this.pressureStronghold(u, dt);
+      return;
+    }
+    const road = this.teamRoad(u.team);
+    if (!road) {
+      moveTowards(u.pos, sh.pos, u.speed, dt);
+      return;
+    }
+    this.stepAlong(u, road.points, true, sh.pos, dt);
+  }
+
+  private followHubToKeep(u: Unit, goal: Team, dt: number) {
+    const keep = this.teamKeep(goal);
+    if (dist(u.pos, keep.pos) < 48) {
+      this.hitKeep(u, goal);
+      return;
+    }
+    const center = this.state.stronghold.pos;
+    if (dist(u.pos, center) > 42) {
+      const own = this.teamRoad(u.team);
+      if (!own) {
+        moveTowards(u.pos, center, u.speed, dt);
+        return;
+      }
+      this.stepAlong(u, own.points, true, center, dt);
+      return;
+    }
+    const theirs = this.teamRoad(goal);
+    if (!theirs) {
+      moveTowards(u.pos, keep.pos, u.speed, dt);
+      return;
+    }
+    this.stepAlong(u, theirs.points, false, keep.pos, dt);
+  }
+
+  private marchHub(u: Unit, dt: number) {
+    const keep = this.raidKeepFor(u);
+    if (keep) {
+      this.followHubToKeep(u, keep, dt);
+      return;
+    }
+    u.targetKeep = false;
+    this.followHubToStronghold(u, dt);
+  }
+
+  private hitKeep(u: Unit, goal: Team) {
+    if (u.attackTimer > 0) return;
+    const keep = this.teamKeep(goal);
+    const dmg = u.damage * u.keepMult;
+    keep.hp -= dmg;
+    this.noteAggression(u.team, goal, keep.pos);
+    keep.hitFlash = 0.2;
+    this.emitCombat(u.kind === "rammer" ? "ramImpact" : "keepImpact", u.pos, keep.pos, u.team);
+    if (goal === "you") {
+      this.state.redFlash = 0.18;
+      this.state.shake = 0.15;
+    }
+    u.attackTimer = u.attackCooldown + u.siegeGap;
+    this.addFloat(`-${Math.round(dmg)}`, keep.pos.x, keep.pos.y - 18, "#ff9d9d");
   }
 
   private updateUnitMovementAndMelee(dt: number, team: Team) {
@@ -1788,7 +2062,7 @@ export class GameSim {
       u.attackTimer -= dt;
       const gateY = laneYGate(team);
       const enemies = this.state.units.filter((e) =>
-        this.isTriangle() ? this.isHostile(team, e.team) && e.hp > 0 : e.team === enemyTeam && e.lane === u.lane,
+        this.usesHub() ? this.mayFight(team, e.team, e.pos) : e.team === enemyTeam && e.lane === u.lane && e.hp > 0,
       );
       if (u.fromBarracks) {
         // A very-hard wave stays stacked on its staging point. It only swings
@@ -1838,7 +2112,7 @@ export class GameSim {
         const rangedPeons = this.state.villagers
           .filter(
             (v) =>
-              (this.isTriangle() ? this.isHostile(team, v.team) : v.team === enemyTeam) &&
+              (this.usesHub() ? this.mayFight(team, v.team, v.pos) : v.team === enemyTeam) &&
               v.state !== "garrisoned" &&
               dist(v.pos, u.pos) <= ARCHER_RANGE,
           )
@@ -1847,6 +2121,7 @@ export class GameSim {
         if (target) {
           if (u.attackTimer <= 0) {
             target.hp -= u.damage;
+            this.noteAggression(team, target.team, target.pos);
             u.attackTimer = u.attackCooldown;
             this.emitCombat("arrow", u.pos, target.pos, team);
             this.addFloat(`-${Math.round(u.damage)}`, target.pos.x, target.pos.y - 7, "#e8d39a");
@@ -1862,6 +2137,7 @@ export class GameSim {
       if (meleeTarget) {
         if (u.attackTimer <= 0) {
           meleeTarget.hp -= u.damage;
+          this.noteAggression(team, meleeTarget.team, meleeTarget.pos);
           u.attackTimer = u.attackCooldown;
           this.emitCombat("meleeHit", u.pos, meleeTarget.pos, team);
           this.addFloat(`-${Math.round(u.damage)}`, meleeTarget.pos.x, meleeTarget.pos.y - 6, "#ffd1cc");
@@ -1873,8 +2149,10 @@ export class GameSim {
           (b) =>
             b.built &&
             b.team !== team &&
-            b.lane === u.lane &&
-            Math.abs(b.pos.y - u.pos.y) <= 18,
+            this.stance(team, b.team) !== "ally" &&
+            (this.usesHub()
+              ? dist(b.pos, u.pos) <= 20
+              : b.lane === u.lane && Math.abs(b.pos.y - u.pos.y) <= 18),
         )
         .sort((a, b) => Math.abs(a.pos.y - u.pos.y) - Math.abs(b.pos.y - u.pos.y))[0];
       if (barricade) {
@@ -1917,10 +2195,8 @@ export class GameSim {
           continue;
         }
       }
-      if (this.isTriangle()) {
-        const goal = this.unitGoal(u);
-        u.goalTeam = goal;
-        this.marchOnRoad(u, team, goal, dt);
+      if (this.usesHub()) {
+        this.marchHub(u, dt);
         continue;
       }
       const atGate = team === "you" ? u.pos.y <= gateY : u.pos.y >= gateY;
@@ -1929,6 +2205,7 @@ export class GameSim {
           const keep = this.teamKeep(enemyTeam);
           const dmg = u.damage * u.keepMult;
           keep.hp -= dmg;
+          this.noteAggression(team, enemyTeam, keep.pos);
           keep.hitFlash = 0.2;
           this.emitCombat(u.kind === "rammer" ? "ramImpact" : "keepImpact", u.pos, keep.pos, team);
           if (enemyTeam === "you") {
@@ -2000,11 +2277,11 @@ export class GameSim {
   }
 
   private bountyTeam(victim: Unit): Team | null {
-    if (!this.isTriangle()) return this.enemy(victim.team);
+    if (!this.usesHub()) return this.enemy(victim.team);
     let best: Team | null = null;
     let bestD = 90;
     for (const u of this.state.units) {
-      if (u.hp <= 0 || !this.isHostile(victim.team, u.team)) continue;
+      if (u.hp <= 0 || u.team === victim.team || this.stance(victim.team, u.team) === "ally") continue;
       const d = dist(u.pos, victim.pos);
       if (d < bestD) {
         bestD = d;
@@ -2016,7 +2293,7 @@ export class GameSim {
   }
 
   private isSiegingKeep(team: Team, u: Unit) {
-    if (this.isTriangle()) return dist(u.pos, this.teamKeep(team).pos) < 140;
+    if (this.usesHub()) return dist(u.pos, this.teamKeep(team).pos) < 140;
     // Y-band covers BOTH roads; pure radius missed the east gate (~109px from keep).
     if (team === "you") return u.pos.y >= YOU_SIEGE_Y;
     return u.pos.y <= FOE_SIEGE_Y;
@@ -2024,9 +2301,9 @@ export class GameSim {
 
   private enemiesThreateningKeep(team: Team) {
     const keep = this.teamKeep(team);
-    if (this.isTriangle()) {
+    if (this.usesHub()) {
       return this.state.units
-        .filter((u) => this.isHostile(team, u.team) && dist(u.pos, keep.pos) < 160)
+        .filter((u) => this.mayFight(team, u.team, u.pos) && dist(u.pos, keep.pos) < 160)
         .sort((a, b) => dist(a.pos, keep.pos) - dist(b.pos, keep.pos));
     }
     const enemy = this.enemy(team);
@@ -2060,8 +2337,8 @@ export class GameSim {
     // distant workers too little time to reach the keep and garrison.
     const closeThreats = this.state.units
       .filter((u) => {
-        if (!this.hostileTo(team, u.team)) return false;
-        if (this.isTriangle()) return dist(u.pos, keep.pos) < 280;
+        if (!this.hostileTo(team, u.team, u.pos)) return false;
+        if (this.usesHub()) return dist(u.pos, keep.pos) < 280;
         return u.pos.y <= FOE_SIEGE_Y + 170;
       })
       .sort((a, b) => dist(a.pos, keep.pos) - dist(b.pos, keep.pos));
@@ -2071,8 +2348,8 @@ export class GameSim {
       veryHard(foeBrainStats().intellect) && this.aiRead.rushNear
         ? this.state.units
             .filter((u) => {
-              if (!u.fromBarracks || u.hp <= 0 || !this.hostileTo(team, u.team)) return false;
-              if (this.isTriangle()) return dist(u.pos, keep.pos) < 360;
+              if (!u.fromBarracks || u.hp <= 0 || !this.hostileTo(team, u.team, u.pos)) return false;
+              if (this.usesHub()) return dist(u.pos, keep.pos) < 360;
               return u.team === "you" && u.pos.y <= 480;
             })
             .sort((a, b) => dist(a.pos, keep.pos) - dist(b.pos, keep.pos))
@@ -2269,7 +2546,9 @@ export class GameSim {
       if (v.state === "defend") {
         if (!v.forcedAttack && this.stepPeonGuard(v, team, dt)) return;
         const forcedTarget = v.forcedAttack
-          ? this.state.units.find((u) => u.id === v.targetEnemyId && u.team !== team && u.hp > 0)
+          ? this.state.units.find(
+              (u) => u.id === v.targetEnemyId && u.hp > 0 && u.team !== team && this.stance(team, u.team) !== "ally",
+            )
           : undefined;
         if (!underAttack && !forcedTarget) {
           v.state = "idle";
@@ -2289,6 +2568,7 @@ export class GameSim {
         } else if (v.attackTimer <= 0) {
           // Barracks soldiers and wave creeps both take peon damage — no immunity.
           target.hp -= this.peonDamage(team);
+          this.noteAggression(team, target.team, target.pos);
           v.attackTimer = PEON_ATTACK_CD;
           this.addFloat(`-${Math.round(this.peonDamage(team))}`, target.pos.x, target.pos.y - 8, "#c8e090");
         }
@@ -2415,6 +2695,7 @@ export class GameSim {
       k.hitFlash = Math.max(0, k.hitFlash - dt);
       k.attackFlash = Math.max(0, k.attackFlash - dt);
     }
+    s.stronghold.hitFlash = Math.max(0, s.stronghold.hitFlash - dt);
     for (const b of s.buildings) b.animKick = Math.max(0, b.animKick - dt);
 
     if (s.phase !== "running" || s.paused) return;
@@ -2487,6 +2768,7 @@ export class GameSim {
       this.doBarracks(dt, team);
       this.updateUnitMovementAndMelee(dt, team);
     }
+    if (this.usesHub()) this.tickStronghold(dt);
     this.tickPeonQueues(dt);
     this.cleanupDeaths();
     this.cleanupDeadPeons();
@@ -2526,6 +2808,8 @@ export class GameSim {
         return;
       }
     }
+    if (this.usesHub() && this.checkStrongholdWin()) return;
+    if (this.usesHub()) return;
     if (
       s.allWavesLaunched &&
       s.wavesCleared >= WAVES.length &&
@@ -2543,6 +2827,134 @@ export class GameSim {
         );
       } else this.finishMatch("Stalemate. Equal keep stone after the siege.", null);
     }
+  }
+
+  private capturePresence() {
+    const counts = new Map<Team, number>();
+    const pos = this.state.stronghold.pos;
+    for (const u of this.state.units) {
+      if (u.hp <= 0 || !this.keepAlive(u.team)) continue;
+      if (dist(u.pos, pos) > STRONGHOLD_CAPTURE_RADIUS) continue;
+      counts.set(u.team, (counts.get(u.team) ?? 0) + 1);
+    }
+    return counts;
+  }
+
+  /** One entry per side. Allies of the owner count as the owner's side. */
+  private captureBlocs(counts: Map<Team, number>) {
+    const present = [...counts.keys()];
+    const owner = this.state.stronghold.owner;
+    const reps = new Map<Team, Team>();
+    const find = (t: Team): Team => {
+      const parent = reps.get(t) ?? t;
+      if (parent === t) return t;
+      const root = find(parent);
+      reps.set(t, root);
+      return root;
+    };
+    const union = (a: Team, b: Team) => {
+      const ra = find(a);
+      const rb = find(b);
+      if (ra !== rb) reps.set(rb, ra);
+    };
+    for (const team of present) reps.set(team, team);
+    if (owner) reps.set(owner, owner);
+    for (const a of [...reps.keys()]) {
+      for (const b of [...reps.keys()]) {
+        if (a !== b && this.stance(a, b) === "ally") union(a, b);
+      }
+    }
+    const blocs = new Set<Team>();
+    for (const team of present) blocs.add(find(team));
+    return { blocs: [...blocs], find };
+  }
+
+  private tickStronghold(dt: number) {
+    const sh = this.state.stronghold;
+    const counts = this.capturePresence();
+    const { blocs, find } = this.captureBlocs(counts);
+    const owner = sh.owner;
+    if (blocs.length >= 2) {
+      sh.contested = true;
+      this.captureBonus = 0;
+      this.captureBonusTeam = null;
+      return;
+    }
+    sh.contested = false;
+    if (blocs.length === 0) {
+      sh.channel = 0;
+      sh.channelTeam = null;
+      if (owner) sh.hold += dt;
+      this.captureBonus = 0;
+      this.captureBonusTeam = null;
+      return;
+    }
+    const bloc = blocs[0];
+    if (owner && find(bloc) === find(owner)) {
+      sh.channel = 0;
+      sh.channelTeam = null;
+      sh.hold += dt;
+      this.captureBonus = 0;
+      this.captureBonusTeam = null;
+      return;
+    }
+    let capturer: Team = bloc;
+    let best = -1;
+    for (const [team, n] of counts) {
+      if (find(team) !== bloc || n <= best) continue;
+      best = n;
+      capturer = team;
+    }
+    if (sh.channelTeam !== capturer) {
+      sh.channelTeam = capturer;
+      sh.channel = 0;
+    }
+    let gain = dt;
+    if (this.captureBonusTeam && find(this.captureBonusTeam) === bloc) gain += this.captureBonus;
+    this.captureBonus = 0;
+    this.captureBonusTeam = null;
+    sh.channel += gain;
+    if (owner) sh.hold += dt;
+    if (sh.channel >= STRONGHOLD_CAPTURE_SECONDS) this.captureStronghold(capturer);
+  }
+
+  private captureStronghold(team: Team) {
+    const sh = this.state.stronghold;
+    sh.owner = team;
+    sh.channel = 0;
+    sh.channelTeam = null;
+    sh.hold = 0;
+    sh.hp = sh.maxHp;
+    sh.contested = false;
+    if (this.state.raidOwner !== team) this.clearRaid();
+    this.addToast(`${this.teamName(team)} holds the Stronghold.`);
+  }
+
+  private checkStrongholdWin() {
+    const sh = this.state.stronghold;
+    if (!sh.owner || sh.hold < STRONGHOLD_HOLD_SECONDS) return false;
+    const owner = sh.owner;
+    const humanWith = owner === "you" || this.stance("you", owner) === "ally";
+    if (humanWith) this.finishMatch("Victory. The Stronghold held.", true);
+    else this.finishMatch(`Defeat. ${this.teamName(owner)} held the Stronghold.`, false);
+    return true;
+  }
+
+  /**
+   * Who a stronghold holder may raid. Enemy first, then Neutral.
+   * Another AI is chosen ahead of the human so a neutral human is not the default victim.
+   * One target only.
+   */
+  private chooseRaidTarget(holder: Team): Team | null {
+    if (this.state.stronghold.owner !== holder) return null;
+    const rivals = this.activeTeams().filter((t) => t !== holder && this.keepAlive(t));
+    const enemies = rivals.filter((t) => this.stance(holder, t) === "enemy");
+    const neutrals = rivals.filter((t) => this.stance(holder, t) === "neutral");
+    const pool = enemies.length > 0 ? enemies : neutrals;
+    const ais = pool.filter((t) => t !== "you");
+    if (ais.length > 0) return ais.includes("foe") ? "foe" : ais[0];
+    if (holder !== "you" && pool.includes("you") && this.stance(holder, "you") === "enemy") return "you";
+    return null;
   }
 
   private withAiSide(team: Team, fn: () => void) {
@@ -2750,11 +3162,13 @@ export class GameSim {
     if (existing.some((b) => b.lane === lane)) lane = (lane === 0 ? 1 : 0);
     if (existing.some((b) => b.lane === lane)) return false;
 
-    const y = 210 + existing.length * 38;
-    const x =
-      (lanePathX(this.activeMap.seed, "you", lane, y) +
-        lanePathX(this.activeMap.seed, this.aiSide, lane, y)) /
-      2;
+    const along = this.usesHub() ? this.pointOnTeamRoad(this.aiSide, 0.32 + existing.length * 0.08) : null;
+    const y = along ? along.y : 210 + existing.length * 38;
+    const x = along
+      ? along.x
+      : (lanePathX(this.activeMap.seed, "you", lane, y) +
+          lanePathX(this.activeMap.seed, this.aiSide, lane, y)) /
+        2;
     const builder = this.state.villagers
       .filter(
         (v) =>
@@ -3021,10 +3435,12 @@ export class GameSim {
       unit.engageFrom = undefined;
       unit.targetUnitId = undefined;
       unit.lane = index % 3 === 2 ? (targetLane === 0 ? 1 : 0) : targetLane;
-      if (this.isTriangle()) unit.goalTeam = this.pressureTarget(this.aiSide);
+      unit.goalTeam = undefined;
     });
+    this.directReleasedWave(held);
     this.aiRushDeadline = 0;
-    this.addToast(`Enemy warband rushes the ${targetLane === 0 ? "west" : "east"} road!`);
+    const line = this.releaseToast(held);
+    if (line) this.addToast(line);
     return true;
   }
 
@@ -3036,9 +3452,9 @@ export class GameSim {
   private releaseVeryHardWave(skill: number, held: Unit[]) {
     const targetLane = this.veryHardWaveLane();
     const y = 148;
-    const goal = this.isTriangle() ? this.pressureTarget(this.aiSide) : "you";
-    const staging = this.isTriangle()
-      ? this.pointAlong(this.aiSide, goal, 0.18)
+    const holdingHill = this.state.stronghold.owner === this.aiSide;
+    const staging = this.usesHub()
+      ? this.pointOnTeamRoad(this.aiSide, holdingHill ? 0.18 : 0.7)
       : {
           x: lanePathX(this.activeMap.seed, this.aiSide, targetLane, y),
           y,
@@ -3081,12 +3497,35 @@ export class GameSim {
       unit.engageFrom = undefined;
       unit.targetUnitId = undefined;
       unit.lane = targetLane;
-      if (this.isTriangle()) unit.goalTeam = goal;
+      unit.goalTeam = undefined;
     }
+    this.directReleasedWave(held);
     this.aiRushDeadline = 0;
     this.aiSlainAtWave = this.state.stats[this.aiSide]!.slain;
-    this.addToast(`Enemy warband rushes the ${targetLane === 0 ? "west" : "east"} road!`);
+    const line = this.releaseToast(held);
+    if (line) this.addToast(line);
     return true;
+  }
+
+  /** Holder raids one keep. Everyone else is sent to the stronghold. */
+  private directReleasedWave(held: Unit[]) {
+    if (!this.usesHub()) return;
+    const team = this.aiSide;
+    const raid = this.chooseRaidTarget(team);
+    if (raid) this.commitRaid(team, raid);
+    else {
+      for (const unit of held) unit.goalTeam = undefined;
+      if (this.state.raidOwner === team) this.clearRaid();
+    }
+  }
+
+  private releaseToast(held: Unit[]) {
+    if (!this.usesHub()) {
+      const lane = held[0]?.lane ?? 0;
+      return `Enemy warband rushes the ${lane === 0 ? "west" : "east"} road!`;
+    }
+    if (this.state.raidOwner === this.aiSide && this.state.raidTarget) return "";
+    return `${this.teamName(this.aiSide)} marches on the Stronghold`;
   }
 
   private laneByHumanDefense(): 0 | 1 {
@@ -3338,7 +3777,14 @@ export class GameSim {
       hp: Math.max(0, Math.ceil(s.keeps[team]?.hp ?? 0)),
       down: !this.keepAlive(team),
     }));
-    const focus = this.isTriangle() ? this.livingAttackTarget() : "foe";
+    const focus = this.state.pendingAttack && this.keepAlive(this.state.pendingAttack)
+      ? this.state.pendingAttack
+      : "foe";
+    const hub = this.usesHub();
+    const owner = s.stronghold.owner;
+    const pending = s.pendingAttack;
+    const pendingOk = !!pending && pending !== "you" && this.keepAlive(pending) && this.stance("you", pending) !== "ally";
+    const raidOn = s.raidOwner === "you" && !!s.raidTarget && this.keepAlive(s.raidTarget);
     return {
       phase: s.phase,
       mapId: s.mapId,
@@ -3411,6 +3857,15 @@ export class GameSim {
       attackName: this.teamName(focus),
       enemyKeeps,
       foeWaveLine: this.foeWaveHudLine(),
+      strongholdName: !hub ? "" : owner ? this.teamName(owner) : "Unclaimed",
+      strongholdOwner: hub ? owner : null,
+      strongholdHoldLeft: hub && owner ? Math.max(0, STRONGHOLD_HOLD_SECONDS - s.stronghold.hold) : STRONGHOLD_HOLD_SECONDS,
+      strongholdContested: hub && s.stronghold.contested,
+      strongholdChannel: hub ? Math.max(0, Math.min(1, s.stronghold.channel / STRONGHOLD_CAPTURE_SECONDS)) : 0,
+      holdsStronghold: hub && owner === "you",
+      raidName: raidOn && s.raidTarget ? this.teamName(s.raidTarget) : null,
+      attackPrompt: pendingOk && pending ? this.teamName(pending) : null,
+      canOrderAttack: pendingOk,
     };
   }
 }

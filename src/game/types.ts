@@ -6,9 +6,47 @@ export type Team = "you" | "foe" | "east";
  */
 export type SeatControl = "local" | "ai" | "open";
 export type MapSize = "small" | "large";
+/** AoE2 stance for one unordered pair of seats. */
+export type Stance = "ally" | "neutral" | "enemy";
+/**
+ * Keys are `diplomacyKey(a, b)`: "you|foe", "you|east", "foe|east".
+ * Missing keys are Neutral. Every pair starts Neutral.
+ */
+export type Diplomacy = Record<string, Stance>;
 export interface SkirmishSetup {
   mapSize: MapSize;
   players: 2 | 3;
+  diplomacy: Diplomacy;
+}
+
+const TEAM_ORDER: Team[] = ["you", "foe", "east"];
+
+export function diplomacyKey(a: Team, b: Team) {
+  const [x, y] = TEAM_ORDER.indexOf(a) < TEAM_ORDER.indexOf(b) ? [a, b] : [b, a];
+  return `${x}|${y}`;
+}
+
+export function diplomacyPairs(players: 2 | 3): [Team, Team][] {
+  const pairs: [Team, Team][] = [["you", "foe"]];
+  if (players === 3) pairs.push(["you", "east"], ["foe", "east"]);
+  return pairs;
+}
+
+export function defaultDiplomacy(players: 2 | 3): Diplomacy {
+  const out: Diplomacy = {};
+  for (const [a, b] of diplomacyPairs(players)) out[diplomacyKey(a, b)] = "neutral";
+  return out;
+}
+
+export function normalizeDiplomacy(raw: unknown, players: 2 | 3): Diplomacy {
+  const base = defaultDiplomacy(players);
+  if (!raw || typeof raw !== "object") return base;
+  const src = raw as Record<string, unknown>;
+  for (const key of Object.keys(base)) {
+    const value = src[key];
+    if (value === "ally" || value === "neutral" || value === "enemy") base[key] = value;
+  }
+  return base;
 }
 
 /** you and foe always exist. east is only present in a 3-player skirmish. */
@@ -241,12 +279,30 @@ export interface MapDef {
     team?: Team;
   }[];
   startTowerPad: string;
-  /** Duel is the classic north/south map. Triangle is the 3-keep skirmish. */
-  layout?: "duel" | "triangle";
+  /** Duel is the classic north/south map. Hub roads meet at the stronghold. */
+  layout?: "duel" | "triangle" | "hub";
   worldW?: number;
   worldH?: number;
   keeps?: { team: Team; x: number; y: number }[];
-  roads?: { a: Team; b: Team; points: { x: number; y: number }[] }[];
+  /** `b: "hold"` is the road from a keep gate to the central stronghold. */
+  roads?: { a: Team; b: Team | "hold"; points: { x: number; y: number }[] }[];
+  stronghold?: { x: number; y: number };
+}
+
+export interface Stronghold {
+  pos: Vec2;
+  hp: number;
+  maxHp: number;
+  /** Null while the hill is unclaimed. */
+  owner: Team | null;
+  /** Team currently filling the capture channel. */
+  channelTeam: Team | null;
+  /** Seconds of uncontested presence. Pauses while two sides stand in the radius. */
+  channel: number;
+  /** Seconds the current owner has held it. Resets when ownership changes. */
+  hold: number;
+  contested: boolean;
+  hitFlash: number;
 }
 
 export interface GameState {
@@ -262,7 +318,17 @@ export interface GameState {
   wood: TeamBag<number>;
   /** 2 = the classic duel. 3 = free-for-all on the large map. */
   players: 2 | 3;
-  /** Enemy keep the human army is sent toward. Northwest AI in a 3-player match. */
+  /** Stance for each seat pair. Default Neutral so two AIs do not both open on the human. */
+  diplomacy: Diplomacy;
+  /** Central hill. Present on hub maps; unused on the title duel. */
+  stronghold: Stronghold;
+  /** Keep the holder is raiding. Null unless a raid is committed. */
+  raidTarget: Team | null;
+  /** Team that ordered the current raid. Only the stronghold owner may set this. */
+  raidOwner: Team | null;
+  /** Keep the human clicked. Attack commits a raid only while they hold the stronghold. */
+  pendingAttack: Team | null;
+  /** @deprecated Kept so older call sites compile. Raids use raidTarget. */
   attackTarget: Team;
   eliminated: Team[];
   worldW: number;
@@ -395,6 +461,20 @@ export interface UiSnapshot {
   enemyKeeps: { team: Team; name: string; hp: number; down: boolean }[];
   /** One running-match line, e.g. "Foe wave 4 · honed". */
   foeWaveLine: string;
+  /** UI name of whoever holds the hill, or "Unclaimed". */
+  strongholdName: string;
+  strongholdOwner: Team | null;
+  /** Seconds left on the 3-minute hold. Restarts at the cap when ownership changes. */
+  strongholdHoldLeft: number;
+  strongholdContested: boolean;
+  /** 0–1 capture channel while a side is taking the hill. */
+  strongholdChannel: number;
+  holdsStronghold: boolean;
+  /** Set only while a keep raid is committed. */
+  raidName: string | null;
+  /** Clicked keep that can take an Attack order. Null for allies. */
+  attackPrompt: string | null;
+  canOrderAttack: boolean;
 }
 
 export interface RectHit {

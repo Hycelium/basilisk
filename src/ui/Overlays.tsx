@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
 import { formatIntellect, veryHard } from "../game/learningAi";
-import type { MapSize, SeatControl, SkirmishSetup, UiSnapshot } from "../game/types";
+import {
+  defaultDiplomacy,
+  diplomacyKey,
+  diplomacyPairs,
+  normalizeDiplomacy,
+  type MapSize,
+  type SeatControl,
+  type SkirmishSetup,
+  type Stance,
+  type Team,
+  type UiSnapshot,
+} from "../game/types";
 
 interface OverlaysProps {
   ui: UiSnapshot;
@@ -12,17 +23,34 @@ interface OverlaysProps {
 const SETUP_KEY = "roadkeep.skirmish";
 
 function loadSetup(): SkirmishSetup {
+  const fallback = { mapSize: "small" as const, players: 2 as const, diplomacy: defaultDiplomacy(2) };
   try {
     const raw = localStorage.getItem(SETUP_KEY);
-    if (!raw) return { mapSize: "small", players: 2 };
+    if (!raw) return fallback;
     const data = JSON.parse(raw) as Partial<SkirmishSetup>;
     const mapSize: MapSize = data.mapSize === "large" ? "large" : "small";
     const players = mapSize === "large" || data.players === 3 ? 3 : 2;
-    return { mapSize: players === 3 ? "large" : "small", players: players === 3 ? 3 : 2 };
+    return {
+      mapSize: players === 3 ? "large" : "small",
+      players: players === 3 ? 3 : 2,
+      diplomacy: normalizeDiplomacy(data.diplomacy, players === 3 ? 3 : 2),
+    };
   } catch {
-    return { mapSize: "small", players: 2 };
+    return fallback;
   }
 }
+
+function seatName(team: Team, players: 2 | 3) {
+  if (team === "you") return "You";
+  if (team === "east") return "East";
+  return players === 3 ? "North" : "Foe";
+}
+
+const STANCES: { id: Stance; label: string }[] = [
+  { id: "ally", label: "Ally" },
+  { id: "neutral", label: "Neutral" },
+  { id: "enemy", label: "Enemy" },
+];
 
 /**
  * Skirmish slots are the future lobby roster.
@@ -48,10 +76,23 @@ export function Overlays({ ui, onStart, onRestart, onRerollMap }: OverlaysProps)
   }, [setup]);
 
   const chooseMap = (mapSize: MapSize) => {
-    setSetup({ mapSize, players: mapSize === "large" ? 3 : 2 });
+    const players: 2 | 3 = mapSize === "large" ? 3 : 2;
+    setSetup((prev) => ({
+      mapSize,
+      players,
+      diplomacy: normalizeDiplomacy(prev.diplomacy, players),
+    }));
   };
   const choosePlayers = (players: 2 | 3) => {
-    setSetup({ players, mapSize: players === 3 ? "large" : "small" });
+    setSetup((prev) => ({
+      players,
+      mapSize: players === 3 ? "large" : "small",
+      diplomacy: normalizeDiplomacy(prev.diplomacy, players),
+    }));
+  };
+  const setStance = (a: Team, b: Team, stance: Stance) => {
+    const key = diplomacyKey(a, b);
+    setSetup((prev) => ({ ...prev, diplomacy: { ...prev.diplomacy, [key]: stance } }));
   };
 
   const slots: { name: string; control: SeatControl; fixed?: boolean }[] = [
@@ -96,6 +137,35 @@ export function Overlays({ ui, onStart, onRestart, onRerollMap }: OverlaysProps)
             </div>
           </fieldset>
 
+          <fieldset className="skirmish-field">
+            <legend>Diplomacy</legend>
+            <div className="dip-list">
+              {diplomacyPairs(setup.players).map(([a, b]) => {
+                const key = diplomacyKey(a, b);
+                const stance = setup.diplomacy[key] ?? "neutral";
+                const label = `${seatName(a, setup.players)} – ${seatName(b, setup.players)}`;
+                return (
+                  <div className="dip-row" key={key}>
+                    <span className="dip-pair">{label}</span>
+                    <div className="seg dip-seg" role="group" aria-label={label}>
+                      {STANCES.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          className={stance === opt.id ? "on" : ""}
+                          aria-pressed={stance === opt.id}
+                          onClick={() => setStance(a, b, opt.id)}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </fieldset>
+
           <div className="slot-list" role="list" aria-label="Player slots">
             {slots.map((slot, index) => (
               <div className="slot-row" role="listitem" key={`${slot.name}-${index}`}>
@@ -122,8 +192,8 @@ export function Overlays({ ui, onStart, onRestart, onRerollMap }: OverlaysProps)
             <strong>{setup.mapSize === "large" ? "Three-keep field" : ui.mapName}</strong>
             <span>
               {setup.mapSize === "large"
-                ? "You hold the south. North and East each bring their own economy."
-                : ui.mapTagline}
+                ? "Three roads meet at the Stronghold. Only its holder can attack a keep."
+                : "Both roads meet at the Stronghold. Only its holder can attack a keep."}
             </span>
             {setup.mapSize === "small" && (
               <span className="map-meta">

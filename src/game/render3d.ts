@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BUILD_RANGE, STARTER_GUARD_RANGE, WORLD_H, WORLD_W } from "./balance";
+import { BUILD_RANGE, STARTER_GUARD_RANGE, STRONGHOLD_CAPTURE_RADIUS, WORLD_H, WORLD_W } from "./balance";
 import { getMap } from "./map";
 import { cloneAnimatedModel, cloneModel, ensureModelsLoaded } from "./assets3d";
 import type { Barricade, Building, GameState, Team, Unit } from "./types";
@@ -13,6 +13,7 @@ import {
   makeHouse,
   makeKeepMesh,
   makeMine,
+  makeStrongholdMesh,
   makeWatchtower,
 } from "./worldMesh";
 
@@ -354,13 +355,25 @@ export class GameRenderer {
 
   /** Best default RTS framing â€” oblique, biased toward your keep. */
   resetCamera() {
-    if (viewW > 500) {
+    if (viewW > 700) {
       this.frameTriangle({
         players: 3,
+        worldW: viewW,
         keeps: {
           you: { pos: { x: viewW / 2, y: viewH - 140 } },
           foe: { pos: { x: 160, y: 130 } },
           east: { pos: { x: viewW - 160, y: 130 } },
+        },
+      } as GameState);
+      return;
+    }
+    if (viewW > 500) {
+      this.frameTriangle({
+        players: 2,
+        worldW: viewW,
+        keeps: {
+          you: { pos: { x: viewW * 0.69, y: viewH - 120 } },
+          foe: { pos: { x: viewW * 0.28, y: 120 } },
         },
       } as GameState);
       return;
@@ -392,7 +405,7 @@ export class GameRenderer {
       n += 1;
     }
     this.camDistMax = 1500;
-    this.camDist = 1220;
+    this.camDist = state.players === 3 || state.worldW > 700 ? 1220 : 860;
     this.camYaw = 0.06;
     this.camPitch = 0.96;
     this.camLook.set(n ? sx / n : 0, 18, n ? sz / n : 0);
@@ -896,12 +909,13 @@ export class GameRenderer {
     viewH = state.worldH || WORLD_H;
     if (state.mapId !== this.lastMapId) {
       this.rebuildBattlefield(state);
-      if (state.players === 3) this.frameTriangle(state);
+      if (state.mapId.startsWith("hub-") || state.mapId.startsWith("tri-") || state.players === 3) this.frameTriangle(state);
       else this.camDistMax = 900;
     }
     // FX before prune so deaths still have last-known sim coords
     this.syncCombatFx(state, step);
     this.syncKeeps(state);
+    this.syncStronghold(state);
     this.syncBuildings(state);
     this.syncPads(state);
     this.syncNodes(state);
@@ -956,7 +970,7 @@ export class GameRenderer {
     this.torchLights = [];
     const seed = this.hashMapSeed(state.mapId);
     const map = getMap(state.mapId);
-    if (map.layout === "triangle" && map.roads && map.worldW && map.worldH) {
+    if ((map.layout === "hub" || map.layout === "triangle") && map.roads && map.worldW && map.worldH) {
       const paint = {
         w: map.worldW,
         h: map.worldH,
@@ -1096,8 +1110,9 @@ export class GameRenderer {
       if (k.hitFlash > 0) obj.scale.setScalar(1.04);
       else obj.scale.setScalar(1);
     }
-    if (state.players === 3 && state.phase !== "title") {
-      const focus = state.keeps[state.attackTarget];
+    const showRaid = state.phase === "running" && state.raidOwner === "you" && state.raidTarget;
+    if (showRaid) {
+      const focus = state.keeps[state.raidTarget!];
       if (focus && focus.hp > 0) {
         const key = "attack-focus";
         live.add(key);
@@ -1120,6 +1135,70 @@ export class GameRenderer {
     }
     this.prune("keep-", live);
     this.prune("attack-focus", live);
+  }
+
+  private strongholdLabel() {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return new THREE.Group();
+    ctx.fillStyle = "rgba(16, 12, 10, 0.78)";
+    ctx.fillRect(8, 8, 240, 48);
+    ctx.fillStyle = "#f3e2bc";
+    ctx.font = "bold 32px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Stronghold", 128, 32);
+    const tex = new THREE.CanvasTexture(canvas);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+    sprite.scale.set(58, 14, 1);
+    sprite.position.y = 52;
+    return sprite;
+  }
+
+  private syncStronghold(state: GameState) {
+    const live = this.liveSet();
+    const hub = state.mapId.startsWith("hub-") || state.mapId.startsWith("tri-");
+    if (!hub || state.phase === "title") {
+      this.prune("stronghold", live);
+      return;
+    }
+    const owner = state.stronghold.owner;
+    const key = "stronghold";
+    live.add(key);
+    const mark = owner ?? "neutral";
+    let obj = this.entityMap.get(key);
+    if (!obj || obj.userData.owner !== mark) {
+      if (obj) {
+        this.dynamicRoot.remove(obj);
+        this.entityMap.delete(key);
+      }
+      const color = owner ? teamColor(owner, true) : 0xc8c2b4;
+      const group = new THREE.Group();
+      group.add(makeStrongholdMesh(color));
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(STRONGHOLD_CAPTURE_RADIUS - 4, STRONGHOLD_CAPTURE_RADIUS, 48),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.4,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.4;
+      group.add(ring);
+      group.add(this.strongholdLabel());
+      group.userData.owner = mark;
+      this.entityMap.set(key, group);
+      this.dynamicRoot.add(group);
+      obj = group;
+    }
+    setPos3(obj, state.stronghold.pos.x, state.stronghold.pos.y, 0);
+    const flash = state.stronghold.hitFlash > 0 ? 1.05 : 1;
+    obj.scale.setScalar(flash);
   }
 
   private kitOr(key: "kTower" | "kBallista" | "kCatapult" | "kGate" | "kWall", height: number, fallback: () => THREE.Object3D) {

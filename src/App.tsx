@@ -2,7 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { GameRenderer, type QualityInfo, type QualitySetting, type TouchDragMode } from "./game/render3d";
 import { GameSim, hitTest } from "./game/sim";
-import type { BuildingKind, CombatEventKind, RectHit, SkirmishSetup, TrainKind, UiSnapshot } from "./game/types";
+import {
+  diplomacyKey,
+  type BuildingKind,
+  type CombatEventKind,
+  type RectHit,
+  type SkirmishSetup,
+  type TrainKind,
+  type UiSnapshot,
+} from "./game/types";
 import { BUILD_COST } from "./game/balance";
 import { Hud } from "./ui/Hud";
 import { BuildBar } from "./ui/BuildBar";
@@ -78,6 +86,15 @@ const defaultUi: UiSnapshot = {
   attackName: "Foe",
   enemyKeeps: [],
   foeWaveLine: "Foe wave 0 · steady",
+  strongholdName: "",
+  strongholdOwner: null,
+  strongholdHoldLeft: 180,
+  strongholdContested: false,
+  strongholdChannel: 0,
+  holdsStronghold: false,
+  raidName: null,
+  attackPrompt: null,
+  canOrderAttack: false,
 };
 
 const LONG_PRESS_MS = 350;
@@ -600,7 +617,7 @@ export default function App() {
         if (ev.key === "=" || ev.key === "+") r.zoomBy(0.9);
         if (ev.key === "-" || ev.key === "_") r.zoomBy(1.1);
         if (ev.key === "r" || ev.key === "R") r.resetCamera();
-        if ((ev.key === "t" || ev.key === "T") && sim.getState().players === 3 && sim.getState().phase === "running") {
+        if ((ev.key === "t" || ev.key === "T") && sim.getState().phase === "running") {
           sim.cycleAttackTarget();
         }
         if (ev.key === "q" || ev.key === "Q") r.orbitBy(28, 0);
@@ -732,14 +749,18 @@ export default function App() {
       },
     },
   ];
-  if (ui.players === 3 && ui.phase === "running") {
+  if (ui.phase === "running" && ui.canOrderAttack && ui.attackPrompt) {
     clusterActions.push({
-      id: "target",
-      icon: "◎",
-      label: ui.attackName,
-      hint: `Attacking ${ui.attackName}. Switch enemy keep (T)`,
+      id: "attack-keep",
+      icon: "⚔",
+      label: "Attack",
+      hint: ui.holdsStronghold
+        ? `Attack ${ui.attackPrompt}`
+        : "Hold the Stronghold to attack a keep",
+      disabled: !ui.holdsStronghold,
+      danger: true,
       onPress: () => {
-        sim.cycleAttackTarget();
+        sim.orderKeepAttack();
         refreshUi();
         beep(440);
       },
@@ -793,7 +814,13 @@ export default function App() {
           },
         });
       }
-      if (hit?.kind === "unit" && state.units.some((u) => u.id === Number(hit.id) && u.team !== "you")) {
+      if (
+        hit?.kind === "unit" &&
+        state.units.some((u) => {
+          if (u.id !== Number(hit.id) || u.team === "you" || u.hp <= 0) return false;
+          return (state.diplomacy[diplomacyKey("you", u.team)] ?? "neutral") !== "ally";
+        })
+      ) {
         radialItems.push({
           id: "attack",
           icon: "⚔",
@@ -889,8 +916,8 @@ export default function App() {
             refreshUi();
             beep(500);
           }}
-          onCycleTarget={() => {
-            sim.cycleAttackTarget();
+          onAttack={() => {
+            sim.orderKeepAttack();
             refreshUi();
             beep(440);
           }}

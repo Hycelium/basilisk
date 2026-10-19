@@ -11,6 +11,13 @@ export const START_GOLD = 100;
 export const START_WOOD = 80;
 /** Bloons-style life pool: chips, not melts. ~10–15 min matches. */
 export const START_KEEP_HP = 280;
+/** Central hill. Enough stone to matter; it is never removed. */
+export const STRONGHOLD_HP = 420;
+export const STRONGHOLD_CAPTURE_RADIUS = 78;
+/** Uncontested combat units flip the hill after about ten seconds. */
+export const STRONGHOLD_CAPTURE_SECONDS = 10;
+/** Continuous ownership required to win by the hill. */
+export const STRONGHOLD_HOLD_SECONDS = 180;
 
 export const WOOD_GATHER_TIME = 1.2;
 export const COPPER_GATHER_TIME = 2.1;

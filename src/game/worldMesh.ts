@@ -405,12 +405,14 @@ export function buildScenery(seed: number, paint?: WorldPaint) {
   return g;
 }
 
-/** Multi-mesh high-detail keep / castle. */
-export function makeKeepMesh(team: Team) {
+/** Multi-mesh high-detail keep / castle. Optional banner recolors a captured stronghold. */
+export function makeKeepMesh(team: Team, bannerHex?: number) {
   const g = new THREE.Group();
   const stone = new THREE.MeshStandardMaterial({ color: 0x6e6a78, roughness: 0.82, metalness: 0.08 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x3a3844, roughness: 0.9 });
-  const banner = new THREE.MeshStandardMaterial({ color: teamColor(team, true), side: THREE.DoubleSide });
+  const clothColor = bannerHex ?? teamColor(team, true);
+  const roofColor = bannerHex ?? teamColor(team);
+  const banner = new THREE.MeshStandardMaterial({ color: clothColor, side: THREE.DoubleSide });
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(48, 34, 36, 3, 3, 2), stone);
   body.position.y = 17;
@@ -441,7 +443,7 @@ export function makeKeepMesh(team: Team) {
     g.add(tower);
     const roof = new THREE.Mesh(
       new THREE.ConeGeometry(10, 14, 8),
-      new THREE.MeshStandardMaterial({ color: teamColor(team), roughness: 0.65 }),
+      new THREE.MeshStandardMaterial({ color: roofColor, roughness: 0.65 }),
     );
     roof.position.set(sx, 52, sz);
     roof.castShadow = true;
@@ -479,6 +481,13 @@ export function makeKeepMesh(team: Team) {
   yard.receiveShadow = true;
   g.add(yard);
 
+  return g;
+}
+
+/** Smaller keep on the hill. Neutral stone until a team captures it. */
+export function makeStrongholdMesh(bannerHex: number) {
+  const g = makeKeepMesh("you", bannerHex);
+  g.scale.setScalar(0.66);
   return g;
 }
 

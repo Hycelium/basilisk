@@ -281,28 +281,41 @@ function distToPoly(x: number, y: number, pts: { x: number; y: number }[]) {
 }
 
 /**
- * Three keeps: human south, North northwest, East northeast.
+ * Keeps face one central stronghold. 2-player and 3-player both use this hub.
  * Each base reuses the duel pad/node scatter, swung to face the center.
- * Roads reuse the duel meander between every pair of gates.
+ * Roads reuse the duel meander, from each gate into that point.
  */
-export function generateTriangleMap(seed: number): MapDef {
-  const id = `tri-${seed}` as MapId;
+export function generateHubMap(seed: number, players: 2 | 3): MapDef {
+  const id = `hub-${players}-${seed}` as MapId;
   const cached = mapCache.get(id);
   if (cached) return cached;
-  const map = buildTriangleMap(seed);
+  const map = buildHubMap(seed, players);
   mapCache.set(map.id, map);
   return map;
 }
 
-function buildTriangleMap(seed: number): MapDef {
+/** @deprecated 3-player hub. Older ids still resolve through getMap. */
+export function generateTriangleMap(seed: number): MapDef {
+  return generateHubMap(seed, 3);
+}
+
+function buildHubMap(seed: number, players: 2 | 3): MapDef {
   const rng = rngFromSeed(seed ^ 0x731a);
   const adj = pick(rng, ADJECTIVES);
   const noun = pick(rng, NOUNS);
-  const keeps = [
-    { team: "you" as const, x: 430, y: 640 },
-    { team: "foe" as const, x: 160, y: 130 },
-    { team: "east" as const, x: 700, y: 130 },
-  ];
+  const three = players === 3;
+  const keeps = three
+    ? [
+        { team: "you" as const, x: 430, y: 640 },
+        { team: "foe" as const, x: 160, y: 130 },
+        { team: "east" as const, x: 700, y: 130 },
+      ]
+    : [
+        { team: "you" as const, x: 470, y: 640 },
+        { team: "foe" as const, x: 190, y: 120 },
+      ];
+  const worldW = three ? TRI_W : 680;
+  const worldH = three ? TRI_H : 760;
   const centroid = {
     x: keeps.reduce((s, k) => s + k.x, 0) / keeps.length,
     y: keeps.reduce((s, k) => s + k.y, 0) / keeps.length,
@@ -312,18 +325,6 @@ function buildTriangleMap(seed: number): MapDef {
     const f = vunit({ x: centroid.x - k.x, y: centroid.y - k.y });
     facing.set(k.team, { f, r: { x: -f.y, y: f.x } });
   }
-  const gate = (team: Team) => {
-    const k = keeps.find((c) => c.team === team)!;
-    const face = facing.get(team)!;
-    return vadd(k, face.f, 48);
-  };
-  const roads = [
-    { a: "you" as const, b: "foe" as const, points: meanderPath(seed, 0, gate("you"), gate("foe")) },
-    { a: "you" as const, b: "east" as const, points: meanderPath(seed, 1, gate("you"), gate("east")) },
-    { a: "foe" as const, b: "east" as const, points: meanderPath(seed, 2, gate("foe"), gate("east")) },
-  ];
-  const nearRoad = (x: number, y: number, min: number) => roads.some((r) => distToPoly(x, y, r.points) < min);
-
   const pads: MapDef["pads"] = [];
   const nodes: MapDef["nodes"] = [];
   const placed: { x: number; y: number }[] = [];
@@ -333,10 +334,20 @@ function buildTriangleMap(seed: number): MapDef {
     const face = facing.get(team)!;
     const p = vadd(vadd(k, face.f, along), face.r, lateral);
     return {
-      x: clamp(p.x, 40, TRI_W - 40),
-      y: clamp(p.y, 40, TRI_H - 40),
+      x: clamp(p.x, 40, worldW - 40),
+      y: clamp(p.y, 40, worldH - 40),
     };
   };
+  const roads = keeps.map((k, i) => {
+    const face = facing.get(k.team)!;
+    const gate = vadd(k, face.f, 48);
+    return {
+      a: k.team,
+      b: "hold" as const,
+      points: meanderPath(seed, i, gate, centroid),
+    };
+  });
+  const nearRoad = (x: number, y: number, min: number) => roads.some((r) => distToPoly(x, y, r.points) < min);
 
   for (const k of keeps) {
     const team = k.team;
@@ -401,18 +412,21 @@ function buildTriangleMap(seed: number): MapDef {
   }
 
   return {
-    id: `tri-${seed}` as MapId,
+    id: `hub-${players}-${seed}` as MapId,
     seed,
     name: `${adj} ${noun}`,
-    tagline: "Three keeps. North and East both want the south gate.",
+    tagline: three
+      ? "Three roads meet at the Stronghold. Only its holder can attack a keep."
+      : "Both roads meet at the Stronghold. Only its holder can attack a keep.",
     pads,
     nodes,
     startTowerPad: "keep-guard",
-    layout: "triangle",
-    worldW: TRI_W,
-    worldH: TRI_H,
+    layout: "hub",
+    worldW,
+    worldH,
     keeps,
     roads,
+    stronghold: { x: centroid.x, y: centroid.y },
   };
 }
 
@@ -422,12 +436,10 @@ const mapCache = new Map<string, MapDef>();
 export function getMap(id: MapId): MapDef {
   const cached = mapCache.get(id);
   if (cached) return cached;
+  const hub = /^hub-([23])-(\d+)$/.exec(id);
+  if (hub) return generateHubMap(Number(hub[2]), Number(hub[1]) as 2 | 3);
   const tri = /^tri-(\d+)$/.exec(id);
-  if (tri) {
-    const map = generateTriangleMap(Number(tri[1]));
-    mapCache.set(map.id, map);
-    return map;
-  }
+  if (tri) return generateHubMap(Number(tri[1]), 3);
   // Parse seed from id `seed-12345` or treat as numeric
   const m = /^seed-(\d+)$/.exec(id);
   const seed = m ? Number(m[1]) : hashSeed(id.length, 42);
@@ -450,8 +462,12 @@ export function previewMapsForLevel(level: number, scoutSalt: number): MapDef[] 
   return [getOrCreateCampaignMap(level, scoutSalt)];
 }
 
+function mapIsHub(map: MapDef) {
+  return map.layout === "hub" || map.layout === "triangle";
+}
+
 export function buildPads(map: MapDef): Pad[] {
-  if (map.layout === "triangle") {
+  if (mapIsHub(map)) {
     return map.pads.map((p) => ({
       id: p.id,
       team: p.team ?? "you",
@@ -505,7 +521,7 @@ export function buildPads(map: MapDef): Pad[] {
 }
 
 export function buildNodes(map: MapDef): ResourceNode[] {
-  if (map.layout === "triangle") {
+  if (mapIsHub(map)) {
     return map.nodes.map((n) => ({
       id: n.id,
       team: n.team ?? "you",
@@ -559,7 +575,7 @@ export function keepPos(team: Team) {
 }
 
 export function keepPosFor(map: MapDef, team: Team) {
-  if (map.layout === "triangle") {
+  if (mapIsHub(map)) {
     const k = map.keeps?.find((c) => c.team === team);
     if (k) return { x: k.x, y: k.y };
   }
@@ -572,7 +588,7 @@ export function villagerStart(team: Team, idx: number) {
 }
 
 export function villagerStartFor(map: MapDef, team: Team, idx: number) {
-  if (map.layout !== "triangle") return villagerStart(team, idx);
+  if (!mapIsHub(map)) return villagerStart(team, idx);
   const k = keepPosFor(map, team);
   const dir = team === "you" ? 1 : -1;
   return { x: k.x - 28 + idx * 36, y: k.y + dir * 34 };
@@ -591,12 +607,12 @@ export function laneXFor(team: Team, lane: 0 | 1) {
 }
 
 export function startPadId(map: MapDef, team: Team) {
-  if (map.layout === "triangle") return `${team}-keep-guard`;
+  if (mapIsHub(map)) return `${team}-keep-guard`;
   return `${team}-${map.startTowerPad}`;
 }
 
 export function startPadPos(map: MapDef, team: Team) {
-  if (map.layout === "triangle") {
+  if (mapIsHub(map)) {
     const p = map.pads.find((x) => x.id === `${team}-keep-guard`) ?? map.pads.find((x) => x.team === team) ?? map.pads[0];
     return { x: p.x, y: p.y };
   }

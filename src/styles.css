@@ -738,6 +738,16 @@ button:disabled {
   padding: 0 14px;
 }
 
+.stronghold-line .hold-clock {
+  font-variant-numeric: tabular-nums;
+  color: #f3e2bc;
+}
+
+.cluster-btn[aria-label="Attack"] {
+  width: 44px;
+  height: 44px;
+}
+
 .foe-wave-line {
   margin: 4px 2px 0;
   padding: 2px 8px;
@@ -1597,6 +1607,36 @@ button:disabled {
 
 .skirmish-field .seg button.on {
   outline: 2px solid #e8c878;
+}
+
+.dip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dip-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dip-pair {
+  color: #f0e0c0;
+  font-size: 14px;
+}
+
+.skirmish-field .dip-seg {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+}
+
+.skirmish-field .dip-seg button {
+  min-height: 44px;
+  min-width: 0;
+  font-size: 13px;
+  padding-left: 4px;
+  padding-right: 4px;
 }
 
 .slot-list {

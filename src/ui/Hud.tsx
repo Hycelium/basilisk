@@ -12,10 +12,17 @@ interface HudProps {
   onSpeed: () => void;
   onSound: () => void;
   onRush: () => void;
-  onCycleTarget: () => void;
+  onAttack: () => void;
 }
 
-export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound, onRush, onCycleTarget }: HudProps) {
+function holdClock(seconds: number) {
+  const total = Math.max(0, Math.ceil(seconds));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound, onRush, onAttack }: HudProps) {
   const hpPct = Math.max(0, Math.min(1, ui.yourHp / ui.yourMaxHp));
   const xpPct = ui.keepXpPct;
   const phaseLabel =
@@ -78,11 +85,33 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
           </span>
         </div>
       </div>
-      {ui.players === 3 && ui.phase === "running" && (
+      {ui.phase === "running" && ui.strongholdName && (
+        <div className="attack-line stronghold-line">
+          <span>
+            Stronghold: {ui.strongholdName}
+            {ui.strongholdContested ? " · Contested" : ""}
+          </span>
+          {ui.strongholdOwner && <span className="hold-clock">{holdClock(ui.strongholdHoldLeft)}</span>}
+          {!ui.strongholdOwner && ui.strongholdChannel > 0 && (
+            <span className="hold-clock">Capturing {Math.round(ui.strongholdChannel * 100)}%</span>
+          )}
+        </div>
+      )}
+      {ui.phase === "running" && ui.raidName && (
         <div className="attack-line">
-          <span>Attacking: {ui.attackName}</span>
-          <button type="button" onClick={onCycleTarget} title="Switch enemy keep (T)">
-            Switch
+          <span>Attacking: {ui.raidName}</span>
+        </div>
+      )}
+      {ui.phase === "running" && ui.canOrderAttack && ui.attackPrompt && (
+        <div className="attack-line">
+          <span>{ui.attackPrompt}</span>
+          <button
+            type="button"
+            onClick={onAttack}
+            disabled={!ui.holdsStronghold}
+            title={ui.holdsStronghold ? `Attack ${ui.attackPrompt}` : "Hold the Stronghold to attack a keep"}
+          >
+            Attack
           </button>
         </div>
       )}
