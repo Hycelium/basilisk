@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BUILD_RANGE, STARTER_GUARD_RANGE, STRONGHOLD_CAPTURE_RADIUS, WORLD_H, WORLD_W } from "./balance";
+import { BUILD_RANGE, STARTER_GUARD_RANGE, STRONGHOLD_FIGHT_RADIUS, WORLD_H, WORLD_W } from "./balance";
 import { getMap } from "./map";
 import { cloneAnimatedModel, cloneModel, ensureModelsLoaded } from "./assets3d";
 import type { Barricade, Building, GameState, Team, Unit } from "./types";
@@ -1178,7 +1178,7 @@ export class GameRenderer {
       const group = new THREE.Group();
       group.add(makeStrongholdMesh(color));
       const ring = new THREE.Mesh(
-        new THREE.RingGeometry(STRONGHOLD_CAPTURE_RADIUS - 4, STRONGHOLD_CAPTURE_RADIUS, 48),
+        new THREE.RingGeometry(STRONGHOLD_FIGHT_RADIUS - 4, STRONGHOLD_FIGHT_RADIUS, 64),
         new THREE.MeshBasicMaterial({
           color,
           transparent: true,
@@ -1554,6 +1554,25 @@ export class GameRenderer {
       } else {
         this.playAnimation(key, ["walk", "walk_lower", "run_lower"]);
       }
+      let selection = obj.userData.selection as THREE.Mesh | undefined;
+      if (!selection) {
+        selection = new THREE.Mesh(
+          new THREE.RingGeometry(6.2, 7.6, 28),
+          new THREE.MeshBasicMaterial({
+            color: 0xf0d8a8,
+            transparent: true,
+            opacity: 0.85,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        );
+        selection.name = "soldier-selection";
+        selection.rotation.x = -Math.PI / 2;
+        selection.position.y = 0.25;
+        obj.add(selection);
+        obj.userData.selection = selection;
+      }
+      selection.visible = state.selectedUnitIds.includes(u.id);
     }
     this.prune("unit-", live);
   }
@@ -1561,7 +1580,7 @@ export class GameRenderer {
   private syncVillagers(state: GameState) {
     const live = this.liveSet();
     for (const v of state.villagers) {
-      if (v.state === "garrisoned") continue;
+      if (v.state === "garrisoned" || v.state === "inStronghold") continue;
       const key = `vil-${v.id}`;
       live.add(key);
       const obj = this.ensure(key, () => {

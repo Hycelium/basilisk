@@ -110,6 +110,8 @@ export interface Unit {
   aiStagingPoint?: Vec2;
   /** 3-player march: the enemy keep this unit is sent toward. */
   goalTeam?: Team;
+  /** Fight in the stronghold ring. Never permission to damage the building. */
+  hillPost?: boolean;
 }
 
 export type WavePhase = "build" | "spawning" | "fighting";
@@ -182,7 +184,21 @@ export interface Villager {
   speed: number;
   hp: number;
   maxHp: number;
-  state: "idle" | "toNode" | "gathering" | "toKeep" | "home" | "defend" | "toGarrison" | "garrisoned" | "toBarricade" | "buildingBarricade" | "moving" | "patrolling";
+  state:
+    | "idle"
+    | "toNode"
+    | "gathering"
+    | "toKeep"
+    | "home"
+    | "defend"
+    | "toGarrison"
+    | "garrisoned"
+    | "toStronghold"
+    | "inStronghold"
+    | "toBarricade"
+    | "buildingBarricade"
+    | "moving"
+    | "patrolling";
   targetNodeId?: string;
   targetEnemyId?: number;
   targetBarricadeId?: number;
@@ -293,14 +309,20 @@ export interface Stronghold {
   pos: Vec2;
   hp: number;
   maxHp: number;
-  /** Null while the hill is unclaimed. */
+  /**
+   * Team with strictly the most peons inside.
+   * A tie, or an empty stronghold, is unheld: the clock pauses and raids stop.
+   */
   owner: Team | null;
-  /** Team currently filling the capture channel. */
+  /** Unused. Ownership flips with the peon count, not a capture channel. */
   channelTeam: Team | null;
-  /** Seconds of uncontested presence. Pauses while two sides stand in the radius. */
   channel: number;
-  /** Seconds the current owner has held it. Resets when ownership changes. */
+  /**
+   * Seconds the current owning team has held it.
+   * Resets only when a different team takes the hill. Pauses while nobody holds it.
+   */
   hold: number;
+  /** True when two teams tie for the most peons inside. */
   contested: boolean;
   hitFlash: number;
 }
@@ -352,6 +374,8 @@ export interface GameState {
   buildSelection: BuildingKind | null;
   selectedBuildingId: number | null;
   selectedVillagerIds: number[];
+  /** Your soldiers. Right-clicking the stronghold sends them into the ring. */
+  selectedUnitIds: number[];
   /** When set, DetailSheet shows peon training at the keep. */
   selectedKeepTeam: Team | null;
   hoveredPadId: string | null;
@@ -461,13 +485,16 @@ export interface UiSnapshot {
   enemyKeeps: { team: Team; name: string; hp: number; down: boolean }[];
   /** One running-match line, e.g. "Foe wave 4 · honed". */
   foeWaveLine: string;
-  /** UI name of whoever holds the hill, or "Unclaimed". */
+  /** "You", "Tied", or "Unclaimed". */
   strongholdName: string;
   strongholdOwner: Team | null;
-  /** Seconds left on the 3-minute hold. Restarts at the cap when ownership changes. */
+  /** Holder's peons while held, otherwise total peons inside. */
+  strongholdPeons: number;
+  strongholdPeonCap: number;
+  /** Seconds left on the 3-minute hold. Pauses while the hill is unheld. */
   strongholdHoldLeft: number;
   strongholdContested: boolean;
-  /** 0–1 capture channel while a side is taking the hill. */
+  /** Kept for older HUD fields. The hill no longer uses a capture channel. */
   strongholdChannel: number;
   holdsStronghold: boolean;
   /** Set only while a keep raid is committed. */
@@ -478,6 +505,6 @@ export interface UiSnapshot {
 }
 
 export interface RectHit {
-  kind: "keep" | "pad" | "building" | "node" | "unit" | "villager";
+  kind: "keep" | "pad" | "building" | "node" | "unit" | "villager" | "stronghold";
   id: string;
 }

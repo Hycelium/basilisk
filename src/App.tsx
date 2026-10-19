@@ -88,6 +88,8 @@ const defaultUi: UiSnapshot = {
   foeWaveLine: "Foe wave 0 · steady",
   strongholdName: "",
   strongholdOwner: null,
+  strongholdPeons: 0,
+  strongholdPeonCap: 5,
   strongholdHoldLeft: 180,
   strongholdContested: false,
   strongholdChannel: 0,
@@ -297,8 +299,9 @@ export default function App() {
       } else {
         const patrol = patrolModeRef.current;
         const hadPeons = state.selectedVillagerIds.length > 0;
+        const hadSoldiers = state.selectedUnitIds.length > 0;
         sim.commandSelected(world, hit, patrol);
-        if (hadPeons) {
+        if (hadPeons || hadSoldiers) {
           const kind: TapMarker["kind"] =
             hit?.kind === "node" ? "gather" : hit?.kind === "unit" ? "attack" : patrol ? "patrol" : "move";
           const label = kind === "gather" ? "Gather" : kind === "attack" ? "Attack" : kind === "patrol" ? "Patrol" : "Move";
@@ -488,11 +491,12 @@ export default function App() {
 
       if (touch && state.phase === "running") {
         const peonsSelected = state.selectedVillagerIds.length > 0;
+        const soldiersSelected = state.selectedUnitIds.length > 0;
         const ownPeon = hit?.kind === "villager" && state.villagers.some((v) => v.id === Number(hit.id) && v.team === "you");
         const ownStructure =
           (hit?.kind === "building" && state.buildings.some((b) => b.id === Number(hit.id) && b.team === "you")) ||
           (hit?.kind === "keep" && hit.id === "you");
-        if (!state.buildSelection && peonsSelected && !ownPeon && !ownStructure) {
+        if (!state.buildSelection && (peonsSelected || soldiersSelected) && !ownPeon && !ownStructure) {
           // Tap-to-order: ground → move, tree/mine → gather, enemy → attack.
           issueOrder(world, hit, p.x, p.y);
           return;

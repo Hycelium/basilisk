@@ -738,9 +738,30 @@ button:disabled {
   padding: 0 14px;
 }
 
+.stronghold-line {
+  flex-wrap: nowrap;
+  min-height: 32px;
+  white-space: nowrap;
+}
+
+.stronghold-line .stronghold-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .stronghold-line .hold-clock {
+  flex: none;
   font-variant-numeric: tabular-nums;
   color: #f3e2bc;
+}
+
+.hud.compact .stronghold-line {
+  grid-column: 1 / -1;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 8px;
+  font-size: 12px;
 }
 
 .cluster-btn[aria-label="Attack"] {

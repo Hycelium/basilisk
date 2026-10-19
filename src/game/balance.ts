@@ -11,11 +11,16 @@ export const START_GOLD = 100;
 export const START_WOOD = 80;
 /** Bloons-style life pool: chips, not melts. ~10–15 min matches. */
 export const START_KEEP_HP = 280;
-/** Central hill. Enough stone to matter; it is never removed. */
+/** Central hill. Soldiers never damage it; peons garrison it. */
 export const STRONGHOLD_HP = 420;
-export const STRONGHOLD_CAPTURE_RADIUS = 78;
-/** Uncontested combat units flip the hill after about ten seconds. */
-export const STRONGHOLD_CAPTURE_SECONDS = 10;
+/** Peons of any teams. A sixth peon cannot enter until a slot is free. */
+export const STRONGHOLD_GARRISON_MAX = 5;
+/** How close a peon must walk to the gate before they step inside. */
+export const STRONGHOLD_GARRISON_RADIUS = 18;
+/** Battle ring. Noticeably wider than the garrison gate. */
+export const STRONGHOLD_FIGHT_RADIUS = 120;
+/** Soldiers stop here so they melee each other, not the stronghold mesh. */
+export const STRONGHOLD_KEEPOUT = 36;
 /** Continuous ownership required to win by the hill. */
 export const STRONGHOLD_HOLD_SECONDS = 180;
 

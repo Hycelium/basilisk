@@ -123,6 +123,7 @@ export function runAiTurn(sim: GameSim, _reserve: number, team: Team = "foe", ep
   const rushNear = hard && read.rushNear;
 
   if (!rushNear) sim.aiAssignWorkers();
+  if (sim.usesHub()) sim.aiContestHill();
 
   // Defensive opening book: establish population, saturate economy, and cover
   // both lanes before spending heavily on aggression. A real levy rush skips

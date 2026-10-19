@@ -87,13 +87,11 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
       </div>
       {ui.phase === "running" && ui.strongholdName && (
         <div className="attack-line stronghold-line">
-          <span>
-            Stronghold: {ui.strongholdName}
-            {ui.strongholdContested ? " · Contested" : ""}
+          <span className="stronghold-text">
+            Stronghold: {ui.strongholdName} {ui.strongholdPeons}/{ui.strongholdPeonCap}
           </span>
-          {ui.strongholdOwner && <span className="hold-clock">{holdClock(ui.strongholdHoldLeft)}</span>}
-          {!ui.strongholdOwner && ui.strongholdChannel > 0 && (
-            <span className="hold-clock">Capturing {Math.round(ui.strongholdChannel * 100)}%</span>
+          {(ui.strongholdOwner || ui.strongholdHoldLeft < 180) && (
+            <span className="hold-clock">{holdClock(ui.strongholdHoldLeft)}</span>
           )}
         </div>
       )}
