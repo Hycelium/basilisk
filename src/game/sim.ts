@@ -8,6 +8,8 @@ import {
   BUILD_PAUSE,
   BUILD_RANGE,
   CATAPULT_SPLASH_RADIUS,
+  aiWaveStrength,
+  combatWaveScale,
   DAMAGE_MULT,
   FIRST_BUILD,
   FOE_SIEGE_Y,
@@ -162,8 +164,9 @@ export class GameSim {
           team,
           pos: villagerStart(team, i),
           speed: VILLAGER_SPEED,
-          hp: VILLAGER_HP,
-          maxHp: VILLAGER_HP,
+          hp: VILLAGER_HP * combatWaveScale(team, 0),
+          maxHp: VILLAGER_HP * combatWaveScale(team, 0),
+          damage: PEON_DAMAGE * combatWaveScale(team, 0),
           state: "idle" as const,
           timer: 0,
           carryingGold: 0,
@@ -690,13 +693,15 @@ export class GameSim {
       keep.peonQueue.shift();
       if (this.state.villagers.filter((v) => v.team === team).length >= this.peonCap(team)) continue;
       const idx = this.state.villagers.filter((v) => v.team === team).length;
+      const scale = combatWaveScale(team, this.state.waveIndex);
       this.state.villagers.push({
         id: this.next(),
         team,
         pos: villagerStart(team, idx % 3),
         speed: VILLAGER_SPEED,
-        hp: VILLAGER_HP,
-        maxHp: VILLAGER_HP,
+        hp: VILLAGER_HP * scale,
+        maxHp: VILLAGER_HP * scale,
+        damage: PEON_DAMAGE * scale,
         state: "idle",
         timer: 0,
         carryingGold: 0,
@@ -741,8 +746,10 @@ export class GameSim {
 
   private spawnUnit(team: Team, kind: UnitKind, lane: 0 | 1, fromBarracks: boolean, barracks?: Building) {
     const def = UNIT_DEFS[kind];
-    let hp = def.hp;
-    let damage = def.damage;
+    // Wave scalar first, then the barracks upgrade on top. Humans pass scale 1.
+    const scale = combatWaveScale(team, this.state.waveIndex);
+    let hp = def.hp * scale;
+    let damage = def.damage * scale;
     let cooldown = def.cooldown;
     if (fromBarracks && barracks) {
       hp *= DAMAGE_MULT[barracks.damageRank];
@@ -785,12 +792,42 @@ export class GameSim {
     this.state.units.push(u);
   }
 
+  /**
+   * Living AI soldiers and peons track the new wave. The current HP ratio is
+   * kept, so a wounded unit is not healed. Buildings and keeps are left alone.
+   */
+  private retuneLivingAiCombat(prevWave: number, nextWave: number) {
+    const from = aiWaveStrength(prevWave);
+    const to = aiWaveStrength(nextWave);
+    if (from === to) return;
+    const ratio = to / from;
+    for (const unit of this.state.units) {
+      if (unit.team === "you" || unit.hp <= 0) continue;
+      unit.hp *= ratio;
+      unit.maxHp *= ratio;
+      unit.damage *= ratio;
+    }
+    for (const villager of this.state.villagers) {
+      if (villager.team === "you" || villager.hp <= 0) continue;
+      villager.hp *= ratio;
+      villager.maxHp *= ratio;
+      villager.damage *= ratio;
+    }
+  }
+
+  private strikeText(dealt: number) {
+    const rounded = Math.round(dealt * 10) / 10;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  }
+
   private launchNextWave() {
     const s = this.state;
     if (s.waveIndex >= WAVES.length) return;
     const idx = s.waveIndex;
     this.enqueueWave(idx);
+    const prevWave = s.waveIndex;
     s.waveIndex += 1;
+    this.retuneLivingAiCombat(prevWave, s.waveIndex);
     s.wavePhase = "spawning";
     s.waveSpawnTimer = 0;
     const income = WAVE_START_INCOME + Math.floor(idx * 3);
@@ -1251,10 +1288,10 @@ export class GameSim {
     const threat = this.nearestPeonThreat(team, v.pos, PEON_MELEE_RANGE);
     if (!threat) return false;
     if (v.attackTimer <= 0) {
-      threat.hp -= PEON_DAMAGE;
+      threat.hp -= v.damage;
       v.attackTimer = PEON_ATTACK_CD;
       this.emitCombat("meleeHit", v.pos, threat.pos, team);
-      this.addFloat(`-${PEON_DAMAGE}`, threat.pos.x, threat.pos.y - 7, "#e8c070");
+      this.addFloat(`-${this.strikeText(v.damage)}`, threat.pos.x, threat.pos.y - 7, "#e8c070");
     }
     return true;
   }
@@ -1296,10 +1333,10 @@ export class GameSim {
       if (dist(v.pos, target.pos) > PEON_MELEE_RANGE) {
         moveTowards(v.pos, target.pos, PEON_FIGHT_SPEED, dt);
       } else if (v.attackTimer <= 0) {
-        target.hp -= PEON_DAMAGE;
+        target.hp -= v.damage;
         v.attackTimer = PEON_ATTACK_CD;
         this.emitCombat("meleeHit", v.pos, target.pos, team);
-        this.addFloat(`-${PEON_DAMAGE}`, target.pos.x, target.pos.y - 8, "#c8e090");
+        this.addFloat(`-${this.strikeText(v.damage)}`, target.pos.x, target.pos.y - 8, "#c8e090");
       }
       return;
     }
@@ -1330,10 +1367,10 @@ export class GameSim {
     if (dist(v.pos, target.pos) > PEON_MELEE_RANGE) {
       moveTowards(v.pos, target.pos, PEON_FIGHT_SPEED, dt);
     } else if (v.attackTimer <= 0) {
-      target.hp -= PEON_DAMAGE;
+      target.hp -= v.damage;
       v.attackTimer = PEON_ATTACK_CD;
       this.emitCombat("meleeHit", v.pos, target.pos, team);
-      this.addFloat(`-${PEON_DAMAGE}`, target.pos.x, target.pos.y - 8, "#c8e090");
+      this.addFloat(`-${this.strikeText(v.damage)}`, target.pos.x, target.pos.y - 8, "#c8e090");
     }
     return true;
   }
@@ -1844,9 +1881,9 @@ export class GameSim {
           moveTowards(v.pos, target.pos, PEON_FIGHT_SPEED, dt);
         } else if (v.attackTimer <= 0) {
           // Barracks soldiers and wave creeps both take peon damage — no immunity.
-          target.hp -= PEON_DAMAGE;
+          target.hp -= v.damage;
           v.attackTimer = PEON_ATTACK_CD;
-          this.addFloat(`-${PEON_DAMAGE}`, target.pos.x, target.pos.y - 8, "#c8e090");
+          this.addFloat(`-${this.strikeText(v.damage)}`, target.pos.x, target.pos.y - 8, "#c8e090");
         }
         return;
       }

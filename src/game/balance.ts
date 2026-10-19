@@ -1,4 +1,4 @@
-import type { BuildingKind, TrainKind, UnitKind, WaveSpec } from "./types";
+import type { BuildingKind, Team, TrainKind, UnitKind, WaveSpec } from "./types";
 
 export const WORLD_W = 400;
 export const WORLD_H = 720;
@@ -212,6 +212,21 @@ export const AI_RESERVE = 40;
 /** @deprecated kept for any old refs */
 export const FIRST_WAVE_AT = FIRST_BUILD;
 export const BETWEEN_WAVES = BUILD_PAUSE;
+
+/**
+ * AI combat multiplier for the shared attack-wave counter.
+ * Wave 1 is 1×. Each later wave adds the same step. Wave 16 is 2×.
+ * Before wave 1 (counter 0) this is 1×. After wave 16 it stays at 2×.
+ */
+export function aiWaveStrength(wave: number): number {
+  const step = Math.min(16, Math.max(1, wave));
+  return 1 + (step - 1) / 15;
+}
+
+/** Humans stay at 1. Every AI team uses `aiWaveStrength`. */
+export function combatWaveScale(team: Team, wave: number): number {
+  return team === "you" ? 1 : aiWaveStrength(wave);
+}
 
 export function formatCost(c: ResCost) {
   const parts: string[] = [];

@@ -128,6 +128,8 @@ export interface Villager {
   speed: number;
   hp: number;
   maxHp: number;
+  /** Melee damage. AI peons carry the current wave scalar; humans stay at baseline. */
+  damage: number;
   state: "idle" | "toNode" | "gathering" | "toKeep" | "home" | "defend" | "toGarrison" | "garrisoned" | "toBarricade" | "buildingBarricade" | "moving" | "patrolling";
   targetNodeId?: string;
   targetEnemyId?: number;
