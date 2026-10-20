@@ -69,7 +69,7 @@ import {
   xpForNextLevel,
   xpProgress,
 } from "./progress";
-import type { MatchSnapshot, RemoteOrder } from "../net/protocol";
+import { snapshotUsable, type MatchSnapshot, type RemoteOrder } from "../net/protocol";
 import type {
   Building,
   BuildingKind,
@@ -102,6 +102,15 @@ const KEEP_GARRISON_MAX = 5;
 const KEEP_ARROW_RANGE = 185;
 const KEEP_ARROW_COOLDOWN = 1.15;
 const ARCHER_RANGE = 112;
+const POSE_SNAP = 96;
+
+interface Pose {
+  x: number;
+  y: number;
+  tx: number;
+  ty: number;
+  a: number;
+}
 
 export class GameSim {
   private nextId = 1;
@@ -117,6 +126,9 @@ export class GameSim {
   private applyingRemote = false;
   private linkDown = false;
   private shownMap: { id: string; name: string; tagline: string; seed: number } | null = null;
+  private poses = new Map<string, Pose>();
+  private poseSpan = 0.1;
+  private lastPoseAt = 0;
 
   constructor() {
     const meta = loadMeta();
@@ -309,12 +321,35 @@ export class GameSim {
     this.addToast(text);
   }
 
-  /** Guest clocks. Ages notices without stepping the rules. */
+  /** Guest clocks. Ages the scene from real time without stepping the rules. */
   tickPresentation(rawDt: number) {
-    const dt = Math.min(0.05, Math.max(0, rawDt));
+    const elapsed = Number.isFinite(rawDt) && rawDt > 0 ? Math.min(1, rawDt) : 0;
     if (this.linkDown) this.state.paused = true;
-    this.decayFx(dt);
-    this.state.time += dt;
+    this.decayFx(Math.min(0.05, elapsed));
+    if (this.state.phase === "running" && !this.state.paused) {
+      this.state.time += elapsed * this.state.speed;
+    }
+    this.stepPoses(elapsed);
+  }
+
+  /**
+   * Visible play keeps a single 50ms slice. A covered host tab wakes in long gaps,
+   * so catch up to one second or the guest picture freezes.
+   */
+  stepMatch(elapsed: number, hidden: boolean) {
+    const raw = Number.isFinite(elapsed) && elapsed > 0 ? elapsed : 0;
+    if (!hidden) {
+      this.update(Math.min(0.05, raw));
+      return;
+    }
+    let left = Math.min(1, raw);
+    let steps = 0;
+    while (left > 0.0001 && steps < 24) {
+      const step = Math.min(0.05, left);
+      this.update(step);
+      left -= step;
+      steps += 1;
+    }
   }
 
   private redirect(order: RemoteOrder) {
@@ -342,6 +377,9 @@ export class GameSim {
     this.aiRushDeadline = 0;
     this.shownMap = null;
     this.linkDown = false;
+    this.poses.clear();
+    this.poseSpan = 0.1;
+    this.lastPoseAt = 0;
     this.state = this.makeFreshState(this.activeMap);
     this.state.commandTeam = this.localTeam;
   }
@@ -2882,8 +2920,69 @@ export class GameSim {
     };
   }
 
-  applySnapshot(snap: MatchSnapshot) {
+  private armPose(kind: "u" | "v", id: number, x: number, y: number) {
+    const key = kind + id;
+    const prev = this.poses.get(key);
+    const along = prev ? Math.min(1, Math.max(0, prev.a)) : 1;
+    const fromX = prev ? prev.x + (prev.tx - prev.x) * along : x;
+    const fromY = prev ? prev.y + (prev.ty - prev.y) * along : y;
+    const dx = x - fromX;
+    const dy = y - fromY;
+    if (!prev || dx * dx + dy * dy > POSE_SNAP * POSE_SNAP) {
+      this.poses.set(key, { x, y, tx: x, ty: y, a: 1 });
+      return { x, y };
+    }
+    this.poses.set(key, { x: fromX, y: fromY, tx: x, ty: y, a: 0 });
+    return { x: fromX, y: fromY };
+  }
+
+  private notePoseGap() {
+    const now = performance.now();
+    const gap = this.lastPoseAt > 0 ? (now - this.lastPoseAt) / 1000 : 0.1;
+    this.lastPoseAt = now;
+    this.poseSpan = Math.min(1.25, Math.max(0.05, gap));
+  }
+
+  private stepPoses(dt: number) {
+    if (dt <= 0 || this.poses.size === 0) return;
+    const gain = dt / Math.max(0.05, this.poseSpan);
+    const slide = (key: string, pos: { x: number; y: number }) => {
+      const pose = this.poses.get(key);
+      if (!pose || pose.a >= 1) return;
+      pose.a = Math.min(1, pose.a + gain);
+      pos.x = pose.x + (pose.tx - pose.x) * pose.a;
+      pos.y = pose.y + (pose.ty - pose.y) * pose.a;
+    };
+    for (const unit of this.state.units) slide("u" + unit.id, unit.pos);
+    for (const villager of this.state.villagers) slide("v" + villager.id, villager.pos);
+  }
+
+  private prunePoses() {
+    const live = new Set<string>();
+    for (const unit of this.state.units) live.add("u" + unit.id);
+    for (const villager of this.state.villagers) live.add("v" + villager.id);
+    for (const key of this.poses.keys()) {
+      if (!live.has(key)) this.poses.delete(key);
+    }
+  }
+
+  applySnapshot(snap: MatchSnapshot): boolean {
+    if (!snapshotUsable(snap)) return false;
+    try {
+      this.copySnapshot(snap);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private copySnapshot(snap: MatchSnapshot) {
     const s = this.state;
+    if (snap.mapId !== s.mapId) {
+      this.poses.clear();
+      this.lastPoseAt = 0;
+    }
+    this.notePoseGap();
     const selectedVillagerIds = s.selectedVillagerIds;
     const selectedBuildingId = s.selectedBuildingId;
     const selectedKeepTeam = s.selectedKeepTeam;
@@ -2901,7 +3000,7 @@ export class GameSim {
       seed: snap.mapSeed,
     };
     s.mapId = snap.mapId;
-    s.time = snap.time;
+    s.time = Math.max(s.time, snap.time);
     s.phase = snap.phase;
     s.paused = this.linkDown ? true : snap.paused;
     s.speed = snap.speed;
@@ -2931,14 +3030,17 @@ export class GameSim {
     }
     if (snap.keeps[this.localTeam].hitFlash > 0) s.redFlash = Math.max(s.redFlash, 0.18);
 
-    s.units = snap.units.map((u) => {
+    s.units = [];
+    for (const u of snap.units) {
       const def = UNIT_DEFS[u.kind];
-      return {
+      if (!def || !Number.isFinite(u.id) || !Number.isFinite(u.x) || !Number.isFinite(u.y)) continue;
+      const pos = this.armPose("u", u.id, u.x, u.y);
+      s.units.push({
         id: u.id,
         team: u.team,
         kind: u.kind,
         lane: u.lane,
-        pos: { x: u.x, y: u.y },
+        pos,
         hp: u.hp,
         maxHp: u.maxHp,
         speed: def.speed,
@@ -2953,12 +3055,16 @@ export class GameSim {
         fromBarracks: u.fromBarracks,
         ignoreEnemyCreeps: !u.fromBarracks,
         rallyPoint: point(u.rallyX, u.rallyY),
-      };
-    });
-    s.villagers = snap.villagers.map((v) => ({
+      });
+    }
+    s.villagers = [];
+    for (const v of snap.villagers) {
+      if (!Number.isFinite(v.id) || !Number.isFinite(v.x) || !Number.isFinite(v.y)) continue;
+      const pos = this.armPose("v", v.id, v.x, v.y);
+      s.villagers.push({
       id: v.id,
       team: v.team,
-      pos: { x: v.x, y: v.y },
+      pos,
       speed: VILLAGER_SPEED,
       hp: v.hp,
       maxHp: v.maxHp,
@@ -2976,7 +3082,9 @@ export class GameSim {
       carryingGold: 0,
       carryingWood: 0,
       attackTimer: v.attackTimer,
-    }));
+      });
+    }
+    this.prunePoses();
     s.buildings = snap.buildings.map((b) => ({
       id: b.id,
       team: b.team,

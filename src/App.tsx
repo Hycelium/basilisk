@@ -325,10 +325,13 @@ export default function App() {
     let uiTick = 0;
     let snapAcc = 0;
     const frame = (now: number) => {
-      const dt = (now - prev) / 1000;
+      let elapsed = (now - prev) / 1000;
       prev = now;
-      if (roleRef.current === "guest") sim.tickPresentation(dt);
-      else sim.update(dt);
+      if (!Number.isFinite(elapsed) || elapsed < 0) elapsed = 0;
+      const hosting = roleRef.current === "host" && liveRef.current;
+      if (roleRef.current === "guest") sim.tickPresentation(elapsed);
+      else if (hosting && document.hidden) sim.stepMatch(elapsed, true);
+      else sim.update(Math.min(0.05, elapsed));
       const gameState = sim.getState();
       renderer.draw(gameState);
       if (heardMapRef.current !== gameState.mapId) {
@@ -343,7 +346,7 @@ export default function App() {
       if (heardCombatRef.current.size > 1500) {
         heardCombatRef.current = new Set(gameState.combatEvents.map((event) => event.id));
       }
-      uiTick += dt;
+      uiTick += Math.min(1, elapsed);
       const snap = sim.getUiSnapshot();
       if (snap.yourHp < hpRef.current) beep(110, 0.08);
       hpRef.current = snap.yourHp;
@@ -351,16 +354,19 @@ export default function App() {
         setUi(snap);
         uiTick = 0;
       }
-      if (roleRef.current === "host" && liveRef.current) {
-        snapAcc += dt;
+      if (hosting) {
+        snapAcc += Math.min(1, elapsed);
         if (snapAcc >= 0.1) {
           snapAcc = 0;
           linkRef.current?.send({ t: "snap", snap: sim.exportSnapshot() });
         }
       }
-      raf = requestAnimationFrame(frame);
+      if (!document.hidden) raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
+    const heart = window.setInterval(() => {
+      if (document.hidden && roleRef.current === "host" && liveRef.current) frame(performance.now());
+    }, 50);
 
     const local = (ev: PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
@@ -520,10 +526,13 @@ export default function App() {
     stage.addEventListener("gesturechange", stopGesture);
     stage.addEventListener("touchmove", stopGesture, { passive: false });
     const onVisibility = () => {
+      prev = performance.now();
       if (document.hidden) {
         clearLongPress();
-        prev = performance.now();
+        return;
       }
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(frame);
     };
     document.addEventListener("visibilitychange", onVisibility);
 
@@ -543,6 +552,7 @@ export default function App() {
       stage.removeEventListener("gesturechange", stopGesture);
       stage.removeEventListener("touchmove", stopGesture);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(heart);
       cancelAnimationFrame(raf);
       renderer.onQuality(null);
     };

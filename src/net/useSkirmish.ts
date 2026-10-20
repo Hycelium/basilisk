@@ -5,6 +5,7 @@ import { createRoomId, inviteLink, parseRoomInput, type NetMsg } from "./protoco
 import { SkirmishLink } from "./skirmish";
 
 const NAME_KEY = "roadkeep_name";
+const PICTURE_REJECTED = "The match picture was rejected.";
 
 export interface LobbyState {
   open: boolean;
@@ -68,6 +69,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
   const linkRef = useRef<SkirmishLink | null>(null);
   const lobbyRef = useRef(lobby);
   lobbyRef.current = lobby;
+  const pictureWarned = useRef(false);
 
   const setName = useCallback((value: string) => {
     const next = value.slice(0, 24);
@@ -83,6 +85,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
     linkRef.current = null;
     roleRef.current = "solo";
     liveRef.current = false;
+    pictureWarned.current = false;
     sim.setOrderSink(null);
     sim.setRemoteNote(null);
     sim.setLinkDown(false);
@@ -116,6 +119,13 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
     [rendererRef, sim],
   );
 
+  const warnPicture = useCallback(() => {
+    if (pictureWarned.current) return;
+    pictureWarned.current = true;
+    sim.pushToast(PICTURE_REJECTED);
+    if (roleRef.current === "host") linkRef.current?.send({ t: "note", text: PICTURE_REJECTED });
+  }, [sim]);
+
   const onMessage = useCallback(
     (msg: NetMsg) => {
       if (msg.t === "hello") {
@@ -134,11 +144,12 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
         return;
       }
       if (msg.t === "snap") {
-        sim.applySnapshot(msg.snap);
+        if (!sim.applySnapshot(msg.snap)) warnPicture();
         return;
       }
       if (msg.t === "note") {
-        sim.pushToast(msg.text);
+        if (msg.text === PICTURE_REJECTED) warnPicture();
+        else sim.pushToast(msg.text);
         return;
       }
       if (msg.t === "pong") {
@@ -146,12 +157,13 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
         setLobby((s) => ({ ...s, pingMs: ms }));
       }
     },
-    [beginGuest, sim],
+    [beginGuest, sim, warnPicture],
   );
 
   const openLink = useCallback(
     (role: "host" | "guest", roomId: string) => {
       linkRef.current?.close();
+      pictureWarned.current = false;
       const link = new SkirmishLink({
         onReady: (id) => {
           setLobby((s) => ({
@@ -180,6 +192,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
         onMessage,
         onStatus: (text) => setLobby((s) => ({ ...s, status: text })),
         onDirectFail: (text) => setLobby((s) => ({ ...s, status: text, link: "failed" })),
+        onReject: warnPicture,
         onDown: (text) => {
           const wasLive = liveRef.current;
           if (wasLive) sim.setLinkDown(true);
@@ -196,7 +209,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
       if (role === "host") link.host(roomId);
       else link.join(roomId);
     },
-    [onMessage, sim],
+    [onMessage, sim, warnPicture],
   );
 
   const hostMatch = useCallback(() => {

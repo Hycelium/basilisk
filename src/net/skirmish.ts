@@ -1,5 +1,5 @@
 import Peer, { type DataConnection, type PeerError } from "peerjs";
-import { createRoomId, asNetMsg, type NetMsg } from "./protocol";
+import { createRoomId, asNetMsg, splitWire, WireReassembly, type NetMsg } from "./protocol";
 
 const ICE: RTCConfiguration = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -19,6 +19,7 @@ export interface SkirmishEvents {
   onStatus: (text: string) => void;
   onDirectFail: (text: string) => void;
   onDown: (text: string) => void;
+  onReject: () => void;
 }
 
 export class SkirmishLink {
@@ -32,6 +33,9 @@ export class SkirmishLink {
   private waitTimer = 0;
   private pingTimer = 0;
   private pingN = 0;
+  private partId = 1;
+  private parts = new WireReassembly();
+  private rejected = false;
 
   constructor(private events: SkirmishEvents) {}
 
@@ -61,10 +65,25 @@ export class SkirmishLink {
   send(msg: NetMsg) {
     const conn = this.conn;
     if (!conn?.open) return;
+    let pieces: NetMsg[];
     try {
-      conn.send(msg);
+      pieces = splitWire(msg, this.partId);
+      this.partId += 1;
     } catch {
-      /* channel is closing */
+      this.rejectOnce();
+      return;
+    }
+    if (pieces.length === 0) {
+      this.rejectOnce();
+      return;
+    }
+    for (const piece of pieces) {
+      try {
+        conn.send(piece);
+      } catch {
+        /* channel is closing */
+        return;
+      }
     }
   }
 
@@ -144,26 +163,29 @@ export class SkirmishLink {
     });
     conn.on("data", (data) => {
       const msg = asNetMsg(data);
-      if (!msg) return;
-      if (msg.t === "ping") {
-        this.send({ t: "pong", n: msg.n, at: msg.at });
+      if (!msg) {
+        const kind = data && typeof data === "object" ? (data as { t?: unknown }).t : undefined;
+        if (kind === "snap" || kind === "part") this.rejectOnce();
         return;
       }
-      if (msg.t === "pong") {
-        this.events.onMessage(msg);
+      if (msg.t === "part") {
+        const done = this.parts.take(msg);
+        if (done === "bad") this.rejectOnce();
+        else if (done) this.dispatch(done);
         return;
       }
-      if (msg.t === "full") {
-        this.events.onStatus("This match already has two players.");
-        return;
-      }
-      this.events.onMessage(msg);
+      this.dispatch(msg);
     });
     conn.on("iceStateChanged", (state) => {
       if (state === "connected" || state === "completed") this.iceOk = true;
       if (state === "failed" && !this.iceOk) this.events.onDirectFail(DIRECT_FAIL);
     });
-    conn.on("error", () => {
+    conn.on("error", (err) => {
+      const kind = (err as { type?: string } | undefined)?.type;
+      if (kind === "message-too-big") {
+        this.rejectOnce();
+        return;
+      }
       if (!this.iceOk && !this.opened) this.events.onDirectFail(DIRECT_FAIL);
     });
     conn.on("close", () => {
@@ -172,6 +194,29 @@ export class SkirmishLink {
       if (!this.opened) return;
       this.events.onDown("Opponent disconnected.");
     });
+  }
+
+  private dispatch(msg: NetMsg) {
+    if (msg.t === "part") return;
+    if (msg.t === "ping") {
+      this.send({ t: "pong", n: msg.n, at: msg.at });
+      return;
+    }
+    if (msg.t === "pong") {
+      this.events.onMessage(msg);
+      return;
+    }
+    if (msg.t === "full") {
+      this.events.onStatus("This match already has two players.");
+      return;
+    }
+    this.events.onMessage(msg);
+  }
+
+  private rejectOnce() {
+    if (this.rejected) return;
+    this.rejected = true;
+    this.events.onReject();
   }
 
   private ping() {

@@ -1,7 +1,7 @@
 import "./localstorage-shim";
 import { GameSim } from "../src/game/sim";
 import { VILLAGER_HP, aiWaveStrength, combatWaveScale } from "../src/game/balance";
-import { parseRoomInput } from "../src/net/protocol";
+import { parseRoomInput, snapshotUsable, splitWire, WireReassembly, type NetMsg } from "../src/net/protocol";
 
 function assert(cond: unknown, message: string) {
   if (!cond) throw new Error(message);
@@ -86,5 +86,69 @@ assert(
 assert(combatWaveScale("foe", 16) === 2, "wave helper at wave 16 is unchanged");
 assert(combatWaveScale("you", 16) === 1, "human side of the helper is unchanged");
 assert(combatWaveScale("foe", 1) === 1, "wave 1 foe scale is unchanged");
+
+const pictured = new GameSim();
+pictured.setMatchMode("pvp");
+pictured.startMatch();
+const walker = pictured.getState().villagers.find((v) => v.team === "foe");
+assert(walker, "foe peon for the picture");
+const walkerStart = { ...walker.pos };
+pictured.applyRemoteOrder({ t: "move", ids: [walker.id], x: walker.pos.x + 70, y: walker.pos.y + 50 });
+for (let i = 0; i < 5; i++) pictured.update(0.1);
+const snap1 = pictured.exportSnapshot();
+for (let i = 0; i < 8; i++) pictured.update(0.1);
+const snap2 = pictured.exportSnapshot();
+assert(snapshotUsable(snap1) && snapshotUsable(snap2), "exported pictures are usable");
+const single = splitWire({ t: "snap", snap: snap1 }, 1);
+assert(single.length === 1 && single[0].t === "snap", "a normal picture stays one message");
+const picturedSpot = snap2.villagers.find((v) => v.id === walker.id);
+assert(picturedSpot && moved({ x: picturedSpot.x, y: picturedSpot.y }, walkerStart) > 8, "the two pictures differ");
+
+const guest = new GameSim();
+guest.setMatchMode("pvp");
+guest.setLocalTeam("foe");
+assert(guest.applySnapshot(snap1), "guest accepts the first picture");
+const clock = guest.getState().time;
+for (let i = 0; i < 4; i++) guest.tickPresentation(0.05);
+assert(guest.getState().time > clock + 0.15, "guest clock advances between pictures");
+const shown = guest.getState().villagers.find((v) => v.id === walker.id);
+assert(shown, "pictured peon is on the guest");
+const mid = { ...shown.pos };
+assert(guest.applySnapshot(snap2), "guest accepts the second picture");
+for (let i = 0; i < 30; i++) guest.tickPresentation(0.05);
+const arrived = guest.getState().villagers.find((v) => v.id === walker.id);
+assert(arrived, "pictured peon stays on the guest");
+assert(moved(arrived.pos, mid) > 4, "guest peon slides toward the newer picture");
+assert(moved(arrived.pos, { x: picturedSpot.x, y: picturedSpot.y }) < 1, "guest peon arrives at the pictured spot");
+assert(guest.getState().gold.you === snap2.gold.you, "guest gold comes from the picture");
+assert(guest.getState().buildTimer === snap2.buildTimer, "guest does not step the build clock itself");
+
+const covered = new GameSim();
+covered.setMatchMode("pvp");
+covered.startMatch();
+const coveredAt = covered.getState().time;
+covered.stepMatch(1, true);
+assert(covered.getState().time > coveredAt + 0.9, "a covered host catches up a second of match time");
+const open = new GameSim();
+open.setMatchMode("pvp");
+open.startMatch();
+const openAt = open.getState().time;
+open.stepMatch(1, false);
+assert(open.getState().time < openAt + 0.06, "a visible host still steps one slice per frame");
+
+const bulky = "x".repeat(15000);
+const parts = splitWire({ t: "note", text: bulky }, 7);
+assert(parts.length > 1, "an oversized message is split");
+assert(
+  parts.every((part) => part.t === "part" && new TextEncoder().encode(JSON.stringify(part)).length < 16300),
+  "each piece fits the JSON channel",
+);
+const box = new WireReassembly();
+let rebuilt: NetMsg | "bad" | null = null;
+for (const part of parts) {
+  if (part.t !== "part") throw new Error("expected part");
+  rebuilt = box.take(part);
+}
+assert(rebuilt !== "bad" && rebuilt?.t === "note" && rebuilt.text === bulky, "parts reassemble");
 
 console.log("skirmish sanity ok");
