@@ -2,15 +2,17 @@ import type { UiSnapshot } from "../game/types";
 
 interface OverlaysProps {
   ui: UiSnapshot;
+  hideTitle?: boolean;
   onStart: () => void;
+  onSkirmish: () => void;
   onRestart: () => void;
   onRerollMap: () => void;
 }
 
-export function Overlays({ ui, onStart, onRestart, onRerollMap }: OverlaysProps) {
+export function Overlays({ ui, hideTitle, onStart, onSkirmish, onRestart, onRerollMap }: OverlaysProps) {
   return (
     <>
-      {ui.phase === "title" && (
+      {ui.phase === "title" && !hideTitle && (
         <div className="overlay title-overlay">
           <h1>Roadkeep</h1>
           <p className="keep-lvl">
@@ -42,9 +44,14 @@ export function Overlays({ ui, onStart, onRestart, onRerollMap }: OverlaysProps)
             <li>Scout new terrain → reroll pads &amp; resources at this level</li>
           </ul>
 
-          <button type="button" className="cta" onClick={onStart}>
-            Take the field — {ui.mapName}
-          </button>
+          <div className="title-actions">
+            <button type="button" className="cta" onClick={onStart}>
+              Take the field — {ui.mapName}
+            </button>
+            <button type="button" className="ghost" onClick={onSkirmish}>
+              Skirmish
+            </button>
+          </div>
         </div>
       )}
 

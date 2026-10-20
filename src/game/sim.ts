@@ -69,6 +69,7 @@ import {
   xpForNextLevel,
   xpProgress,
 } from "./progress";
+import type { MatchSnapshot, RemoteOrder } from "../net/protocol";
 import type {
   Building,
   BuildingKind,
@@ -109,6 +110,13 @@ export class GameSim {
   private aiRushDeadline = 0;
   private activeMap: MapDef;
   private controlGroups = new Map<number, number[]>();
+  private matchMode: "ai" | "pvp" = "ai";
+  private localTeam: Team = "you";
+  private orderSink: ((order: RemoteOrder) => void) | null = null;
+  private remoteNote: ((text: string) => void) | null = null;
+  private applyingRemote = false;
+  private linkDown = false;
+  private shownMap: { id: string; name: string; tagline: string; seed: number } | null = null;
 
   constructor() {
     const meta = loadMeta();
@@ -177,6 +185,7 @@ export class GameSim {
     }
     return {
       phase: "title",
+      commandTeam: "you",
       mapId: map.id,
       time: 0,
       paused: false,
@@ -254,6 +263,76 @@ export class GameSim {
     return this.state;
   }
 
+  setMatchMode(mode: "ai" | "pvp") {
+    this.matchMode = mode;
+  }
+
+  getMatchMode() {
+    return this.matchMode;
+  }
+
+  setLocalTeam(team: Team) {
+    this.localTeam = team;
+    this.state.commandTeam = team;
+  }
+
+  getLocalTeam() {
+    return this.localTeam;
+  }
+
+  setOrderSink(sink: ((order: RemoteOrder) => void) | null) {
+    this.orderSink = sink;
+  }
+
+  setRemoteNote(note: ((text: string) => void) | null) {
+    this.remoteNote = note;
+  }
+
+  setLinkDown(down: boolean) {
+    this.linkDown = down;
+    if (down) this.state.paused = true;
+  }
+
+  getActiveMap() {
+    return this.activeMap;
+  }
+
+  adoptMap(map: MapDef) {
+    this.activeMap = map;
+    this.state.mapId = map.id;
+    this.state.pads = buildPads(map);
+    this.state.nodes = buildNodes(map);
+    this.shownMap = { id: map.id, name: map.name, tagline: map.tagline, seed: map.seed };
+  }
+
+  pushToast(text: string) {
+    this.addToast(text);
+  }
+
+  /** Guest clocks. Ages notices without stepping the rules. */
+  tickPresentation(rawDt: number) {
+    const dt = Math.min(0.05, Math.max(0, rawDt));
+    if (this.linkDown) this.state.paused = true;
+    this.decayFx(dt);
+    this.state.time += dt;
+  }
+
+  private redirect(order: RemoteOrder) {
+    if (!this.orderSink || this.applyingRemote) return false;
+    this.orderSink(order);
+    return true;
+  }
+
+  private tell(team: Team, text: string) {
+    if (team === this.localTeam) this.addToast(text);
+    else this.remoteNote?.(text);
+  }
+
+  private combatScale(team: Team) {
+    if (this.matchMode === "pvp") return 1;
+    return combatWaveScale(team, this.state.waveIndex);
+  }
+
   /** Reload campaign map for current keep level (+ scout salt). */
   reloadCampaignMap() {
     const meta = loadMeta();
@@ -261,7 +340,10 @@ export class GameSim {
     this.nextId = 1;
     this.aiTimer = 0;
     this.aiRushDeadline = 0;
+    this.shownMap = null;
+    this.linkDown = false;
     this.state = this.makeFreshState(this.activeMap);
+    this.state.commandTeam = this.localTeam;
   }
 
   /** Same keep level, new procedural terrain. */
@@ -279,6 +361,10 @@ export class GameSim {
     this.state.phase = "running";
     this.state.wavePhase = "build";
     this.state.buildTimer = FIRST_BUILD;
+    if (this.matchMode === "pvp") {
+      this.addToast("Skirmish — both keeps are held by players.");
+      return;
+    }
     notifyAiMatchStart();
     const iq = foeBrainStats().intellect;
     this.addToast(`Build phase — ${FIRST_BUILD}s until wave 1`);
@@ -294,10 +380,13 @@ export class GameSim {
   }
 
   togglePause() {
+    if (this.linkDown) return;
+    if (this.redirect({ t: "pause" })) return;
     this.state.paused = !this.state.paused;
   }
 
   toggleSpeed() {
+    if (this.redirect({ t: "speed" })) return;
     this.state.speed = this.state.speed === 1 ? 2 : 1;
   }
 
@@ -318,7 +407,7 @@ export class GameSim {
   click(hit: RectHit | null, world?: { x: number; y: number }) {
     if (this.state.phase !== "running") return;
     if (this.state.buildSelection === "barricade" && world) {
-      this.tryPlaceBarricade(world);
+      this.placeBarricadeAt(world);
       return;
     }
     if (!hit) {
@@ -329,19 +418,28 @@ export class GameSim {
     }
     if (hit.kind === "villager") {
       const id = Number(hit.id);
-      const peon = this.state.villagers.find((v) => v.id === id && v.team === "you");
+      const peon = this.state.villagers.find((v) => v.id === id && v.team === this.localTeam && v.hp > 0);
       this.state.selectedVillagerIds = peon ? [peon.id] : [];
       this.state.selectedBuildingId = null;
       this.state.selectedKeepTeam = null;
       return;
     }
     if (hit.kind === "node") {
-      this.assignVillagerToNode(hit.id);
+      if (this.orderSink && !this.applyingRemote) {
+        let ids = this.peonsById(this.localTeam, this.state.selectedVillagerIds).map((v) => v.id);
+        if (ids.length === 0) {
+          const chosen = this.chooseGatherer(this.localTeam, hit.id);
+          if (chosen) ids = [chosen.id];
+        }
+        if (ids.length > 0) this.orderSink({ t: "gather", ids, nodeId: hit.id });
+        return;
+      }
+      this.assignVillagerToNode(hit.id, this.localTeam);
       return;
     }
-    if (hit.kind === "keep" && hit.id === "you") {
+    if (hit.kind === "keep" && hit.id === this.localTeam) {
       // Select keep for peon training (double-purpose: also home call via button later)
-      this.state.selectedKeepTeam = "you";
+      this.state.selectedKeepTeam = this.localTeam;
       this.state.selectedBuildingId = null;
       this.state.selectedVillagerIds = [];
       this.state.buildSelection = null;
@@ -368,7 +466,7 @@ export class GameSim {
     const ids = this.state.villagers
       .filter(
         (v) =>
-          v.team === "you" &&
+          v.team === this.localTeam &&
           v.state !== "garrisoned" &&
           v.pos.x >= minX &&
           v.pos.x <= maxX &&
@@ -390,7 +488,9 @@ export class GameSim {
       if (this.state.selectedVillagerIds.length > 0) this.addToast(`Control group ${slot} set.`);
       return this.state.selectedVillagerIds.length > 0;
     }
-    const alive = new Set(this.state.villagers.filter((v) => v.team === "you" && v.hp > 0).map((v) => v.id));
+    const alive = new Set(
+      this.state.villagers.filter((v) => v.team === this.localTeam && v.hp > 0).map((v) => v.id),
+    );
     const ids = (this.controlGroups.get(slot) ?? []).filter((id) => alive.has(id));
     if (ids.length === 0) return false;
     this.state.selectedVillagerIds = ids;
@@ -420,21 +520,83 @@ export class GameSim {
     v.forcedAttack = false;
   }
 
-  commandSelected(world: { x: number; y: number }, hit: RectHit | null, patrol = false) {
-    const selected = this.state.villagers.filter(
-      (v) => v.team === "you" && this.state.selectedVillagerIds.includes(v.id),
+  private peonsById(team: Team, ids: number[]) {
+    const want = new Set(ids);
+    return this.state.villagers.filter((v) => v.team === team && v.hp > 0 && want.has(v.id));
+  }
+
+  private chooseGatherer(team: Team, nodeId: string) {
+    const node = this.state.nodes.find((n) => n.id === nodeId);
+    if (!node) return undefined;
+    const free = this.state.villagers.filter(
+      (v) =>
+        v.team === team &&
+        v.hp > 0 &&
+        v.state !== "garrisoned" &&
+        v.state !== "toGarrison" &&
+        v.state !== "toBarricade" &&
+        v.state !== "buildingBarricade",
     );
-    if (selected.length === 0) {
-      const barracks = this.state.buildings.find(
-        (b) => b.id === this.state.selectedBuildingId && b.team === "you" && b.kind === "barracks",
-      );
-      if (barracks) {
-        barracks.rallyPoint = { ...world };
-        this.state.commandMarkers.push({ id: this.next(), kind: "rally", pos: { ...world }, life: 1.4 });
-        this.addToast("Barracks rally point set.");
+    const idle = free
+      .filter((v) => v.state === "idle" || v.state === "home")
+      .sort((a, b) => dist(a.pos, node.pos) - dist(b.pos, node.pos))[0];
+    if (idle) return idle;
+    return [...free].sort((a, b) => dist(a.pos, node.pos) - dist(b.pos, node.pos))[0];
+  }
+
+  commandSelected(world: { x: number; y: number }, hit: RectHit | null, patrol = false) {
+    const team = this.localTeam;
+    const selected = this.peonsById(team, this.state.selectedVillagerIds);
+    if (this.orderSink && !this.applyingRemote) {
+      if (selected.length === 0) {
+        const barracks = this.state.buildings.find(
+          (b) => b.id === this.state.selectedBuildingId && b.team === team && b.kind === "barracks",
+        );
+        if (barracks) this.orderSink({ t: "rally", buildingId: barracks.id, x: world.x, y: world.y });
+        return;
       }
+      const ids = selected.map((v) => v.id);
+      if (hit?.kind === "node") {
+        this.orderSink({ t: "gather", ids, nodeId: hit.id });
+        return;
+      }
+      if (hit?.kind === "unit") {
+        const enemyTeam: Team = team === "you" ? "foe" : "you";
+        const unit = this.state.units.find((u) => u.id === Number(hit.id) && u.team === enemyTeam && u.hp > 0);
+        if (unit) {
+          this.orderSink({ t: "attack", ids, targetId: unit.id });
+          return;
+        }
+      }
+      this.orderSink({ t: patrol ? "patrol" : "move", ids, x: world.x, y: world.y });
       return;
     }
+    if (selected.length === 0) {
+      const barracks = this.state.buildings.find(
+        (b) => b.id === this.state.selectedBuildingId && b.team === team && b.kind === "barracks",
+      );
+      if (barracks) this.setRally(team, barracks.id, world);
+      return;
+    }
+    this.commandIds(
+      team,
+      selected.map((v) => v.id),
+      world,
+      hit,
+      patrol,
+    );
+  }
+
+  private commandIds(
+    team: Team,
+    ids: number[],
+    world: { x: number; y: number },
+    hit: RectHit | null,
+    patrol: boolean,
+  ) {
+    const selected = this.peonsById(team, ids);
+    if (selected.length === 0) return;
+    const enemyTeam: Team = team === "you" ? "foe" : "you";
 
     if (hit?.kind === "node") {
       const node = this.state.nodes.find((n) => n.id === hit.id);
@@ -457,7 +619,7 @@ export class GameSim {
     }
 
     if (hit?.kind === "unit") {
-      const enemy = this.state.units.find((u) => u.id === Number(hit.id) && u.team === "foe");
+      const enemy = this.state.units.find((u) => u.id === Number(hit.id) && u.team === enemyTeam && u.hp > 0);
       if (enemy) {
         for (const v of selected) {
           this.releasePeonTask(v);
@@ -494,10 +656,26 @@ export class GameSim {
     });
   }
 
+  private setRally(team: Team, buildingId: number, world: { x: number; y: number }) {
+    const barracks = this.state.buildings.find(
+      (b) => b.id === buildingId && b.team === team && b.kind === "barracks",
+    );
+    if (!barracks) return;
+    barracks.rallyPoint = { ...world };
+    this.state.commandMarkers.push({ id: this.next(), kind: "rally", pos: { ...world }, life: 1.4 });
+    this.tell(team, "Barracks rally point set.");
+  }
+
   stopSelectedVillagers() {
+    if (this.redirect({ t: "stop", ids: [...this.state.selectedVillagerIds] })) return;
+    this.stopIds(this.localTeam, this.state.selectedVillagerIds);
+  }
+
+  private stopIds(team: Team, ids: number[]) {
+    const want = new Set(ids);
     let held = 0;
     for (const v of this.state.villagers) {
-      if (v.team !== "you" || !this.state.selectedVillagerIds.includes(v.id)) continue;
+      if (v.team !== team || !want.has(v.id) || v.hp <= 0) continue;
       const guard = { ...v.pos };
       this.releasePeonTask(v);
       v.state = "defend";
@@ -505,18 +683,37 @@ export class GameSim {
       v.forcedAttack = false;
       held += 1;
     }
-    if (held > 0) this.addToast("Selected peons stopped.");
+    if (held > 0) this.tell(team, "Selected peons stopped.");
   }
 
   /** Direct barricade placement (touch radial menu) — no build-mode round trip. */
   placeBarricadeAt(world: { x: number; y: number }) {
     if (this.state.phase !== "running") return;
-    this.tryPlaceBarricade(world);
+    if (this.orderSink && !this.applyingRemote) {
+      const builder = this.nearestBuilder(this.localTeam, world);
+      this.orderSink({ t: "barricade", x: world.x, y: world.y, builderId: builder?.id });
+      return;
+    }
+    this.tryPlaceBarricade(world, this.localTeam);
   }
 
-  private tryPlaceBarricade(world: { x: number; y: number }) {
+  private nearestBuilder(team: Team, world: { x: number; y: number }) {
+    return this.state.villagers
+      .filter(
+        (v) =>
+          v.team === team &&
+          v.hp > 0 &&
+          v.state !== "garrisoned" &&
+          v.state !== "toGarrison" &&
+          v.state !== "toBarricade" &&
+          v.state !== "buildingBarricade",
+      )
+      .sort((a, b) => dist(a.pos, world) - dist(b.pos, world))[0];
+  }
+
+  private tryPlaceBarricade(world: { x: number; y: number }, team: Team, builderId?: number) {
     if (world.y < FOE_SIEGE_Y || world.y > YOU_SIEGE_Y) {
-      this.addToast("Barricades must be placed on the road between the keeps.");
+      this.tell(team, "Barricades must be placed on the road between the keeps.");
       return;
     }
     const roads = ([0, 1] as const).map((lane) => ({
@@ -529,41 +726,43 @@ export class GameSim {
     roads.sort((a, b) => Math.abs(a.x - world.x) - Math.abs(b.x - world.x));
     const road = roads[0];
     if (Math.abs(road.x - world.x) > 30) {
-      this.addToast("Place the barricade directly across a road.");
+      this.tell(team, "Place the barricade directly across a road.");
       return;
     }
     const pos = { x: road.x, y: world.y };
     if (this.state.barricades.some((b) => b.lane === road.lane && Math.abs(b.pos.y - pos.y) < 45)) {
-      this.addToast("Too close to another barricade.");
+      this.tell(team, "Too close to another barricade.");
       return;
     }
     const cost = BUILD_COST.barricade;
-    if (!this.canAfford("you", cost)) {
-      this.addToast(`Need ${cost.gold}g ${cost.wood}w for a barricade.`);
+    if (!this.canAfford(team, cost)) {
+      this.tell(team, `Need ${cost.gold}g ${cost.wood}w for a barricade.`);
       return;
     }
-    const builder = this.state.villagers
-      .filter(
-        (v) =>
-          v.team === "you" &&
-          v.state !== "garrisoned" &&
-          v.state !== "toGarrison" &&
-          v.state !== "toBarricade" &&
-          v.state !== "buildingBarricade",
-      )
-      .sort((a, b) => dist(a.pos, pos) - dist(b.pos, pos))[0];
+    const pool = this.state.villagers.filter(
+      (v) =>
+        v.team === team &&
+        v.hp > 0 &&
+        v.state !== "garrisoned" &&
+        v.state !== "toGarrison" &&
+        v.state !== "toBarricade" &&
+        v.state !== "buildingBarricade",
+    );
+    const builder =
+      (builderId != null ? pool.find((v) => v.id === builderId) : undefined) ??
+      [...pool].sort((a, b) => dist(a.pos, pos) - dist(b.pos, pos))[0];
     if (!builder) {
-      this.addToast("No peon is available to build.");
+      this.tell(team, "No peon is available to build.");
       return;
     }
     if (builder.targetNodeId) {
       const node = this.state.nodes.find((n) => n.id === builder.targetNodeId);
       if (node) node.workers = Math.max(0, node.workers - 1);
     }
-    this.spendRes("you", cost);
+    this.spendRes(team, cost);
     const barricade = {
       id: this.next(),
-      team: "you" as Team,
+      team,
       lane: road.lane,
       pos,
       hp: 6,
@@ -578,8 +777,8 @@ export class GameSim {
     builder.targetEnemyId = undefined;
     builder.targetBarricadeId = barricade.id;
     builder.state = "toBarricade";
-    this.state.buildSelection = null;
-    this.addToast("Peon dispatched to construct the barricade.");
+    if (team === this.localTeam) this.state.buildSelection = null;
+    this.tell(team, "Peon dispatched to construct the barricade.");
   }
 
   peonCap(team: Team) {
@@ -603,39 +802,41 @@ export class GameSim {
   }
 
   enqueuePeon(team: Team = "you") {
+    if (team === this.localTeam && this.redirect({ t: "peon" })) return true;
     const s = this.state;
     const keep = s.keeps[team];
     if (keep.peonQueue.length >= MAX_PEON_QUEUE) {
-      if (team === "you") this.addToast("Peon queue full.");
+      this.tell(team, "Peon queue full.");
       return false;
     }
     if (this.peonSlotsUsed(team) >= this.peonCap(team)) {
-      if (team === "you") this.addToast(`Pop cap ${this.peonCap(team)} — build a House.`);
+      this.tell(team, `Pop cap ${this.peonCap(team)} — build a House.`);
       return false;
     }
     const cost: ResCost = { gold: PEON_TRAIN_GOLD, wood: PEON_TRAIN_WOOD };
     if (!this.canAfford(team, cost)) {
-      if (team === "you") this.addToast(`Need ${cost.gold}g to train a peon.`);
+      this.tell(team, `Need ${cost.gold}g to train a peon.`);
       return false;
     }
     this.spendRes(team, cost);
     keep.peonQueue.push({ timeLeft: PEON_TRAIN_TIME, totalTime: PEON_TRAIN_TIME });
-    if (team === "you") this.addToast("Peon queued at the keep.");
+    this.tell(team, "Peon queued at the keep.");
     return true;
   }
 
   callHomeSelected() {
-    if (this.state.selectedKeepTeam === "you") this.callVillagersHome("you");
+    if (this.state.selectedKeepTeam === this.localTeam) this.callVillagersHome(this.localTeam);
   }
 
   garrisonVillagers(team: Team) {
+    if (team === this.localTeam && this.redirect({ t: "garrison" })) return;
     const keep = this.teamKeep(team);
     const occupied = this.state.villagers.filter(
       (v) => v.team === team && (v.state === "garrisoned" || v.state === "toGarrison"),
     ).length;
     const open = Math.max(0, KEEP_GARRISON_MAX - occupied);
     if (open === 0) {
-      if (team === "you") this.addToast("Keep garrison is full.");
+      this.tell(team, "Keep garrison is full.");
       return;
     }
     const chosen = this.state.villagers
@@ -658,12 +859,14 @@ export class GameSim {
       v.targetEnemyId = undefined;
       v.state = "toGarrison";
     }
-    if (team === "you") {
-      this.addToast(chosen.length > 0 ? `${chosen.length} peon(s) ordered into the keep.` : "No peons available.");
-    }
+    this.tell(
+      team,
+      chosen.length > 0 ? `${chosen.length} peon(s) ordered into the keep.` : "No peons available.",
+    );
   }
 
   ungarrisonVillagers(team: Team) {
+    if (team === this.localTeam && this.redirect({ t: "ungarrison" })) return;
     const keep = this.teamKeep(team);
     const inside = this.state.villagers.filter((v) => v.team === team && v.state === "garrisoned");
     inside.forEach((v, i) => {
@@ -680,7 +883,7 @@ export class GameSim {
       v.patrolB = undefined;
       v.patrolToB = undefined;
     });
-    if (team === "you" && inside.length > 0) this.addToast(`${inside.length} peon(s) ungarrisoned.`);
+    if (inside.length > 0) this.tell(team, `${inside.length} peon(s) ungarrisoned.`);
   }
 
   private tickPeonQueues(dt: number) {
@@ -693,7 +896,7 @@ export class GameSim {
       keep.peonQueue.shift();
       if (this.state.villagers.filter((v) => v.team === team).length >= this.peonCap(team)) continue;
       const idx = this.state.villagers.filter((v) => v.team === team).length;
-      const scale = combatWaveScale(team, this.state.waveIndex);
+      const scale = this.combatScale(team);
       this.state.villagers.push({
         id: this.next(),
         team,
@@ -708,7 +911,7 @@ export class GameSim {
         carryingWood: 0,
         attackTimer: 0,
       });
-      if (team === "you") this.addToast("Peon ready.");
+      this.tell(team, "Peon ready.");
     }
   }
 
@@ -746,8 +949,8 @@ export class GameSim {
 
   private spawnUnit(team: Team, kind: UnitKind, lane: 0 | 1, fromBarracks: boolean, barracks?: Building) {
     const def = UNIT_DEFS[kind];
-    // Wave scalar first, then the barracks upgrade on top. Humans pass scale 1.
-    const scale = combatWaveScale(team, this.state.waveIndex);
+    // Wave scalar first, then the barracks upgrade on top. Humans and PvP stay at 1×.
+    const scale = this.combatScale(team);
     let hp = def.hp * scale;
     let damage = def.damage * scale;
     let cooldown = def.cooldown;
@@ -756,7 +959,7 @@ export class GameSim {
       damage *= DAMAGE_MULT[barracks.damageRank];
       cooldown *= RATE_MULT[barracks.rateRank];
     }
-    const aiHeldForRush = team === "foe" && fromBarracks;
+    const aiHeldForRush = this.matchMode === "ai" && team === "foe" && fromBarracks;
     const stagingY = 138 + lane * 8;
     const u: Unit = {
       id: this.next(),
@@ -797,6 +1000,7 @@ export class GameSim {
    * kept, so a wounded unit is not healed. Buildings and keeps are left alone.
    */
   private retuneLivingAiCombat(prevWave: number, nextWave: number) {
+    if (this.matchMode === "pvp") return;
     const from = aiWaveStrength(prevWave);
     const to = aiWaveStrength(nextWave);
     if (from === to) return;
@@ -842,6 +1046,7 @@ export class GameSim {
   }
 
   rushNextWave() {
+    if (this.redirect({ t: "rush" })) return;
     const s = this.state;
     if (s.phase !== "running" || s.wavePhase !== "build") return;
     if (s.waveIndex >= WAVES.length) return;
@@ -907,7 +1112,7 @@ export class GameSim {
     const node = this.state.nodes.find((n) => n.id === nodeId);
     if (!node) return;
     if (node.loadsLeft <= 0) {
-      if (team === "you") this.addToast("Still recovering — wait for regrowth.");
+      this.tell(team, "Still recovering — wait for regrowth.");
       return;
     }
     const teamVillagers = this.state.villagers.filter(
@@ -936,13 +1141,14 @@ export class GameSim {
     node.workers += 1;
     chosen.targetNodeId = node.id;
     chosen.state = "toNode";
-    if (team === "you") {
+    if (team === this.localTeam) {
       this.state.firstVillagerAssigned = true;
-      if (node.team !== team) this.addToast(`Eco raid: peon sent to enemy ${node.kind === "pine" ? "wood" : "gold"}!`);
+      if (node.team !== team) this.tell(team, `Eco raid: peon sent to enemy ${node.kind === "pine" ? "wood" : "gold"}!`);
     }
   }
 
   callVillagersHome(team: Team) {
+    if (team === this.localTeam && this.redirect({ t: "recall" })) return;
     for (const v of this.state.villagers.filter((a) => a.team === team)) {
       if (v.state === "garrisoned") continue;
       if (v.targetBarricadeId) {
@@ -970,44 +1176,52 @@ export class GameSim {
       v.state = v.carryingGold > 0 || v.carryingWood > 0 ? "toKeep" : "home";
       v.timer = 0;
     }
-    if (team === "you") this.addToast("🔔 Recall! All peons return to the keep.");
+    this.tell(team, "🔔 Recall! All peons return to the keep.");
   }
 
   private tryBuildOnPad(padId: string) {
-    const s = this.state;
-    const pad = s.pads.find((p) => p.id === padId);
-    if (!pad) return;
-    if (pad.team !== "you") {
-      this.addToast("Enemy ground. You cannot build there.");
-      return;
-    }
-    if (s.buildings.some((b) => b.padId === pad.id)) {
-      this.addToast("Pad occupied — tap the building to manage it.");
-      return;
-    }
-    if (!s.buildSelection) {
+    const kind = this.state.buildSelection;
+    if (!kind) {
       this.addToast("Choose a building below, then tap an empty pad.");
       return;
     }
-    const kind = s.buildSelection;
+    if (this.orderSink && !this.applyingRemote) {
+      this.orderSink({ t: "build", kind, padId });
+      return;
+    }
+    this.buildFor(this.localTeam, kind, padId);
+  }
+
+  private buildFor(team: Team, kind: BuildingKind, padId: string) {
+    const s = this.state;
+    const pad = s.pads.find((p) => p.id === padId);
+    if (!pad) return;
+    if (pad.team !== team) {
+      this.tell(team, "Enemy ground. You cannot build there.");
+      return;
+    }
+    if (s.buildings.some((b) => b.padId === pad.id)) {
+      this.tell(team, "Pad occupied — tap the building to manage it.");
+      return;
+    }
     if (pad.zone === "eco" && kind !== "house") {
-      this.addToast("Eco pads behind the keep are for Houses only.");
+      this.tell(team, "Eco pads behind the keep are for Houses only.");
       return;
     }
     if (pad.zone === "combat" && kind === "house") {
-      this.addToast("Houses go on eco pads behind your keep.");
+      this.tell(team, "Houses go on eco pads behind your keep.");
       return;
     }
     const cost = BUILD_COST[kind];
-    if (!this.canAfford("you", cost)) {
-      this.addToast(`Need ${cost.gold}g ${cost.wood}w for ${buildingName(kind)}.`);
+    if (!this.canAfford(team, cost)) {
+      this.tell(team, `Need ${cost.gold}g ${cost.wood}w for ${buildingName(kind)}.`);
       return;
     }
-    this.spendRes("you", cost);
+    this.spendRes(team, cost);
     const id = this.next();
     s.buildings.push({
       id,
-      team: "you",
+      team,
       kind,
       padId: pad.id,
       pos: { ...pad.pos },
@@ -1021,88 +1235,130 @@ export class GameSim {
       animKick: 0,
       queue: [],
     });
-    s.buildSelection = null;
-    s.selectedBuildingId = id;
-    this.addToast(`${buildingName(kind)} raised.`);
+    if (team === this.localTeam) {
+      s.buildSelection = null;
+      s.selectedBuildingId = id;
+    }
+    this.tell(team, `${buildingName(kind)} raised.`);
   }
 
   buyUpgrade(kind: "damage" | "rate") {
+    const id = this.state.selectedBuildingId;
+    if (id == null) return;
+    if (this.redirect({ t: "upgrade", buildingId: id, kind })) return;
+    this.upgradeBuilding(this.localTeam, id, kind);
+  }
+
+  private upgradeBuilding(team: Team, buildingId: number, kind: "damage" | "rate") {
     const s = this.state;
-    const b = s.buildings.find((x) => x.id === s.selectedBuildingId);
-    if (!b || b.team !== "you") return;
+    const b = s.buildings.find((x) => x.id === buildingId && x.team === team);
+    if (!b || b.kind === "house") return;
     const rank = kind === "damage" ? b.damageRank : b.rateRank;
     if (rank >= 2) return;
     const cost = UPGRADE_COST[rank];
-    if (s.gold.you < cost) {
-      this.addToast(`Need ${cost} gold.`);
+    if (s.gold[team] < cost) {
+      this.tell(team, `Need ${cost} gold.`);
       return;
     }
-    s.gold.you -= cost;
+    s.gold[team] -= cost;
     b.spent += cost;
     if (kind === "damage") b.damageRank = (rank + 1) as 1 | 2;
     else b.rateRank = (rank + 1) as 1 | 2;
-    this.addToast(`${kind} rank ${rank + 2} bought.`);
+    this.tell(team, `${kind} rank ${rank + 2} bought.`);
   }
 
   razeSelected() {
+    const id = this.state.selectedBuildingId;
+    if (id == null) return;
+    if (this.redirect({ t: "raze", buildingId: id })) return;
+    this.razeBuilding(this.localTeam, id);
+  }
+
+  private razeBuilding(team: Team, buildingId: number) {
     const s = this.state;
-    const b = s.buildings.find((x) => x.id === s.selectedBuildingId);
-    if (!b || b.team !== "you") return;
+    const b = s.buildings.find((x) => x.id === buildingId && x.team === team);
+    if (!b) return;
     const refundG = b.canRefund ? Math.floor(b.spent * 0.5) : 0;
     const refundW = b.canRefund ? Math.floor(b.spentWood * 0.5) : 0;
-    s.gold.you += refundG;
-    s.wood.you += refundW;
+    s.gold[team] += refundG;
+    s.wood[team] += refundW;
     s.buildings = s.buildings.filter((x) => x.id !== b.id);
-    s.selectedBuildingId = null;
-    if (refundG > 0 || refundW > 0) this.addToast(`Razed for +${refundG}g +${refundW}w.`);
-    else this.addToast("Razed. The first tower returns no resources.");
+    if (s.selectedBuildingId === b.id) s.selectedBuildingId = null;
+    if (refundG > 0 || refundW > 0) this.tell(team, `Razed for +${refundG}g +${refundW}w.`);
+    else this.tell(team, "Razed. The first tower returns no resources.");
   }
 
   enqueueTrain(kind: TrainKind, team: Team = "you") {
+    if (team === this.localTeam) {
+      const id = this.state.selectedBuildingId;
+      if (this.orderSink && !this.applyingRemote) {
+        if (id == null) {
+          this.addToast("Select a barracks first.");
+          return false;
+        }
+        this.orderSink({ t: "train", kind, buildingId: id });
+        return true;
+      }
+      if (id == null) {
+        this.tell(team, "Select a barracks first.");
+        return false;
+      }
+      return this.enqueueTrainAt(team, kind, id);
+    }
+    const barracks = this.state.buildings
+      .filter((x) => x.kind === "barracks" && x.team === "foe")
+      .sort((a, c) => a.queue.length - c.queue.length)[0];
+    if (!barracks) return false;
+    return this.enqueueTrainAt("foe", kind, barracks.id);
+  }
+
+  private enqueueTrainAt(team: Team, kind: TrainKind, buildingId: number) {
     const s = this.state;
-    const b =
-      team === "you"
-        ? s.buildings.find((x) => x.id === s.selectedBuildingId && x.kind === "barracks" && x.team === "you")
-        : s.buildings
-            .filter((x) => x.kind === "barracks" && x.team === "foe")
-            .sort((a, c) => a.queue.length - c.queue.length)[0];
+    const b = s.buildings.find((x) => x.id === buildingId && x.kind === "barracks" && x.team === team);
     if (!b) {
-      if (team === "you") this.addToast("Select a barracks first.");
+      this.tell(team, "Select a barracks first.");
       return false;
     }
     if (b.queue.length >= MAX_TRAIN_QUEUE) {
-      if (team === "you") this.addToast("Training queue is full.");
+      this.tell(team, "Training queue is full.");
       return false;
     }
-    if (team === "you" && !unitUnlocked(kind, s.keepLevel)) {
-      this.addToast(unlockHint(kind));
+    if ((this.matchMode === "pvp" || team === this.localTeam) && !unitUnlocked(kind, s.keepLevel)) {
+      this.tell(team, unlockHint(kind));
       return false;
     }
     const def = UNIT_DEFS[kind];
     const cost: ResCost = { gold: def.cost ?? 30, wood: def.woodCost ?? 0 };
     if (!this.canAfford(team, cost)) {
-      if (team === "you") this.addToast(`Need ${cost.gold}g ${cost.wood}w.`);
+      this.tell(team, `Need ${cost.gold}g ${cost.wood}w.`);
       return false;
     }
     this.spendRes(team, cost);
     const trainTime = (def.trainTime ?? 4) * RATE_MULT[b.rateRank];
     b.queue.push({ kind, timeLeft: trainTime, totalTime: trainTime });
-    if (team === "you") this.addToast(`${def.label} queued.`);
+    this.tell(team, `${def.label} queued.`);
     return true;
   }
 
   cancelQueueSlot(index: number) {
+    const id = this.state.selectedBuildingId;
+    if (id == null) return;
+    if (this.redirect({ t: "cancel", buildingId: id, index })) return;
+    this.cancelTrainAt(this.localTeam, id, index);
+  }
+
+  private cancelTrainAt(team: Team, buildingId: number, index: number) {
     const s = this.state;
-    const b = s.buildings.find((x) => x.id === s.selectedBuildingId && x.kind === "barracks" && x.team === "you");
+    const b = s.buildings.find((x) => x.id === buildingId && x.kind === "barracks" && x.team === team);
     if (!b || index < 0 || index >= b.queue.length) return;
     const job = b.queue[index];
     const def = UNIT_DEFS[job.kind];
     const refundG = Math.floor((def.cost ?? 0) * 0.5);
     const refundW = Math.floor((def.woodCost ?? 0) * 0.5);
-    s.gold.you += refundG;
-    s.wood.you += refundW;
+    s.gold[team] += refundG;
+    s.wood[team] += refundW;
     b.queue.splice(index, 1);
-    this.addToast(`Cancelled (+${refundG}g +${refundW}w).`);
+    this.tell(team, `Cancelled (+${refundG}g +${refundW}w).`);
   }
 
   private buildingDamage(b: Building) {
@@ -1917,7 +2173,7 @@ export class GameSim {
           node.loadsLeft -= 1;
           const brain = foeBrainStats();
           const mult =
-            team === "you"
+            team === "you" || this.matchMode === "pvp"
               ? gMult
               : gMult * (1 + Math.min(0.24, brain.games * 0.012));
           v.carryingGold = Math.round(node.goldPerLoad * mult);
@@ -1964,6 +2220,7 @@ export class GameSim {
     s.phase = "ended";
     s.endReason = reason;
     s.won = won;
+    if (this.matchMode === "pvp") return;
     notifyAiMatchEnd(won);
     if (won !== null) {
       const { gain, leveledUp } = awardMatchXp({
@@ -1980,9 +2237,8 @@ export class GameSim {
     }
   }
 
-  update(rawDt: number) {
+  private decayFx(dt: number) {
     const s = this.state;
-    const dt = Math.min(0.05, rawDt) * s.speed;
     s.toasts.forEach((t) => (t.life -= dt));
     s.toasts = s.toasts.filter((t) => t.life > 0);
     for (const f of s.floatingTexts) {
@@ -2001,6 +2257,13 @@ export class GameSim {
       k.attackFlash = Math.max(0, k.attackFlash - dt);
     }
     for (const b of s.buildings) b.animKick = Math.max(0, b.animKick - dt);
+  }
+
+  update(rawDt: number) {
+    const s = this.state;
+    const dt = Math.min(0.05, rawDt) * s.speed;
+    if (this.linkDown) s.paused = true;
+    this.decayFx(dt);
 
     if (s.phase !== "running" || s.paused) return;
 
@@ -2033,15 +2296,17 @@ export class GameSim {
       }
     }
 
-    this.manageFoePeonDefense();
+    if (this.matchMode === "ai") this.manageFoePeonDefense();
     this.updateVillagers(dt, "you");
     this.updateVillagers(dt, "foe");
 
-    this.aiTimer -= dt;
-    if (this.aiTimer <= 0) {
-      runAiTurn(this, AI_RESERVE);
-      const iq = foeBrainStats().intellect;
-      this.aiTimer = Math.max(0.72, 1.85 - iq * 0.0115);
+    if (this.matchMode === "ai") {
+      this.aiTimer -= dt;
+      if (this.aiTimer <= 0) {
+        runAiTurn(this, AI_RESERVE);
+        const iq = foeBrainStats().intellect;
+        this.aiTimer = Math.max(0.72, 1.85 - iq * 0.0115);
+      }
     }
 
     this.doTowerCombat(dt, "you");
@@ -2055,7 +2320,7 @@ export class GameSim {
     this.updateUnitMovementAndMelee(dt, "foe");
     this.cleanupDeaths();
     this.cleanupDeadPeons();
-    const livingPeons = new Set(s.villagers.filter((v) => v.team === "you").map((v) => v.id));
+    const livingPeons = new Set(s.villagers.filter((v) => v.team === this.localTeam && v.hp > 0).map((v) => v.id));
     s.selectedVillagerIds = s.selectedVillagerIds.filter((id) => livingPeons.has(id));
 
     if (s.keeps.you.hp <= 0 && s.keeps.foe.hp <= 0) {
@@ -2440,12 +2705,343 @@ export class GameSim {
     return false;
   }
 
+  applyRemoteOrder(order: RemoteOrder) {
+    if (this.matchMode !== "pvp" || this.state.phase !== "running") return;
+    this.applyingRemote = true;
+    try {
+      switch (order.t) {
+        case "move":
+          this.commandIds("foe", order.ids, { x: order.x, y: order.y }, null, false);
+          break;
+        case "patrol":
+          this.commandIds("foe", order.ids, { x: order.x, y: order.y }, null, true);
+          break;
+        case "stop":
+          this.stopIds("foe", order.ids);
+          break;
+        case "attack":
+          this.commandIds("foe", order.ids, { x: 0, y: 0 }, { kind: "unit", id: String(order.targetId) }, false);
+          break;
+        case "gather":
+          this.commandIds("foe", order.ids, { x: 0, y: 0 }, { kind: "node", id: order.nodeId }, false);
+          break;
+        case "recall":
+          this.callVillagersHome("foe");
+          break;
+        case "build":
+          this.buildFor("foe", order.kind, order.padId);
+          break;
+        case "train":
+          this.enqueueTrainAt("foe", order.kind, order.buildingId);
+          break;
+        case "peon":
+          this.enqueuePeon("foe");
+          break;
+        case "garrison":
+          this.garrisonVillagers("foe");
+          break;
+        case "ungarrison":
+          this.ungarrisonVillagers("foe");
+          break;
+        case "rally":
+          this.setRally("foe", order.buildingId, { x: order.x, y: order.y });
+          break;
+        case "barricade":
+          this.tryPlaceBarricade({ x: order.x, y: order.y }, "foe", order.builderId);
+          break;
+        case "upgrade":
+          this.upgradeBuilding("foe", order.buildingId, order.kind);
+          break;
+        case "raze":
+          this.razeBuilding("foe", order.buildingId);
+          break;
+        case "cancel":
+          this.cancelTrainAt("foe", order.buildingId, order.index);
+          break;
+        case "pause":
+          this.togglePause();
+          break;
+        case "speed":
+          this.toggleSpeed();
+          break;
+        case "rush":
+          this.rushNextWave();
+          break;
+      }
+    } finally {
+      this.applyingRemote = false;
+    }
+  }
+
+  exportSnapshot(): MatchSnapshot {
+    const s = this.state;
+    const map = this.activeMap;
+    const keep = (team: Team) => ({
+      hp: s.keeps[team].hp,
+      maxHp: s.keeps[team].maxHp,
+      hitFlash: s.keeps[team].hitFlash,
+      attackFlash: s.keeps[team].attackFlash,
+      queue: s.keeps[team].peonQueue.map((job) => ({ timeLeft: job.timeLeft, totalTime: job.totalTime })),
+    });
+    return {
+      mapId: s.mapId,
+      mapName: map.name,
+      mapTagline: map.tagline,
+      mapSeed: map.seed,
+      time: s.time,
+      phase: s.phase,
+      paused: s.paused,
+      speed: s.speed,
+      waveIndex: s.waveIndex,
+      wavePhase: s.wavePhase,
+      buildTimer: s.buildTimer,
+      allWavesLaunched: s.allWavesLaunched,
+      wavesCleared: s.wavesCleared,
+      won: s.won,
+      endReason: s.endReason,
+      keepLevel: s.keepLevel,
+      gold: { you: s.gold.you, foe: s.gold.foe },
+      wood: { you: s.wood.you, foe: s.wood.foe },
+      slain: { you: s.stats.you.slain, foe: s.stats.foe.slain },
+      goldEarned: { you: s.stats.you.goldEarned, foe: s.stats.foe.goldEarned },
+      keeps: { you: keep("you"), foe: keep("foe") },
+      units: s.units.map((u) => ({
+        id: u.id,
+        team: u.team,
+        kind: u.kind,
+        lane: u.lane,
+        x: u.pos.x,
+        y: u.pos.y,
+        hp: u.hp,
+        maxHp: u.maxHp,
+        fromBarracks: u.fromBarracks,
+        attackTimer: u.attackTimer,
+        rallyX: u.rallyPoint?.x,
+        rallyY: u.rallyPoint?.y,
+      })),
+      villagers: s.villagers.map((v) => ({
+        id: v.id,
+        team: v.team,
+        x: v.pos.x,
+        y: v.pos.y,
+        hp: v.hp,
+        maxHp: v.maxHp,
+        state: v.state,
+        nodeId: v.targetNodeId,
+        enemyId: v.targetEnemyId,
+        barricadeId: v.targetBarricadeId,
+        mx: v.moveTarget?.x,
+        my: v.moveTarget?.y,
+        ax: v.patrolA?.x,
+        ay: v.patrolA?.y,
+        bx: v.patrolB?.x,
+        by: v.patrolB?.y,
+        toB: v.patrolToB,
+        forced: v.forcedAttack,
+        attackTimer: v.attackTimer,
+      })),
+      buildings: s.buildings.map((b) => ({
+        id: b.id,
+        team: b.team,
+        kind: b.kind,
+        padId: b.padId,
+        x: b.pos.x,
+        y: b.pos.y,
+        spent: b.spent,
+        spentWood: b.spentWood,
+        canRefund: b.canRefund,
+        damageRank: b.damageRank,
+        rateRank: b.rateRank,
+        animKick: b.animKick,
+        queue: b.queue.map((job) => ({ kind: job.kind, timeLeft: job.timeLeft, totalTime: job.totalTime })),
+        rallyX: b.rallyPoint?.x,
+        rallyY: b.rallyPoint?.y,
+      })),
+      nodes: s.nodes.map((n) => ({ id: n.id, loadsLeft: n.loadsLeft, workers: n.workers })),
+      barricades: s.barricades.map((b) => ({
+        id: b.id,
+        team: b.team,
+        lane: b.lane,
+        x: b.pos.x,
+        y: b.pos.y,
+        hp: b.hp,
+        maxHp: b.maxHp,
+        buildProgress: b.buildProgress,
+        buildTime: b.buildTime,
+        built: b.built,
+        builderId: b.builderId,
+      })),
+      pads: s.pads.map((p) => ({
+        id: p.id,
+        team: p.team,
+        x: p.pos.x,
+        y: p.pos.y,
+        laneCoverage: p.laneCoverage,
+        zone: p.zone,
+      })),
+    };
+  }
+
+  applySnapshot(snap: MatchSnapshot) {
+    const s = this.state;
+    const selectedVillagerIds = s.selectedVillagerIds;
+    const selectedBuildingId = s.selectedBuildingId;
+    const selectedKeepTeam = s.selectedKeepTeam;
+    const buildSelection = s.buildSelection;
+    const commandTeam = s.commandTeam;
+    const soundOn = s.soundOn;
+    const audioUnlocked = s.audioUnlocked;
+    const hoveredPadId = s.hoveredPadId;
+    const point = (x?: number, y?: number) => (x == null || y == null ? undefined : { x, y });
+
+    this.shownMap = {
+      id: snap.mapId,
+      name: snap.mapName,
+      tagline: snap.mapTagline,
+      seed: snap.mapSeed,
+    };
+    s.mapId = snap.mapId;
+    s.time = snap.time;
+    s.phase = snap.phase;
+    s.paused = this.linkDown ? true : snap.paused;
+    s.speed = snap.speed;
+    s.waveIndex = snap.waveIndex;
+    s.wavePhase = snap.wavePhase;
+    s.buildTimer = snap.buildTimer;
+    s.allWavesLaunched = snap.allWavesLaunched;
+    s.wavesCleared = snap.wavesCleared;
+    s.won = snap.won;
+    s.endReason = snap.endReason;
+    s.keepLevel = snap.keepLevel;
+    s.gold.you = snap.gold.you;
+    s.gold.foe = snap.gold.foe;
+    s.wood.you = snap.wood.you;
+    s.wood.foe = snap.wood.foe;
+    s.stats.you.slain = snap.slain.you;
+    s.stats.foe.slain = snap.slain.foe;
+    s.stats.you.goldEarned = snap.goldEarned.you;
+    s.stats.foe.goldEarned = snap.goldEarned.foe;
+    for (const team of ["you", "foe"] as const) {
+      const keep = snap.keeps[team];
+      s.keeps[team].hp = keep.hp;
+      s.keeps[team].maxHp = keep.maxHp;
+      s.keeps[team].hitFlash = keep.hitFlash;
+      s.keeps[team].attackFlash = keep.attackFlash;
+      s.keeps[team].peonQueue = keep.queue.map((job) => ({ timeLeft: job.timeLeft, totalTime: job.totalTime }));
+    }
+    if (snap.keeps[this.localTeam].hitFlash > 0) s.redFlash = Math.max(s.redFlash, 0.18);
+
+    s.units = snap.units.map((u) => {
+      const def = UNIT_DEFS[u.kind];
+      return {
+        id: u.id,
+        team: u.team,
+        kind: u.kind,
+        lane: u.lane,
+        pos: { x: u.x, y: u.y },
+        hp: u.hp,
+        maxHp: u.maxHp,
+        speed: def.speed,
+        damage: def.damage,
+        bounty: def.bounty,
+        attackCooldown: def.cooldown,
+        attackTimer: u.attackTimer,
+        towerResist: def.towerResist,
+        keepMult: def.keepMult,
+        siegeGap: def.siegeGap,
+        targetKeep: false,
+        fromBarracks: u.fromBarracks,
+        ignoreEnemyCreeps: !u.fromBarracks,
+        rallyPoint: point(u.rallyX, u.rallyY),
+      };
+    });
+    s.villagers = snap.villagers.map((v) => ({
+      id: v.id,
+      team: v.team,
+      pos: { x: v.x, y: v.y },
+      speed: VILLAGER_SPEED,
+      hp: v.hp,
+      maxHp: v.maxHp,
+      damage: PEON_DAMAGE,
+      state: v.state,
+      targetNodeId: v.nodeId,
+      targetEnemyId: v.enemyId,
+      targetBarricadeId: v.barricadeId,
+      moveTarget: point(v.mx, v.my),
+      patrolA: point(v.ax, v.ay),
+      patrolB: point(v.bx, v.by),
+      patrolToB: v.toB,
+      forcedAttack: v.forced,
+      timer: 0,
+      carryingGold: 0,
+      carryingWood: 0,
+      attackTimer: v.attackTimer,
+    }));
+    s.buildings = snap.buildings.map((b) => ({
+      id: b.id,
+      team: b.team,
+      kind: b.kind,
+      padId: b.padId,
+      pos: { x: b.x, y: b.y },
+      spent: b.spent,
+      spentWood: b.spentWood,
+      canRefund: b.canRefund,
+      damageRank: b.damageRank,
+      rateRank: b.rateRank,
+      attackTimer: 0,
+      trainTimer: 0,
+      animKick: b.animKick,
+      queue: b.queue.map((job) => ({ kind: job.kind, timeLeft: job.timeLeft, totalTime: job.totalTime })),
+      rallyPoint: point(b.rallyX, b.rallyY),
+    }));
+    s.barricades = snap.barricades.map((b) => ({
+      id: b.id,
+      team: b.team,
+      lane: b.lane,
+      pos: { x: b.x, y: b.y },
+      hp: b.hp,
+      maxHp: b.maxHp,
+      buildProgress: b.buildProgress,
+      buildTime: b.buildTime,
+      built: b.built,
+      builderId: b.builderId,
+    }));
+    if (snap.pads.length > 0) {
+      s.pads = snap.pads.map((p) => ({
+        id: p.id,
+        team: p.team,
+        pos: { x: p.x, y: p.y },
+        laneCoverage: p.laneCoverage,
+        zone: p.zone,
+      }));
+    }
+    for (const node of snap.nodes) {
+      const live = s.nodes.find((n) => n.id === node.id);
+      if (!live) continue;
+      live.loadsLeft = node.loadsLeft;
+      live.workers = node.workers;
+    }
+
+    s.commandTeam = commandTeam;
+    s.soundOn = soundOn;
+    s.audioUnlocked = audioUnlocked;
+    s.hoveredPadId = hoveredPadId;
+    s.buildSelection = buildSelection;
+    s.selectedKeepTeam = selectedKeepTeam;
+    const living = new Set(s.villagers.filter((v) => v.team === this.localTeam && v.hp > 0).map((v) => v.id));
+    s.selectedVillagerIds = selectedVillagerIds.filter((id) => living.has(id));
+    s.selectedBuildingId = s.buildings.some((b) => b.id === selectedBuildingId) ? selectedBuildingId : null;
+  }
+
   getUiSnapshot(): UiSnapshot {
     const s = this.state;
     const meta = loadMeta();
     const map = this.activeMap;
+    const view = this.localTeam;
+    const other: Team = view === "you" ? "foe" : "you";
+    const mapView = this.shownMap && this.shownMap.id === s.mapId ? this.shownMap : map;
     const selected = s.buildings.find((b) => b.id === s.selectedBuildingId);
-    const selectedIsYours = !!selected && selected.team === "you";
+    const selectedIsYours = !!selected && selected.team === view;
     const dmgCost = selected && selected.damageRank < 2 ? UPGRADE_COST[selected.damageRank] : 0;
     const rateCost = selected && selected.rateRank < 2 ? UPGRADE_COST[selected.rateRank] : 0;
     const trainQueue =
@@ -2472,9 +3068,9 @@ export class GameSim {
           })
         : [];
 
-    const keepSelected = s.selectedKeepTeam === "you";
+    const keepSelected = s.selectedKeepTeam === view;
     const peonQueue = keepSelected
-      ? s.keeps.you.peonQueue.map((j) => ({
+      ? s.keeps[view].peonQueue.map((j) => ({
           kind: "levy" as TrainKind,
           label: "Peon",
           pct: 1 - j.timeLeft / Math.max(0.01, j.totalTime),
@@ -2483,24 +3079,36 @@ export class GameSim {
     const canUpgradeStructure = !!selected && selectedIsYours && selected.kind !== "house";
 
     const brain = foeBrainStats();
+    let endReason = s.endReason;
+    if (view === "foe" && s.phase === "ended") {
+      if (s.won === true) {
+        endReason = s.endReason.startsWith("Victory by stone")
+          ? "Defeat by stone. The foe held stronger."
+          : "Defeat. Your keep has fallen.";
+      } else if (s.won === false) {
+        endReason = s.endReason.startsWith("Defeat by stone")
+          ? "Victory by stone. Your keep held stronger."
+          : "Victory. Their keep is broken.";
+      }
+    }
     return {
       phase: s.phase,
       mapId: s.mapId,
-      mapName: map.name,
-      mapTagline: map.tagline,
-      mapSeed: map.seed,
+      mapName: mapView.name,
+      mapTagline: mapView.tagline,
+      mapSeed: mapView.seed,
       campaignLevel: meta.level,
       scoutSalt: meta.scoutSalt,
       paused: s.paused,
       speed: s.speed,
       soundOn: s.soundOn,
-      yourHp: Math.max(0, Math.ceil(s.keeps.you.hp)),
-      foeHp: Math.max(0, Math.ceil(s.keeps.foe.hp)),
-      yourMaxHp: s.keeps.you.maxHp,
-      yourGold: Math.floor(s.gold.you),
-      yourWood: Math.floor(s.wood.you),
-      foeGold: Math.floor(s.gold.foe),
-      foeWood: Math.floor(s.wood.foe),
+      yourHp: Math.max(0, Math.ceil(s.keeps[view].hp)),
+      foeHp: Math.max(0, Math.ceil(s.keeps[other].hp)),
+      yourMaxHp: s.keeps[view].maxHp,
+      yourGold: Math.floor(s.gold[view]),
+      yourWood: Math.floor(s.wood[view]),
+      foeGold: Math.floor(s.gold[other]),
+      foeWood: Math.floor(s.wood[other]),
       waveLabel: `${Math.min(WAVES.length, Math.max(1, s.waveIndex || 1))}/${WAVES.length}`,
       wavePhase: s.wavePhase,
       buildTimer: Math.max(0, s.buildTimer),
@@ -2525,31 +3133,33 @@ export class GameSim {
       trainQueue,
       trainOptions,
       peonQueue,
-      peonCount: s.villagers.filter((v) => v.team === "you").length,
-      peonCap: this.peonCap("you"),
-      keepGarrisoned: s.villagers.filter((v) => v.team === "you" && v.state === "garrisoned").length,
+      peonCount: s.villagers.filter((v) => v.team === view).length,
+      peonCap: this.peonCap(view),
+      keepGarrisoned: s.villagers.filter((v) => v.team === view && v.state === "garrisoned").length,
       keepGarrisonMax: KEEP_GARRISON_MAX,
-      canTrainPeon: keepSelected && this.peonSlotsUsed("you") < this.peonCap("you"),
+      canTrainPeon: keepSelected && this.peonSlotsUsed(view) < this.peonCap(view),
       peonTrainCost: { gold: PEON_TRAIN_GOLD, wood: PEON_TRAIN_WOOD },
       buildCosts: BUILD_COST,
-      keepLevel: meta.level,
+      keepLevel: this.matchMode === "pvp" ? s.keepLevel : meta.level,
       keepXp: meta.xp,
       keepXpNext: xpForNextLevel(meta.level),
       keepXpPct: xpProgress(meta.xp, meta.level),
-      endReason: s.endReason,
+      endReason,
       lastXpGain: s.lastXpGain,
       stats: {
-        slain: s.stats.you.slain,
-        goldEarned: s.stats.you.goldEarned,
+        slain: s.stats[view].slain,
+        goldEarned: s.stats[view].goldEarned,
         waves: s.waveIndex,
-        yourKeep: Math.max(0, Math.ceil(s.keeps.you.hp)),
-        foeKeep: Math.max(0, Math.ceil(s.keeps.foe.hp)),
+        yourKeep: Math.max(0, Math.ceil(s.keeps[view].hp)),
+        foeKeep: Math.max(0, Math.ceil(s.keeps[other].hp)),
       },
       foeIntellect: brain.intellect,
       foeGames: brain.games,
       foeWins: brain.wins,
       foeExplore: brain.epsilon,
       foeLastAction: brain.lastAction,
+      localTeam: view,
+      pvp: this.matchMode === "pvp",
     };
   }
 }

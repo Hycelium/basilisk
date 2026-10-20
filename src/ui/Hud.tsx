@@ -59,13 +59,15 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
           <span className="label">FOE HP</span>
           <span className="value">{ui.foeHp}</span>
         </div>
-        <div className="stat intellect">
-          <span className="label">FOE IQ</span>
-          <span className="value">{ui.foeIntellect}</span>
-          <span className="phase-tag muted">
-            {ui.foeWins}W/{ui.foeGames}G · ε{explorePct}%
-          </span>
-        </div>
+        {!ui.pvp && (
+          <div className="stat intellect">
+            <span className="label">FOE IQ</span>
+            <span className="value">{ui.foeIntellect}</span>
+            <span className="phase-tag muted">
+              {ui.foeWins}W/{ui.foeGames}G · ε{explorePct}%
+            </span>
+          </div>
+        )}
       </div>
       <div className="hud-xp-row">
         <div className="stat keep-xp-stat">

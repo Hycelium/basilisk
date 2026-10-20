@@ -182,6 +182,7 @@ export class GameRenderer {
   private camYaw = 0.12;
   private camPitch = 1.12; // ~64Â° from top â†’ proper RTS angle, not bird's-eye
   private camLook = new THREE.Vector3(0, 14, 55);
+  private homeSide: Team = "you";
   private readonly camDistMin = 280;
   private readonly camDistMax = 900;
   private readonly camPitchMin = 0.72;
@@ -346,13 +347,19 @@ export class GameRenderer {
     this.resetCamera();
   }
 
-  /** Best default RTS framing â€” oblique, biased toward your keep. */
+  /** Best default RTS framing — oblique, biased toward the local keep. */
   resetCamera() {
     this.camDist = 520;
     this.camYaw = 0.12;
     this.camPitch = 1.12;
-    this.camLook.set(0, 14, 55);
+    this.camLook.set(0, 14, this.homeSide === "foe" ? -55 : 55);
     this.applyCamera();
+  }
+
+  /** North keep for the guest. Does not flip the map. */
+  setHomeSide(team: Team) {
+    this.homeSide = team;
+    this.resetCamera();
   }
 
   zoomBy(factor: number) {
@@ -1099,7 +1106,7 @@ export class GameRenderer {
         return ring;
       });
       setPos3(obj, p.pos.x, p.pos.y, 0.4);
-      const pulse = state.buildSelection && p.team === "you" ? 0.7 + Math.sin(state.time * 5) * 0.25 : 0.45;
+      const pulse = state.buildSelection && p.team === state.commandTeam ? 0.7 + Math.sin(state.time * 5) * 0.25 : 0.45;
       const ecoSel = state.buildSelection === "house";
       const match =
         p.zone === "eco"
@@ -1154,7 +1161,7 @@ export class GameRenderer {
   private syncNodes(state: GameState) {
     const live = this.liveSet();
     for (const n of state.nodes) {
-      const key = `node-${n.id}`;
+      const key = `node-${this.homeSide}-${n.id}`;
       live.add(key);
       const obj = this.ensure(key, () => {
         const g = this.makeNode(n);
@@ -1181,6 +1188,7 @@ export class GameRenderer {
   }
 
   private makeNode(n: GameState["nodes"][number]) {
+    const own = n.team === this.homeSide;
     const g = new THREE.Group();
     if (n.kind === "pine") {
       // Bright oak + log pile = wood. Scenery pines never look like this.
@@ -1194,10 +1202,7 @@ export class GameRenderer {
         g.add(logs);
       }
       g.add(
-        this.resourceBeacon(
-          n.team === "you" ? "WOOD" : "RAID WOOD",
-          n.team === "you" ? 0xf0c040 : 0xff704f,
-        ),
+        this.resourceBeacon(own ? "WOOD" : "RAID WOOD", own ? 0xf0c040 : 0xff704f),
       );
     } else {
       const rocks = new THREE.Group();
@@ -1224,10 +1229,7 @@ export class GameRenderer {
       rocks.add(nugget);
       g.add(rocks);
       g.add(
-        this.resourceBeacon(
-          n.team === "you" ? "GOLD" : "RAID GOLD",
-          n.team === "you" ? 0x4aa0ff : 0xff704f,
-        ),
+        this.resourceBeacon(own ? "GOLD" : "RAID GOLD", own ? 0x4aa0ff : 0xff704f),
       );
     }
     return g;
@@ -1468,7 +1470,7 @@ export class GameRenderer {
     if (state.selectedVillagerIds.length > 0) {
       for (const v of state.villagers) {
         if (seg >= MAX_COMMAND_LINES) break;
-        if (v.team !== "you" || !state.selectedVillagerIds.includes(v.id)) continue;
+        if (!state.selectedVillagerIds.includes(v.id)) continue;
         let target = v.moveTarget;
         if (v.state === "patrolling") target = v.patrolToB ? v.patrolB : v.patrolA;
         else if (v.state === "defend" && v.moveTarget && !v.forcedAttack) target = v.moveTarget;

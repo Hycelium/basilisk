@@ -12,6 +12,8 @@ import { ControlCluster, type ClusterAction } from "./ui/ControlCluster";
 import { RadialMenu, type RadialItem } from "./ui/RadialMenu";
 import { useHints } from "./ui/hints";
 import { useLayout } from "./ui/useLayout";
+import { useSkirmish } from "./net/useSkirmish";
+import { SkirmishLobby } from "./ui/SkirmishLobby";
 
 const defaultUi: UiSnapshot = {
   phase: "title",
@@ -73,6 +75,8 @@ const defaultUi: UiSnapshot = {
   foeWins: 0,
   foeExplore: 0.35,
   foeLastAction: "wait",
+  localTeam: "you",
+  pvp: false,
 };
 
 const LONG_PRESS_MS = 350;
@@ -119,6 +123,8 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sim = useMemo(() => new GameSim(), []);
   const rendererRef = useRef<GameRenderer | null>(null);
+  const skirmish = useSkirmish(sim, rendererRef);
+  const { roleRef, liveRef, linkRef } = skirmish;
   const [ui, setUi] = useState<UiSnapshot>(() => sim.getUiSnapshot() ?? defaultUi);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const heardCombatRef = useRef(new Set<number>());
@@ -317,10 +323,12 @@ export default function App() {
     let raf = 0;
     let prev = performance.now();
     let uiTick = 0;
+    let snapAcc = 0;
     const frame = (now: number) => {
       const dt = (now - prev) / 1000;
       prev = now;
-      sim.update(dt);
+      if (roleRef.current === "guest") sim.tickPresentation(dt);
+      else sim.update(dt);
       const gameState = sim.getState();
       renderer.draw(gameState);
       if (heardMapRef.current !== gameState.mapId) {
@@ -342,6 +350,13 @@ export default function App() {
       if (uiTick >= 0.08) {
         setUi(snap);
         uiTick = 0;
+      }
+      if (roleRef.current === "host" && liveRef.current) {
+        snapAcc += dt;
+        if (snapAcc >= 0.1) {
+          snapAcc = 0;
+          linkRef.current?.send({ t: "snap", snap: sim.exportSnapshot() });
+        }
       }
       raf = requestAnimationFrame(frame);
     };
@@ -466,10 +481,11 @@ export default function App() {
 
       if (touch && state.phase === "running") {
         const peonsSelected = state.selectedVillagerIds.length > 0;
-        const ownPeon = hit?.kind === "villager" && state.villagers.some((v) => v.id === Number(hit.id) && v.team === "you");
+        const side = sim.getLocalTeam();
+        const ownPeon = hit?.kind === "villager" && state.villagers.some((v) => v.id === Number(hit.id) && v.team === side);
         const ownStructure =
-          (hit?.kind === "building" && state.buildings.some((b) => b.id === Number(hit.id) && b.team === "you")) ||
-          (hit?.kind === "keep" && hit.id === "you");
+          (hit?.kind === "building" && state.buildings.some((b) => b.id === Number(hit.id) && b.team === side)) ||
+          (hit?.kind === "keep" && hit.id === side);
         if (!state.buildSelection && peonsSelected && !ownPeon && !ownStructure) {
           // Tap-to-order: ground → move, tree/mine → gather, enemy → attack.
           issueOrder(world, hit, p.x, p.y);
@@ -639,7 +655,7 @@ export default function App() {
           : "Tap a glowing pad to place it. Houses go on green pads behind your keep.",
       );
     }
-    if (ui.selectedKeepTeam === "you" && prev.selectedKeepTeam !== "you") {
+    if (ui.selectedKeepTeam === ui.localTeam && prev.selectedKeepTeam !== ui.localTeam) {
       showHint("keep-panel", "Queue peons here. Build Houses on eco pads to raise the cap.");
     }
   }, [ui, showHint]);
@@ -651,7 +667,7 @@ export default function App() {
   };
 
   const onEnqueue = (kind: TrainKind) => {
-    sim.enqueueTrain(kind, "you");
+    sim.enqueueTrain(kind, sim.getLocalTeam());
     refreshUi();
     beep(360);
   };
@@ -660,7 +676,7 @@ export default function App() {
     rendererRef.current?.setQuality(setting);
   };
 
-  const sheetOpen = ui.selectedKeepTeam === "you" || Boolean(ui.selectedBuildingId && ui.selectedBuildingKind);
+  const sheetOpen = ui.selectedKeepTeam === ui.localTeam || Boolean(ui.selectedBuildingId && ui.selectedBuildingKind);
   const compactHud = layout.layout === "column" || layout.phone;
   const compactBuild = layout.layout === "column" && layout.phone;
 
@@ -671,7 +687,7 @@ export default function App() {
       label: "Recall",
       hint: "Recall all peons to your keep",
       onPress: () => {
-        sim.callVillagersHome("you");
+        sim.callVillagersHome(sim.getLocalTeam());
         refreshUi();
         beep(620, 0.12);
       },
@@ -683,7 +699,7 @@ export default function App() {
       hint: "Garrison peons in the keep (they fire arrows)",
       disabled: ui.keepGarrisoned >= ui.keepGarrisonMax || ui.phase !== "running",
       onPress: () => {
-        sim.garrisonVillagers("you");
+        sim.garrisonVillagers(sim.getLocalTeam());
         refreshUi();
         beep(560);
       },
@@ -772,7 +788,7 @@ export default function App() {
           },
         });
       }
-      if (hit?.kind === "unit" && state.units.some((u) => u.id === Number(hit.id) && u.team === "foe")) {
+      if (hit?.kind === "unit" && state.units.some((u) => u.id === Number(hit.id) && u.team !== sim.getLocalTeam())) {
         radialItems.push({
           id: "attack",
           icon: "⚔",
@@ -815,7 +831,7 @@ export default function App() {
       label: "Recall",
       tone: "recall",
       onPress: () => {
-        sim.callVillagersHome("you");
+        sim.callVillagersHome(sim.getLocalTeam());
         refreshUi();
         beep(620, 0.12);
       },
@@ -919,7 +935,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  sim.garrisonVillagers("you");
+                  sim.garrisonVillagers(sim.getLocalTeam());
                   refreshUi();
                   beep(560);
                 }}
@@ -1007,44 +1023,96 @@ export default function App() {
               beep(200);
             }}
             onEnqueuePeon={() => {
-              sim.enqueuePeon("you");
+              sim.enqueuePeon(sim.getLocalTeam());
               refreshUi();
               beep(300);
             }}
             onCallHome={() => {
-              sim.callVillagersHome("you");
+              sim.callVillagersHome(sim.getLocalTeam());
               refreshUi();
               beep(240);
             }}
             onGarrison={() => {
-              sim.garrisonVillagers("you");
+              sim.garrisonVillagers(sim.getLocalTeam());
               refreshUi();
               beep(560);
             }}
             onUngarrison={() => {
-              sim.ungarrisonVillagers("you");
+              sim.ungarrisonVillagers(sim.getLocalTeam());
               refreshUi();
               beep(260);
             }}
           />
           <Overlays
             ui={ui}
+            hideTitle={skirmish.lobby.open || skirmish.lobby.live}
             onRerollMap={() => {
               sim.rerollMap();
               refreshUi();
               beep(440);
             }}
+            onSkirmish={skirmish.openLobby}
             onStart={() => {
+              if (skirmish.lobby.open || skirmish.lobby.live) return;
+              sim.setMatchMode("ai");
+              sim.setLocalTeam("you");
               sim.startMatch();
               refreshUi();
               beep(520);
             }}
             onRestart={() => {
-              sim.reset();
+              if (skirmish.lobby.live || ui.pvp) {
+                skirmish.leave();
+              } else {
+                sim.reset();
+              }
               refreshUi();
               hpRef.current = 100;
             }}
           />
+          {skirmish.lobby.open && !skirmish.lobby.live && (
+            <SkirmishLobby
+              name={skirmish.name}
+              onName={skirmish.setName}
+              role={skirmish.lobby.role}
+              hostName={skirmish.lobby.hostName}
+              guestName={skirmish.lobby.guestName}
+              hostConnected={skirmish.lobby.hostConnected}
+              guestConnected={skirmish.lobby.guestConnected}
+              invite={skirmish.lobby.invite}
+              joinDraft={skirmish.lobby.joinDraft}
+              onJoinDraft={skirmish.setJoinDraft}
+              status={skirmish.lobby.status}
+              copied={skirmish.lobby.copied}
+              canStart={skirmish.lobby.role === "host" && skirmish.lobby.guestConnected}
+              onHost={skirmish.hostMatch}
+              onJoin={() => skirmish.joinMatch()}
+              onCopy={() => void skirmish.copyInvite()}
+              onStart={() => {
+                skirmish.startSkirmish();
+                refreshUi();
+                beep(520);
+              }}
+              onLeave={() => {
+                skirmish.leave();
+                refreshUi();
+              }}
+            />
+          )}
+          {skirmish.lobby.live && (
+            <div className="link-pill" role="status">
+              {skirmish.lobby.link === "down"
+                ? "Link lost"
+                : skirmish.lobby.pingMs != null
+                  ? `Link ${skirmish.lobby.pingMs} ms`
+                  : "Link …"}
+            </div>
+          )}
+          {skirmish.lobby.link === "down" && ui.phase === "running" && (
+            <div className="opponent-down" role="alert">
+              Opponent disconnected
+            </div>
+          )}
         </div>
 
         <BuildBar

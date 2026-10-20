@@ -273,6 +273,8 @@ export interface GameState {
   matchXpEarned: number;
   lastXpGain: number;
   won: boolean | null;
+  /** Which side this client's build highlights belong to. Not sent in match snapshots. */
+  commandTeam: Team;
 }
 
 export interface QueueSlotUi {
@@ -358,6 +360,9 @@ export interface UiSnapshot {
   foeWins: number;
   foeExplore: number;
   foeLastAction: string;
+  /** Side this screen commands. Guest is `foe` while the map stays north-up. */
+  localTeam: Team;
+  pvp: boolean;
 }
 
 export interface RectHit {

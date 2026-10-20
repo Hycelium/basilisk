@@ -36,7 +36,7 @@ export function DetailSheet({
   onGarrison,
   onUngarrison,
 }: DetailSheetProps) {
-  const keepPanel = ui.selectedKeepTeam === "you";
+  const keepPanel = ui.selectedKeepTeam === ui.localTeam;
   const subject = keepPanel ? "keep" : ui.selectedBuildingId ? `b${ui.selectedBuildingId}` : "";
   const [collapsed, setCollapsed] = useState(false);
   useEffect(() => setCollapsed(false), [subject]);
