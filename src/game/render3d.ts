@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BUILD_RANGE, STARTER_GUARD_RANGE, WORLD_H, WORLD_W } from "./balance";
-import { cloneAnimatedModel, cloneModel, ensureModelsLoaded } from "./assets3d";
+import { cloneAnimatedModel, cloneModel, ensureModelsLoaded, setSharedAnisotropy } from "./assets3d";
 import type { Barricade, Building, GameState, Team, Unit } from "./types";
 import {
   buildScenery,
@@ -603,6 +603,8 @@ export class GameRenderer {
         else m.needsUpdate = true;
       });
     }
+    // Filtering only. Albedo maps stay on the shared colormap.
+    setSharedAnisotropy(tier === "low" ? 1 : tier === "medium" ? 4 : 8);
     this.resize();
     if (notify) this.onQualityChange?.(this.getQualityInfo());
   }

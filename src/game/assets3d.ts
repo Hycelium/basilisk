@@ -73,38 +73,200 @@ interface ModelTemplate {
 const cache = new Map<ModelKey, ModelTemplate>();
 let loadPromise: Promise<void> | null = null;
 
+/**
+ * One Kenney atlas shared by every nature tree, log, and mine.
+ * Clones share this texture. Quality may change its anisotropy, but nothing
+ * may dispose it or null a material.map that points at it.
+ */
+const sharedAlbedo = new Set<THREE.Texture>();
+let sharedAnisotropy = 4;
+let colormap: THREE.Texture | null = null;
+
+interface Swatch {
+  u0: number;
+  v0: number;
+  u1: number;
+  v1: number;
+}
+
+/** Rectangles inside colormap.png (v = 0 at the top, matching glTF flipY:false). */
+function swatchFor(name: string, key: ModelKey): Swatch {
+  const n = name.toLowerCase();
+  if (n.includes("inner")) return { u0: 0.885, v0: 0.8, u1: 0.93, v1: 0.96 };
+  if ((n.includes("leaf") || n.includes("grass")) && n.includes("dark")) return { u0: 0.07, v0: 0.64, u1: 0.115, v1: 0.72 };
+  if (n.includes("leaf") || n.includes("grass") || n.includes("bush")) return { u0: 0.07, v0: 0.54, u1: 0.115, v1: 0.72 };
+  if ((n.includes("wood") || n.includes("bark") || n.includes("log")) && n.includes("dark")) return { u0: 0.64, v0: 0.9, u1: 0.7, v1: 0.98 };
+  if (n.includes("wood") || n.includes("bark") || n.includes("log")) return { u0: 0.64, v0: 0.78, u1: 0.7, v1: 0.98 };
+  if (n.includes("stone")) return { u0: 0.14, v0: 0.8, u1: 0.22, v1: 0.96 };
+  if (n.includes("dirt") || n.includes("rock") || n.includes("sand")) return { u0: 0.76, v0: 0.8, u1: 0.805, v1: 0.96 };
+  const k = key.toLowerCase();
+  if (k === "oak" || k === "koak" || k.includes("pine") || k.includes("cone") || k.includes("bush")) {
+    return { u0: 0.07, v0: 0.54, u1: 0.115, v1: 0.72 };
+  }
+  if (k.includes("log")) return { u0: 0.64, v0: 0.78, u1: 0.7, v1: 0.98 };
+  if (k.includes("stone") || k.includes("rock")) return { u0: 0.14, v0: 0.8, u1: 0.22, v1: 0.96 };
+  return { u0: 0.885, v0: 0.8, u1: 0.93, v1: 0.96 };
+}
+
+function uvsFitAtlas(geo: THREE.BufferGeometry) {
+  const uv = geo.getAttribute("uv");
+  if (!uv || uv.count === 0) return false;
+  const n = Math.min(uv.count, 48);
+  for (let i = 0; i < n; i++) {
+    const u = uv.getX(i);
+    const v = uv.getY(i);
+    if (u < -0.05 || v < -0.05 || u > 1.05 || v > 1.05) return false;
+  }
+  return true;
+}
+
+function loadColormap(): Promise<THREE.Texture | null> {
+  if (colormap) return Promise.resolve(colormap);
+  return new Promise((resolve) => {
+    new THREE.TextureLoader().load(
+      asset("models/kenney/Textures/colormap.png"),
+      (tex) => {
+        tex.name = "kenney-colormap";
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.flipY = false;
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.magFilter = THREE.LinearFilter;
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.anisotropy = sharedAnisotropy;
+        tex.needsUpdate = true;
+        tex.userData.sharedAlbedo = true;
+        sharedAlbedo.add(tex);
+        colormap = tex;
+        resolve(tex);
+      },
+      undefined,
+      () => resolve(null),
+    );
+  });
+}
+
+/** Quality tiers can soften filtering. They must not drop the albedo. */
+export function setSharedAnisotropy(level: number) {
+  sharedAnisotropy = level;
+  for (const tex of sharedAlbedo) {
+    if (tex.anisotropy === level) continue;
+    tex.anisotropy = level;
+    tex.needsUpdate = true;
+  }
+}
+
+function paintUvs(geo: THREE.BufferGeometry, mats: THREE.Material[], key: ModelKey) {
+  const pos = geo.getAttribute("position");
+  const index = geo.getIndex();
+  const uv = new Float32Array(pos.count * 2);
+  const ranges = geo.groups.length
+    ? geo.groups.map((g) => ({
+        start: g.start,
+        count: g.count,
+        mat: mats[g.materialIndex ?? 0] ?? mats[0],
+      }))
+    : [{ start: 0, count: index ? index.count : pos.count, mat: mats[0] }];
+  for (const range of ranges) {
+    if (!range.mat || range.count <= 0) continue;
+    const swatch = swatchFor(range.mat.name, key);
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    const vertAt = (i: number) => (index ? index.getX(i) : i);
+    for (let i = 0; i < range.count; i++) {
+      const vi = vertAt(range.start + i);
+      const x = pos.getX(vi);
+      const y = pos.getY(vi);
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    const sx = Math.max(1e-5, maxX - minX);
+    const sy = Math.max(1e-5, maxY - minY);
+    for (let i = 0; i < range.count; i++) {
+      const vi = vertAt(range.start + i);
+      const nx = (pos.getX(vi) - minX) / sx;
+      const ny = (pos.getY(vi) - minY) / sy;
+      uv[vi * 2] = swatch.u0 + nx * (swatch.u1 - swatch.u0);
+      uv[vi * 2 + 1] = swatch.v1 - ny * (swatch.v1 - swatch.v0);
+    }
+  }
+  geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+}
+
+/** Nature GLBs have no albedo. Bind the shared colormap and keep it on the template. */
+function skinWithColormap(mesh: THREE.Mesh, key: ModelKey, atlas: THREE.Texture) {
+  const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).filter(Boolean) as THREE.Material[];
+  if (!mats.length) return;
+  const foreign = mats.some((mat) => {
+    const map = "map" in mat ? (mat as THREE.MeshStandardMaterial).map : null;
+    return !!map && map !== atlas;
+  });
+  if (foreign) return;
+  let geo = mesh.geometry as THREE.BufferGeometry;
+  if (!geo.getAttribute("position")) return;
+  // Nature exports store garbage UVs (tens of units). Castle UVs already
+  // index the atlas, so a missing castle map only needs the shared texture.
+  if (!uvsFitAtlas(geo)) {
+    if (geo.userData.atlasPainted) {
+      geo = geo.clone();
+      geo.userData = { ...geo.userData, atlasPainted: false };
+      mesh.geometry = geo;
+    }
+    paintUvs(geo, mats, key);
+    geo.userData.atlasPainted = true;
+  }
+  for (const mat of mats) {
+    if (!("map" in mat) || !("color" in mat)) continue;
+    const std = mat as THREE.MeshStandardMaterial;
+    std.map = atlas;
+    std.color.setHex(0xffffff);
+    if ("metalness" in std) {
+      std.metalness = 0;
+      std.roughness = 0.86;
+      std.envMapIntensity = 0.4;
+    }
+    std.side = THREE.DoubleSide;
+    std.needsUpdate = true;
+  }
+}
+
 function prep(root: THREE.Object3D, key: ModelKey, cast = true) {
   root.traverse((o) => {
     const m = o as THREE.Mesh;
-    if (m.isMesh) {
-      m.castShadow = cast;
-      m.receiveShadow = true;
-      if (m.material) {
-        const mats = Array.isArray(m.material) ? m.material : [m.material];
-        for (const mat of mats) {
-          mat.side = THREE.FrontSide;
-          if ("metalness" in mat) {
-            const std = mat as THREE.MeshStandardMaterial;
-            const name = std.name.toLowerCase();
-            std.envMapIntensity = 0.75;
-            std.roughness = name.includes("metal") ? 0.36 : name.includes("wood") ? 0.78 : 0.68;
-            std.metalness = name.includes("metal") ? 0.55 : Math.min(std.metalness, 0.08);
+    if (!m.isMesh) return;
+    m.castShadow = cast;
+    m.receiveShadow = true;
+    if (!m.material) return;
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    for (const mat of mats) {
+      // Castle kit is authored double-sided. Forcing FrontSide turns the far
+      // side into a hollow shell as soon as the camera orbits.
+      if (mat.side !== THREE.DoubleSide) mat.side = THREE.FrontSide;
+      if ("metalness" in mat) {
+        const std = mat as THREE.MeshStandardMaterial;
+        const name = std.name.toLowerCase();
+        std.envMapIntensity = 0.75;
+        std.roughness = name.includes("metal") ? 0.36 : name.includes("wood") ? 0.78 : 0.68;
+        std.metalness = name.includes("metal") ? 0.55 : Math.min(std.metalness, 0.08);
 
-            // Never leave a failed/missing texture as a featureless white canvas.
-            // Castle assets normally use their restored colormap; this is a robust fallback.
-            if (!std.map && std.color.getHex() > 0xeeeeee) {
-              const castle = key.startsWith("k") && ["kTower", "kKeep", "kBallista", "kCatapult", "kRam", "kWall", "kGate", "kFlag"].includes(key);
-              std.color.setHex(castle ? 0x8b8174 : 0x8a765f);
-              std.roughness = 0.82;
-            }
-            if (std.map) {
-              std.map.colorSpace = THREE.SRGBColorSpace;
-              std.map.anisotropy = 4;
-            }
-          }
+        // Never leave a failed/missing texture as a featureless white canvas.
+        // Castle assets normally use their restored colormap; this is a robust fallback.
+        if (!std.map && std.color.getHex() > 0xeeeeee) {
+          const castle = key.startsWith("k") && ["kTower", "kKeep", "kBallista", "kCatapult", "kRam", "kWall", "kGate", "kFlag"].includes(key);
+          std.color.setHex(castle ? 0x8b8174 : 0x8a765f);
+          std.roughness = 0.82;
+        }
+        if (std.map && std.map !== colormap) {
+          std.map.colorSpace = THREE.SRGBColorSpace;
+          if (!std.map.userData.sharedAlbedo) std.map.anisotropy = sharedAnisotropy;
         }
       }
     }
+    if (colormap) skinWithColormap(m, key, colormap);
   });
   return root;
 }
@@ -150,6 +312,7 @@ export function modelsReady() {
 export function ensureModelsLoaded(): Promise<void> {
   if (loadPromise) return loadPromise;
   loadPromise = (async () => {
+    colormap = await loadColormap();
     const loader = new GLTFLoader();
     const keys = Object.keys(URLS) as ModelKey[];
     await Promise.all(
