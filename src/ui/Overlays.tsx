@@ -1,4 +1,58 @@
+import { useEffect, useState } from "react";
 import type { UiSnapshot } from "../game/types";
+
+const DISCORD_INVITE = "https://discord.gg/FGbUfaxy8v";
+
+/** Live site uses /roadkeep/; dev uses /; a portal zip uses a relative base. */
+function publicGameUrl() {
+  const base = import.meta.env.BASE_URL || "/";
+  if (base.startsWith("/")) return new URL(base, window.location.origin).href;
+  return new URL(base, window.location.href).href;
+}
+
+function shareText(url: string) {
+  return `Play Roadkeep with me: ${url} — versus AI, or Skirmish and I'll send an invite link. Discord: ${DISCORD_INVITE}`;
+}
+
+function copyWithSelection(text: string) {
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.top = "0";
+    area.style.left = "0";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.focus();
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+async function copyText(text: string) {
+  // Selection copy runs during the click. The async clipboard API drops the
+  // gesture when it rejects, which is common in an unfocused embedded browser.
+  const legacy = copyWithSelection(text);
+  try {
+    if (navigator.clipboard?.writeText && document.hasFocus()) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* the selection copy already ran */
+  }
+  return legacy;
+}
+
+function openExternal(url: string) {
+  const tab = window.open(url, "_blank", "noopener,noreferrer");
+  if (tab) tab.opener = null;
+}
 
 interface OverlaysProps {
   ui: UiSnapshot;
@@ -10,6 +64,27 @@ interface OverlaysProps {
 }
 
 export function Overlays({ ui, hideTitle, onStart, onSkirmish, onRestart, onRerollMap }: OverlaysProps) {
+  const [shareNote, setShareNote] = useState("");
+
+  useEffect(() => {
+    if (!shareNote) return;
+    const id = window.setTimeout(() => setShareNote(""), 2200);
+    return () => window.clearTimeout(id);
+  }, [shareNote]);
+
+  const copyLink = async () => {
+    const ok = await copyText(shareText(publicGameUrl()));
+    if (ok) setShareNote("Link copied");
+  };
+
+  const shareOnX = () => {
+    const url = publicGameUrl();
+    const intent = new URL("https://twitter.com/intent/tweet");
+    intent.searchParams.set("text", shareText(url));
+    intent.searchParams.set("url", url);
+    openExternal(intent.href);
+  };
+
   return (
     <>
       {ui.phase === "title" && !hideTitle && (
@@ -52,6 +127,26 @@ export function Overlays({ ui, hideTitle, onStart, onSkirmish, onRestart, onRero
               Skirmish
             </button>
           </div>
+
+          <div className="title-share" role="group" aria-label="Share this game">
+            <button type="button" onClick={() => void copyLink()}>
+              Copy link
+            </button>
+            <button type="button" onClick={() => openExternal(DISCORD_INVITE)}>
+              Discord
+            </button>
+            <button type="button" onClick={shareOnX}>
+              X
+            </button>
+          </div>
+          {shareNote ? (
+            <p className="title-note" role="status">
+              {shareNote}
+            </p>
+          ) : null}
+          <a className="privacy-link" href={`${import.meta.env.BASE_URL}privacy.html`} target="_blank" rel="noopener noreferrer">
+            Privacy
+          </a>
         </div>
       )}
 

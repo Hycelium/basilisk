@@ -1686,6 +1686,47 @@ button:disabled {
   margin-top: 8px;
 }
 
+.title-share {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 2px;
+}
+
+.title-share button,
+.privacy-link {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  padding: 4px 2px;
+  min-height: 32px;
+  color: #8a7a68;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  text-decoration: none;
+}
+
+.title-share button:hover,
+.privacy-link:hover {
+  color: #d8c8a8;
+}
+
+.title-share button:focus-visible,
+.privacy-link:focus-visible {
+  outline: 1px solid #5a4a38;
+  outline-offset: 2px;
+}
+
+.title-note {
+  margin: 0;
+  font-size: 12px !important;
+  color: #8a7a68 !important;
+}
+
+.privacy-link {
+  align-self: center;
+}
+
 .lobby-label {
   display: flex;
   flex-direction: column;

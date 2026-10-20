@@ -14,6 +14,7 @@ import { useHints } from "./ui/hints";
 import { useLayout } from "./ui/useLayout";
 import { useSkirmish } from "./net/useSkirmish";
 import { SkirmishLobby } from "./ui/SkirmishLobby";
+import { afterPortalBreak, bindPortalAudio, onMatchEndToMenu, onMatchStart, onReturnToTitle } from "./portal";
 
 const defaultUi: UiSnapshot = {
   phase: "title",
@@ -160,6 +161,7 @@ export default function App() {
   const longPressRef = useRef<{ timer: number; x: number; y: number; pointerId: number } | null>(null);
   const { hint, show: showHint, dismiss: dismissHint } = useHints();
   const prevUiRef = useRef(ui);
+  const phaseRef = useRef(ui.phase);
 
   const refreshUi = useCallback(() => setUi(sim.getUiSnapshot()), [sim]);
 
@@ -583,6 +585,35 @@ export default function App() {
       document.removeEventListener("webkitfullscreenchange", onFullscreenChange);
     };
   }, []);
+
+  useEffect(() => {
+    const prev = phaseRef.current;
+    phaseRef.current = ui.phase;
+    if (prev === ui.phase) return;
+    if (ui.phase === "running") onMatchStart();
+    else if (ui.phase === "title" && prev === "ended") onMatchEndToMenu();
+    else if (ui.phase === "title") onReturnToTitle();
+  }, [ui.phase]);
+
+  useEffect(() => {
+    let held = false;
+    let saved = false;
+    bindPortalAudio({
+      mute() {
+        if (held) return;
+        held = true;
+        saved = sim.getState().soundOn;
+        if (saved) sim.setSound(false);
+        void audioCtxRef.current?.suspend();
+      },
+      restore() {
+        if (!held) return;
+        held = false;
+        if (saved) sim.setSound(true);
+        void audioCtxRef.current?.resume();
+      },
+    });
+  }, [sim]);
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
@@ -1067,11 +1098,13 @@ export default function App() {
             onSkirmish={skirmish.openLobby}
             onStart={() => {
               if (skirmish.lobby.open || skirmish.lobby.live) return;
-              sim.setMatchMode("ai");
-              sim.setLocalTeam("you");
-              sim.startMatch();
-              refreshUi();
-              beep(520);
+              afterPortalBreak(() => {
+                sim.setMatchMode("ai");
+                sim.setLocalTeam("you");
+                sim.startMatch();
+                refreshUi();
+                beep(520);
+              });
             }}
             onRestart={() => {
               if (skirmish.lobby.live || ui.pvp) {
@@ -1102,9 +1135,11 @@ export default function App() {
               onJoin={() => skirmish.joinMatch()}
               onCopy={() => void skirmish.copyInvite()}
               onStart={() => {
-                skirmish.startSkirmish();
-                refreshUi();
-                beep(520);
+                afterPortalBreak(() => {
+                  skirmish.startSkirmish();
+                  refreshUi();
+                  beep(520);
+                });
               }}
               onLeave={() => {
                 skirmish.leave();
