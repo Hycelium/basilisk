@@ -109,12 +109,14 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
             <option value="high">High</option>
           </select>
         </label>
-        <button type="button" className="rush-btn" onClick={onRush} disabled={!ui.canRush}>
-          <span className="full">Rush wave +18g</span>
-          <span className="short" aria-hidden>
-            Rush +18g
-          </span>
-        </button>
+        {!ui.pvp && (
+          <button type="button" className="rush-btn" onClick={onRush} disabled={!ui.canRush}>
+            <span className="full">Rush wave +18g</span>
+            <span className="short" aria-hidden>
+              Rush +18g
+            </span>
+          </button>
+        )}
       </div>
     </div>
   );

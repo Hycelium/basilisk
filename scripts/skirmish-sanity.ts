@@ -1,6 +1,14 @@
 import "./localstorage-shim";
 import { GameSim } from "../src/game/sim";
-import { UNIT_DEFS, VILLAGER_HP, WORLD_H, aiWaveStrength, combatWaveScale } from "../src/game/balance";
+import {
+  RUSH_BONUS,
+  UNIT_DEFS,
+  VILLAGER_HP,
+  WAVE_START_INCOME,
+  WORLD_H,
+  aiWaveStrength,
+  combatWaveScale,
+} from "../src/game/balance";
 import { homeCameraZ } from "../src/game/homeCamera";
 import { keepPos } from "../src/game/map";
 import { isEnemyStructure, isOwnStructure } from "../src/game/ownership";
@@ -359,5 +367,49 @@ assert(
   rally.getState().toasts.some((toast) => toast.text.includes("Peons rally")),
   "host hears their own rally",
 );
+
+const rushHost = new GameSim();
+rushHost.setMatchMode("pvp");
+rushHost.startMatch();
+const rushGold = { you: rushHost.getState().gold.you, foe: rushHost.getState().gold.foe };
+const rushWave = rushHost.getState().waveIndex;
+const rushPhase = rushHost.getState().wavePhase;
+rushHost.rushNextWave();
+rushHost.applyRemoteOrder({ t: "rush" });
+assert(rushHost.getState().waveIndex === rushWave, "pvp rejects a rush-wave request");
+assert(rushHost.getState().wavePhase === rushPhase, "pvp rush stays in the build phase");
+assert(
+  rushHost.getState().gold.you === rushGold.you && rushHost.getState().gold.foe === rushGold.foe,
+  "pvp rush pays neither side",
+);
+const rushHud = rushHost.getUiSnapshot();
+assert(rushHud.pvp && !rushHud.canRush, "host hud cannot rush in skirmish");
+
+const rushGuest = new GameSim();
+rushGuest.setMatchMode("pvp");
+rushGuest.setLocalTeam("foe");
+rushGuest.startMatch();
+const guestRushOrders: RemoteOrder[] = [];
+rushGuest.setOrderSink((order) => guestRushOrders.push(order));
+rushGuest.rushNextWave();
+assert(!guestRushOrders.some((order) => order.t === "rush"), "guest does not send a rush order");
+const guestHud = rushGuest.getUiSnapshot();
+assert(guestHud.pvp && !guestHud.canRush, "guest hud cannot rush in skirmish");
+rushGuest.getState().buildTimer = 0.05;
+const clockWave = rushGuest.getState().waveIndex;
+rushGuest.update(0.1);
+assert(rushGuest.getState().waveIndex === clockWave + 1, "skirmish clock still launches the wave");
+
+const rushAi = new GameSim();
+rushAi.startMatch();
+assert(rushAi.getMatchMode() === "ai" && rushAi.getUiSnapshot().canRush, "vs AI rush stays available");
+const aiGold = { you: rushAi.getState().gold.you, foe: rushAi.getState().gold.foe };
+const aiWave = rushAi.getState().waveIndex;
+rushAi.rushNextWave();
+assert(rushAi.getState().waveIndex === aiWave + 1, "vs AI still accepts a rush-wave request");
+assert(rushAi.getState().wavePhase === "spawning", "vs AI rush starts the wave");
+const rushPay = RUSH_BONUS + WAVE_START_INCOME + Math.floor(aiWave * 3);
+assert(rushAi.getState().gold.you === aiGold.you + rushPay, "vs AI rush still pays the human");
+assert(rushAi.getState().gold.foe === aiGold.foe + rushPay, "vs AI rush still pays the foe");
 
 console.log("skirmish sanity ok");

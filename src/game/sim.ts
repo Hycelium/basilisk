@@ -1087,6 +1087,8 @@ export class GameSim {
   }
 
   rushNextWave() {
+    // Human skirmish: neither player may skip the build clock. Versus AI still can.
+    if (this.matchMode === "pvp") return;
     if (this.redirect({ t: "rush" })) return;
     const s = this.state;
     if (s.phase !== "running" || s.wavePhase !== "build") return;
@@ -2751,8 +2753,10 @@ export class GameSim {
 
   applyRemoteOrder(order: RemoteOrder) {
     if (this.matchMode !== "pvp" || this.state.phase !== "running") return;
+    // A stale client may still send rush. Ignore it for both teams; the match clock launches waves.
+    if (order.t === "rush") return;
     // The guest owns the north side only. An order stamped `you` must not spend or move the host.
-    if (order.t !== "pause" && order.t !== "speed" && order.t !== "rush" && order.team !== "foe") return;
+    if (order.t !== "pause" && order.t !== "speed" && order.team !== "foe") return;
     const team: Team = "foe";
     this.applyingRemote = true;
     try {
@@ -2810,9 +2814,6 @@ export class GameSim {
           break;
         case "speed":
           this.toggleSpeed();
-          break;
-        case "rush":
-          this.rushNextWave();
           break;
       }
     } finally {
@@ -3239,7 +3240,11 @@ export class GameSim {
       waveLabel: `${Math.min(WAVES.length, Math.max(1, s.waveIndex || 1))}/${WAVES.length}`,
       wavePhase: s.wavePhase,
       buildTimer: Math.max(0, s.buildTimer),
-      canRush: s.wavePhase === "build" && s.waveIndex < WAVES.length && s.phase === "running",
+      canRush:
+        this.matchMode !== "pvp" &&
+        s.wavePhase === "build" &&
+        s.waveIndex < WAVES.length &&
+        s.phase === "running",
       totalWaves: WAVES.length,
       toasts: s.toasts.map((t) => t.text),
       buildSelection: s.buildSelection,
