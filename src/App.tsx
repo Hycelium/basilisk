@@ -333,6 +333,8 @@ export default function App() {
       else if (hosting && document.hidden) sim.stepMatch(elapsed, true);
       else sim.update(Math.min(0.05, elapsed));
       const gameState = sim.getState();
+      const home = sim.getLocalTeam();
+      if (renderer.getHomeSide() !== home) renderer.setHomeSide(home);
       renderer.draw(gameState);
       if (heardMapRef.current !== gameState.mapId) {
         heardMapRef.current = gameState.mapId;

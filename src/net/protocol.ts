@@ -9,24 +9,27 @@ import type {
   WavePhase,
 } from "../game/types";
 
-/** Orders a guest may send. Ids are explicit so the host never uses its own selection. */
+/**
+ * Orders a guest may send. Ids are explicit so the host never uses its own selection.
+ * `team` is the guest's side (`foe`). The host refuses anything aimed at `you`.
+ */
 export type RemoteOrder =
-  | { t: "move"; ids: number[]; x: number; y: number }
-  | { t: "patrol"; ids: number[]; x: number; y: number }
-  | { t: "stop"; ids: number[] }
-  | { t: "attack"; ids: number[]; targetId: number }
-  | { t: "gather"; ids: number[]; nodeId: string }
-  | { t: "recall" }
-  | { t: "build"; kind: BuildingKind; padId: string }
-  | { t: "train"; kind: TrainKind; buildingId: number }
-  | { t: "peon" }
-  | { t: "garrison" }
-  | { t: "ungarrison" }
-  | { t: "rally"; buildingId: number; x: number; y: number }
-  | { t: "barricade"; x: number; y: number; builderId?: number }
-  | { t: "upgrade"; buildingId: number; kind: "damage" | "rate" }
-  | { t: "raze"; buildingId: number }
-  | { t: "cancel"; buildingId: number; index: number }
+  | { t: "move"; team: Team; ids: number[]; x: number; y: number }
+  | { t: "patrol"; team: Team; ids: number[]; x: number; y: number }
+  | { t: "stop"; team: Team; ids: number[] }
+  | { t: "attack"; team: Team; ids: number[]; targetId: number }
+  | { t: "gather"; team: Team; ids: number[]; nodeId: string }
+  | { t: "recall"; team: Team }
+  | { t: "build"; team: Team; kind: BuildingKind; padId: string }
+  | { t: "train"; team: Team; kind: TrainKind; buildingId: number }
+  | { t: "peon"; team: Team }
+  | { t: "garrison"; team: Team }
+  | { t: "ungarrison"; team: Team }
+  | { t: "rally"; team: Team; buildingId: number; x: number; y: number }
+  | { t: "barricade"; team: Team; x: number; y: number; builderId?: number }
+  | { t: "upgrade"; team: Team; buildingId: number; kind: "damage" | "rate" }
+  | { t: "raze"; team: Team; buildingId: number }
+  | { t: "cancel"; team: Team; buildingId: number; index: number }
   | { t: "pause" }
   | { t: "speed" }
   | { t: "rush" };

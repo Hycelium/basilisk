@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { BUILD_RANGE, STARTER_GUARD_RANGE, WORLD_H, WORLD_W } from "./balance";
+import { homeCameraFrame } from "./homeCamera";
 import { cloneAnimatedModel, cloneModel, ensureModelsLoaded, setSharedAnisotropy } from "./assets3d";
 import type { Barricade, Building, GameState, Team, Unit } from "./types";
 import {
@@ -347,13 +348,18 @@ export class GameRenderer {
     this.resetCamera();
   }
 
-  /** Best default RTS framing — oblique, biased toward the local keep. */
+  /** Best default RTS framing — oblique, on the local keep's side of the map. */
   resetCamera() {
-    this.camDist = 520;
-    this.camYaw = 0.12;
-    this.camPitch = 1.12;
-    this.camLook.set(0, 14, this.homeSide === "foe" ? -55 : 55);
+    const frame = homeCameraFrame(this.homeSide);
+    this.camDist = frame.dist;
+    this.camYaw = frame.yaw;
+    this.camPitch = frame.pitch;
+    this.camLook.set(frame.lookX, frame.lookY, frame.lookZ);
     this.applyCamera();
+  }
+
+  getHomeSide() {
+    return this.homeSide;
   }
 
   /** North keep for the guest. Does not flip the map. */

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isEnemyStructure } from "../game/ownership";
 import { buildingName } from "../game/sim";
 import type { TrainKind, UiSnapshot } from "../game/types";
 
@@ -135,16 +136,17 @@ export function DetailSheet({
     );
   }
 
-  const isEnemy = ui.selectedBuildingTeam === "foe";
+  const isEnemy = isEnemyStructure(ui.localTeam, ui.selectedBuildingTeam);
   const isBarracks = ui.selectedBuildingKind === "barracks";
   const isHouse = ui.selectedBuildingKind === "house";
+  const structureName = buildingName(ui.selectedBuildingKind!);
 
   return (
     <div className={sheetClass}>
       <div className="detail-head">
         <div>
-          <div className="detail-title">{buildingName(ui.selectedBuildingKind!)}</div>
-          <div className="detail-sub">{isEnemy ? "Enemy — inspect only" : "Your structure"}</div>
+          <div className="detail-title">{isEnemy ? `Enemy ${structureName}` : structureName}</div>
+          <div className="detail-sub">{isEnemy ? "Inspection view only" : "Your structure"}</div>
         </div>
         {headControls}
       </div>
