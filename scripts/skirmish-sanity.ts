@@ -134,6 +134,71 @@ assert(moved(arrived.pos, { x: picturedSpot.x, y: picturedSpot.y }) < 1, "guest 
 assert(guest.getState().gold.you === snap2.gold.you, "guest gold comes from the picture");
 assert(guest.getState().buildTimer === snap2.buildTimer, "guest does not step the build clock itself");
 
+const predictHost = new GameSim();
+predictHost.setMatchMode("pvp");
+predictHost.startMatch();
+const predictOpen = predictHost.exportSnapshot();
+const predictGuest = new GameSim();
+predictGuest.setMatchMode("pvp");
+predictGuest.setLocalTeam("foe");
+predictGuest.setOrderSink(() => {});
+assert(predictGuest.applySnapshot(predictOpen), "prediction guest takes the opening picture");
+for (let i = 0; i < 6; i++) predictGuest.tickPresentation(0.05);
+const predictFoe = predictGuest.getState().villagers.find((v) => v.team === "foe");
+const predictYou = predictGuest.getState().villagers.find((v) => v.team === "you");
+assert(predictFoe && predictYou, "prediction picture has both peons");
+const predictGold = predictGuest.getState().gold.foe;
+const predictWood = predictGuest.getState().wood.foe;
+predictGuest.click({ kind: "villager", id: String(predictFoe.id) });
+const predictFrom = { ...predictFoe.pos };
+const enemyFrom = { ...predictYou.pos };
+predictGuest.commandSelected({ x: predictFoe.pos.x + 90, y: predictFoe.pos.y + 50 }, null, false);
+assert(
+  predictGuest.getState().commandMarkers.some((marker) => marker.kind === "move"),
+  "guest move marker shows before the picture",
+);
+for (let i = 0; i < 5; i++) predictGuest.tickPresentation(0.05);
+assert(moved(predictFoe.pos, predictFrom) > 4, "guest move prediction changes a foe peon's position before a snapshot");
+assert(moved(predictYou.pos, enemyFrom) < 1, "an enemy you peon is not predicted from a guest order");
+assert(predictGuest.getState().gold.foe === predictGold, "prediction does not change guest gold");
+assert(predictGuest.getState().wood.foe === predictWood, "prediction does not change guest wood");
+predictGuest.getState().selectedVillagerIds = [predictYou.id, predictFoe.id];
+const enemyHeld = { ...predictYou.pos };
+predictGuest.commandSelected({ x: predictYou.pos.x + 70, y: predictYou.pos.y + 40 }, null, false);
+for (let i = 0; i < 4; i++) predictGuest.tickPresentation(0.05);
+assert(moved(predictYou.pos, enemyHeld) < 1, "a guest order does not predict the enemy peon");
+
+const predictedAt = { ...predictFoe.pos };
+const near = predictHost.exportSnapshot();
+const nearFoe = near.villagers.find((v) => v.id === predictFoe.id);
+assert(nearFoe, "near picture still has the foe peon");
+nearFoe.x = predictedAt.x + 12;
+nearFoe.y = predictedAt.y + 6;
+assert(moved(predictedAt, { x: nearFoe.x, y: nearFoe.y }) < 40, "near picture is a small correction");
+assert(predictGuest.applySnapshot(near), "guest accepts the near picture");
+const easing = predictGuest.getState().villagers.find((v) => v.id === predictFoe.id);
+assert(easing, "easing peon stays on the guest");
+assert(moved(easing.pos, predictedAt) < 1.5, "small picture error eases from the prediction");
+assert(moved(easing.pos, { x: nearFoe.x, y: nearFoe.y }) > 4, "small picture error does not snap");
+for (let i = 0; i < 8; i++) predictGuest.tickPresentation(0.05);
+const eased = predictGuest.getState().villagers.find((v) => v.id === predictFoe.id);
+assert(eased && moved(eased.pos, { x: nearFoe.x, y: nearFoe.y }) < 1, "eased peon reaches the host picture");
+predictGuest.click({ kind: "villager", id: String(predictFoe.id) });
+predictGuest.commandSelected({ x: eased.pos.x + 40, y: eased.pos.y + 24 }, null, false);
+for (let i = 0; i < 3; i++) predictGuest.tickPresentation(0.05);
+const beforeFar = { ...eased.pos };
+const far = predictHost.exportSnapshot();
+const farFoe = far.villagers.find((v) => v.id === predictFoe.id);
+assert(farFoe, "far picture still has the foe peon");
+farFoe.x = beforeFar.x + 120;
+farFoe.y = beforeFar.y - 80;
+assert(moved(beforeFar, { x: farFoe.x, y: farFoe.y }) > 40, "far picture is a large correction");
+assert(predictGuest.applySnapshot(far), "guest accepts the far picture");
+const snapped = predictGuest.getState().villagers.find((v) => v.id === predictFoe.id);
+assert(snapped && moved(snapped.pos, { x: farFoe.x, y: farFoe.y }) < 1, "large picture error snaps to the host");
+const enemyAfter = predictGuest.getState().villagers.find((v) => v.id === predictYou.id);
+assert(enemyAfter && moved(enemyAfter.pos, enemyHeld) < 1, "enemy peon still follows pictures, not the guest order");
+
 const covered = new GameSim();
 covered.setMatchMode("pvp");
 covered.startMatch();

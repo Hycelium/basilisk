@@ -102,7 +102,10 @@ const KEEP_GARRISON_MAX = 5;
 const KEEP_ARROW_RANGE = 185;
 const KEEP_ARROW_COOLDOWN = 1.15;
 const ARCHER_RANGE = 112;
-const POSE_SNAP = 96;
+/** Picture corrections inside the map glide. A real teleport still snaps. */
+const POSE_GLIDE = 4096;
+/** Own-order prediction eases onto the host picture under this error. */
+const PREDICT_EASE = 40;
 
 interface Pose {
   x: number;
@@ -129,8 +132,10 @@ export class GameSim {
   private linkDown = false;
   private shownMap: { id: string; name: string; tagline: string; seed: number } | null = null;
   private poses = new Map<string, Pose>();
-  private poseSpan = 0.1;
+  private poseSpan = 0.05;
   private lastPoseAt = 0;
+  /** Guest peons whose latest order is drawn locally until the next host picture. */
+  private predicted = new Set<number>();
 
   constructor() {
     const meta = loadMeta();
@@ -330,6 +335,7 @@ export class GameSim {
     this.decayFx(Math.min(0.05, elapsed));
     if (this.state.phase === "running" && !this.state.paused) {
       this.state.time += elapsed * this.state.speed;
+      this.stepOwnPrediction(elapsed * this.state.speed);
     }
     this.stepPoses(elapsed);
   }
@@ -357,7 +363,102 @@ export class GameSim {
   private redirect(order: RemoteOrder) {
     if (!this.orderSink || this.applyingRemote) return false;
     this.orderSink(order);
+    this.previewOwn(order);
     return true;
+  }
+
+  /**
+   * Draw the guest's own order at once. Opponent pieces, damage, buildings, and
+   * stocks stay on the host picture.
+   */
+  private previewOwn(order: RemoteOrder) {
+    if (order.t === "pause" || order.t === "speed" || order.t === "rush") return;
+    if (!("team" in order) || order.team !== this.localTeam) return;
+    const team = this.localTeam;
+    if (order.t === "recall") {
+      this.previewRecall(team);
+      return;
+    }
+    if (order.t === "stop") {
+      this.stopIds(team, order.ids);
+      this.holdPrediction(order.ids);
+      return;
+    }
+    if (order.t === "move" || order.t === "patrol") {
+      this.commandIds(team, order.ids, { x: order.x, y: order.y }, null, order.t === "patrol");
+      this.holdPrediction(order.ids);
+      return;
+    }
+    if (order.t === "attack") {
+      this.commandIds(team, order.ids, { x: 0, y: 0 }, { kind: "unit", id: String(order.targetId) }, false);
+      this.holdPrediction(order.ids);
+      return;
+    }
+    if (order.t === "gather") {
+      this.commandIds(team, order.ids, { x: 0, y: 0 }, { kind: "node", id: order.nodeId }, false);
+      this.holdPrediction(order.ids);
+    }
+  }
+
+  private holdPrediction(ids: number[]) {
+    for (const id of ids) {
+      const peon = this.state.villagers.find((v) => v.id === id && v.team === this.localTeam && v.hp > 0);
+      if (!peon) continue;
+      this.predicted.add(id);
+      this.poses.delete("v" + id);
+    }
+  }
+
+  /** Walk a local order. Does not spend, strike, or move the other team. */
+  private stepOwnPrediction(dt: number) {
+    if (dt <= 0 || this.predicted.size === 0) return;
+    const team = this.localTeam;
+    const keep = this.teamKeep(team);
+    for (const v of this.state.villagers) {
+      if (v.team !== team || !this.predicted.has(v.id) || v.hp <= 0) continue;
+      if (v.state === "moving" && v.moveTarget) {
+        moveTowards(v.pos, v.moveTarget, v.speed, dt);
+        if (dist(v.pos, v.moveTarget) < 3) {
+          v.moveTarget = undefined;
+          v.state = "idle";
+        }
+      } else if (v.state === "patrolling" && v.patrolA && v.patrolB) {
+        const destination = v.patrolToB ? v.patrolB : v.patrolA;
+        moveTowards(v.pos, destination, v.speed, dt);
+        if (dist(v.pos, destination) < 3) v.patrolToB = !v.patrolToB;
+      } else if (v.state === "toNode" && v.targetNodeId) {
+        const node = this.state.nodes.find((n) => n.id === v.targetNodeId);
+        if (node && dist(v.pos, node.pos) > 3) moveTowards(v.pos, node.pos, v.speed, dt);
+      } else if (v.state === "home" || v.state === "toKeep") {
+        moveTowards(v.pos, keep.pos, v.speed, dt);
+      } else if (v.state === "defend" && v.forcedAttack && v.targetEnemyId != null) {
+        const enemy = this.state.units.find((u) => u.id === v.targetEnemyId && u.team !== team && u.hp > 0);
+        if (enemy && dist(v.pos, enemy.pos) > PEON_MELEE_RANGE) moveTowards(v.pos, enemy.pos, PEON_FIGHT_SPEED, dt);
+      } else if (v.state === "defend" && v.moveTarget && !v.forcedAttack) {
+        if (dist(v.pos, v.moveTarget) > 3) moveTowards(v.pos, v.moveTarget, v.speed, dt);
+      }
+    }
+  }
+
+  private previewRecall(team: Team) {
+    const ids: number[] = [];
+    for (const v of this.state.villagers) {
+      if (v.team !== team || v.hp <= 0 || v.state === "garrisoned") continue;
+      v.targetNodeId = undefined;
+      v.targetEnemyId = undefined;
+      v.targetBarricadeId = undefined;
+      v.moveTarget = undefined;
+      v.patrolA = undefined;
+      v.patrolB = undefined;
+      v.patrolToB = undefined;
+      v.engageFrom = undefined;
+      v.forcedAttack = false;
+      v.state = v.carryingGold > 0 || v.carryingWood > 0 ? "toKeep" : "home";
+      v.timer = 0;
+      ids.push(v.id);
+    }
+    this.holdPrediction(ids);
+    this.tell(team, "🔔 Recall! All peons return to the keep.");
   }
 
   private tell(team: Team, text: string) {
@@ -380,8 +481,9 @@ export class GameSim {
     this.shownMap = null;
     this.linkDown = false;
     this.poses.clear();
-    this.poseSpan = 0.1;
+    this.poseSpan = 0.05;
     this.lastPoseAt = 0;
+    this.predicted.clear();
     this.pendingOwnPad = null;
     this.state = this.makeFreshState(this.activeMap);
     this.state.commandTeam = this.localTeam;
@@ -472,7 +574,7 @@ export class GameSim {
           const chosen = this.chooseGatherer(this.localTeam, hit.id);
           if (chosen) ids = [chosen.id];
         }
-        if (ids.length > 0) this.orderSink({ t: "gather", team: this.localTeam, ids, nodeId: hit.id });
+        if (ids.length > 0) this.redirect({ t: "gather", team: this.localTeam, ids, nodeId: hit.id });
         return;
       }
       this.assignVillagerToNode(hit.id, this.localTeam);
@@ -598,18 +700,18 @@ export class GameSim {
       }
       const ids = selected.map((v) => v.id);
       if (hit?.kind === "node") {
-        this.orderSink({ t: "gather", team, ids, nodeId: hit.id });
+        this.redirect({ t: "gather", team, ids, nodeId: hit.id });
         return;
       }
       if (hit?.kind === "unit") {
         const enemyTeam: Team = team === "you" ? "foe" : "you";
         const unit = this.state.units.find((u) => u.id === Number(hit.id) && u.team === enemyTeam && u.hp > 0);
         if (unit) {
-          this.orderSink({ t: "attack", team, ids, targetId: unit.id });
+          this.redirect({ t: "attack", team, ids, targetId: unit.id });
           return;
         }
       }
-      this.orderSink({ t: patrol ? "patrol" : "move", team, ids, x: world.x, y: world.y });
+      this.redirect({ t: patrol ? "patrol" : "move", team, ids, x: world.x, y: world.y });
       return;
     }
     if (selected.length === 0) {
@@ -2930,15 +3032,32 @@ export class GameSim {
     };
   }
 
-  private armPose(kind: "u" | "v", id: number, x: number, y: number) {
+  private armPose(
+    kind: "u" | "v",
+    id: number,
+    x: number,
+    y: number,
+    shown: { x: number; y: number } | undefined,
+    snapDistance: number,
+  ) {
     const key = kind + id;
     const prev = this.poses.get(key);
-    const along = prev ? Math.min(1, Math.max(0, prev.a)) : 1;
-    const fromX = prev ? prev.x + (prev.tx - prev.x) * along : x;
-    const fromY = prev ? prev.y + (prev.ty - prev.y) * along : y;
+    let fromX = x;
+    let fromY = y;
+    let hasFrom = false;
+    if (shown) {
+      fromX = shown.x;
+      fromY = shown.y;
+      hasFrom = true;
+    } else if (prev) {
+      const along = Math.min(1, Math.max(0, prev.a));
+      fromX = prev.x + (prev.tx - prev.x) * along;
+      fromY = prev.y + (prev.ty - prev.y) * along;
+      hasFrom = true;
+    }
     const dx = x - fromX;
     const dy = y - fromY;
-    if (!prev || dx * dx + dy * dy > POSE_SNAP * POSE_SNAP) {
+    if (!hasFrom || dx * dx + dy * dy > snapDistance * snapDistance) {
       this.poses.set(key, { x, y, tx: x, ty: y, a: 1 });
       return { x, y };
     }
@@ -2948,11 +3067,12 @@ export class GameSim {
 
   private notePoseGap() {
     const now = performance.now();
-    const gap = this.lastPoseAt > 0 ? (now - this.lastPoseAt) / 1000 : 0.1;
+    const gap = this.lastPoseAt > 0 ? (now - this.lastPoseAt) / 1000 : 0.05;
     this.lastPoseAt = now;
     this.poseSpan = Math.min(1.25, Math.max(0.05, gap));
   }
 
+  /** Glide peons and soldiers from the last picture to this one over the picture gap. */
   private stepPoses(dt: number) {
     if (dt <= 0 || this.poses.size === 0) return;
     const gain = dt / Math.max(0.05, this.poseSpan);
@@ -2964,7 +3084,10 @@ export class GameSim {
       pos.y = pose.y + (pose.ty - pose.y) * pose.a;
     };
     for (const unit of this.state.units) slide("u" + unit.id, unit.pos);
-    for (const villager of this.state.villagers) slide("v" + villager.id, villager.pos);
+    for (const villager of this.state.villagers) {
+      if (this.predicted.has(villager.id)) continue;
+      slide("v" + villager.id, villager.pos);
+    }
   }
 
   private prunePoses() {
@@ -2988,10 +3111,19 @@ export class GameSim {
 
   private copySnapshot(snap: MatchSnapshot) {
     const s = this.state;
-    if (snap.mapId !== s.mapId) {
+    const mapChanged = snap.mapId !== s.mapId;
+    if (mapChanged) {
       this.poses.clear();
       this.lastPoseAt = 0;
+      this.predicted.clear();
     }
+    const shownVillagers = new Map<number, { x: number; y: number }>();
+    const shownUnits = new Map<number, { x: number; y: number }>();
+    if (!mapChanged) {
+      for (const v of s.villagers) shownVillagers.set(v.id, { x: v.pos.x, y: v.pos.y });
+      for (const u of s.units) shownUnits.set(u.id, { x: u.pos.x, y: u.pos.y });
+    }
+    const easingOwn = new Set(this.predicted);
     this.notePoseGap();
     const selectedVillagerIds = s.selectedVillagerIds;
     const selectedBuildingId = s.selectedBuildingId;
@@ -3044,7 +3176,7 @@ export class GameSim {
     for (const u of snap.units) {
       const def = UNIT_DEFS[u.kind];
       if (!def || !Number.isFinite(u.id) || !Number.isFinite(u.x) || !Number.isFinite(u.y)) continue;
-      const pos = this.armPose("u", u.id, u.x, u.y);
+      const pos = this.armPose("u", u.id, u.x, u.y, shownUnits.get(u.id), POSE_GLIDE);
       s.units.push({
         id: u.id,
         team: u.team,
@@ -3070,7 +3202,15 @@ export class GameSim {
     s.villagers = [];
     for (const v of snap.villagers) {
       if (!Number.isFinite(v.id) || !Number.isFinite(v.x) || !Number.isFinite(v.y)) continue;
-      const pos = this.armPose("v", v.id, v.x, v.y);
+      const ownGuess = v.team === this.localTeam && easingOwn.has(v.id);
+      const pos = this.armPose(
+        "v",
+        v.id,
+        v.x,
+        v.y,
+        shownVillagers.get(v.id),
+        ownGuess ? PREDICT_EASE : POSE_GLIDE,
+      );
       s.villagers.push({
       id: v.id,
       team: v.team,
@@ -3095,6 +3235,7 @@ export class GameSim {
       });
     }
     this.prunePoses();
+    this.predicted.clear();
     s.buildings = snap.buildings.map((b) => ({
       id: b.id,
       team: b.team,

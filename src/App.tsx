@@ -358,7 +358,8 @@ export default function App() {
       }
       if (hosting) {
         snapAcc += Math.min(1, elapsed);
-        if (snapAcc >= 0.1) {
+        // 20 pictures a second. Oversized pictures still split for PeerJS.
+        if (snapAcc >= 0.05) {
           snapAcc = 0;
           linkRef.current?.send({ t: "snap", snap: sim.exportSnapshot() });
         }
