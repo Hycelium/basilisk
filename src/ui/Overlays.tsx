@@ -1,14 +1,8 @@
 import { useEffect, useState } from "react";
 import type { UiSnapshot } from "../game/types";
 
+const ITCH_PAGE = "https://ka9krew.itch.io/roadkeep";
 const DISCORD_INVITE = "https://discord.gg/FGbUfaxy8v";
-
-/** Live site uses /roadkeep/; dev uses /; a portal zip uses a relative base. */
-function publicGameUrl() {
-  const base = import.meta.env.BASE_URL || "/";
-  if (base.startsWith("/")) return new URL(base, window.location.origin).href;
-  return new URL(base, window.location.href).href;
-}
 
 function shareText(url: string) {
   return `Play Roadkeep with me: ${url} — versus AI, or Skirmish and I'll send an invite link. Discord: ${DISCORD_INVITE}`;
@@ -73,15 +67,14 @@ export function Overlays({ ui, hideTitle, onStart, onSkirmish, onRestart, onRero
   }, [shareNote]);
 
   const copyLink = async () => {
-    const ok = await copyText(shareText(publicGameUrl()));
+    const ok = await copyText(ITCH_PAGE);
     if (ok) setShareNote("Link copied");
   };
 
   const shareOnX = () => {
-    const url = publicGameUrl();
     const intent = new URL("https://twitter.com/intent/tweet");
-    intent.searchParams.set("text", shareText(url));
-    intent.searchParams.set("url", url);
+    intent.searchParams.set("text", shareText(ITCH_PAGE));
+    intent.searchParams.set("url", ITCH_PAGE);
     openExternal(intent.href);
   };
 
@@ -131,6 +124,9 @@ export function Overlays({ ui, hideTitle, onStart, onSkirmish, onRestart, onRero
           <div className="title-share" role="group" aria-label="Share this game">
             <button type="button" onClick={() => void copyLink()}>
               Copy link
+            </button>
+            <button type="button" onClick={() => openExternal(ITCH_PAGE)}>
+              itch.io
             </button>
             <button type="button" onClick={() => openExternal(DISCORD_INVITE)}>
               Discord
