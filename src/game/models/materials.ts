@@ -3,6 +3,48 @@ import type { Team } from "../types";
 
 /** Procedural canvas textures + helpers shared by the hand-built structure models. */
 
+/**
+ * Mobile GPUs often fail the lit color pass for MeshStandardMaterial when the
+ * same CanvasTexture is bound as both `map` (sRGB) and `bumpMap` (must be
+ * linear / NoColorSpace). Depth/shadow still works, so buildings cast correct
+ * shadows but only untextured emissive windows remain visible (yellow stubs).
+ * Configure before the first `materials.*()` call from the renderer.
+ */
+let texAnisotropy = 8;
+let allowBump = true;
+let canvasSize = 512;
+
+export function configureStructureMaterials(opts: { anisotropy: number; bump: boolean; canvasSize?: number }) {
+  texAnisotropy = Math.max(1, opts.anisotropy);
+  allowBump = opts.bump;
+  if (opts.canvasSize) canvasSize = opts.canvasSize;
+  for (const tex of Object.values(shared)) {
+    if (!tex) continue;
+    if (tex.anisotropy !== texAnisotropy) {
+      tex.anisotropy = texAnisotropy;
+      tex.needsUpdate = true;
+    }
+  }
+  for (const mat of matCache.values()) {
+    let changed = false;
+    if (mat.map && mat.map.anisotropy !== texAnisotropy) {
+      mat.map.anisotropy = texAnisotropy;
+      mat.map.needsUpdate = true;
+      changed = true;
+    }
+    if (!allowBump && mat.bumpMap) {
+      mat.bumpMap = null;
+      mat.bumpScale = 0;
+      changed = true;
+    } else if (allowBump && mat.map && !mat.bumpMap && (mat.userData.bumpScale as number) > 0) {
+      mat.bumpMap = bumpFromAlbedo(mat.map);
+      mat.bumpScale = mat.userData.bumpScale as number;
+      changed = true;
+    }
+    if (changed) mat.needsUpdate = true;
+  }
+}
+
 function rng(seed: number) {
   let s = seed >>> 0 || 1;
   return () => ((s = (s * 16807) % 2147483647) / 2147483647);
@@ -15,8 +57,28 @@ function canvas(size: number, draw: (g: CanvasRenderingContext2D, r: () => numbe
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.anisotropy = 8;
+  t.anisotropy = texAnisotropy;
+  t.needsUpdate = true;
   return t;
+}
+
+/** Bump sampling is non-color data — never share the sRGB albedo Texture object. */
+function bumpFromAlbedo(albedo: THREE.Texture) {
+  const bump = albedo.clone();
+  bump.colorSpace = THREE.NoColorSpace;
+  bump.wrapS = albedo.wrapS;
+  bump.wrapT = albedo.wrapT;
+  bump.repeat.copy(albedo.repeat);
+  bump.offset.copy(albedo.offset);
+  bump.anisotropy = albedo.anisotropy;
+  bump.needsUpdate = true;
+  return bump;
+}
+
+/** Linear bump clone, or null when bump maps are disabled for the device. */
+export function cloneBumpMap(albedo: THREE.Texture | null | undefined): THREE.Texture | null {
+  if (!albedo || !allowBump) return null;
+  return bumpFromAlbedo(albedo);
 }
 
 const shade = (base: [number, number, number], k: number) =>
@@ -24,32 +86,33 @@ const shade = (base: [number, number, number], k: number) =>
 
 /** Irregular coursed stone blocks with mortar. */
 function stoneTex() {
+  const s = canvasSize;
   return canvas(
-    512,
+    s,
     (g, r) => {
       g.fillStyle = "#5e584e";
-      g.fillRect(0, 0, 512, 512);
-      for (let y = 0; y < 512; y += 32) {
-        let x = -r() * 60;
-        while (x < 512) {
-          const w = 38 + r() * 54;
+      g.fillRect(0, 0, s, s);
+      for (let y = 0; y < s; y += s / 16) {
+        let x = -r() * (s * 0.12);
+        while (x < s) {
+          const w = s * 0.07 + r() * s * 0.11;
           g.fillStyle = shade([178, 170, 155], 0.75 + r() * 0.4);
-          g.fillRect(x + 2, y + 2, w - 4, 28);
+          g.fillRect(x + 2, y + 2, w - 4, s / 16 - 4);
           g.fillStyle = "rgba(255,255,255,0.08)";
           g.fillRect(x + 2, y + 2, w - 4, 4);
           g.fillStyle = "rgba(0,0,0,0.18)";
-          g.fillRect(x + 2, y + 25, w - 4, 5);
+          g.fillRect(x + 2, y + s / 16 - 7, w - 4, 5);
           x += w;
         }
       }
-      for (let i = 0; i < 5000; i++) {
+      for (let i = 0; i < (s * s) / 50; i++) {
         g.fillStyle = r() < 0.5 ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.08)";
-        g.fillRect(r() * 512, r() * 512, 2, 2);
+        g.fillRect(r() * s, r() * s, 2, 2);
       }
       for (let i = 0; i < 60; i++) {
         g.fillStyle = "rgba(70,90,50,0.18)";
         g.beginPath();
-        g.arc(r() * 512, r() * 512, 4 + r() * 14, 0, 7);
+        g.arc(r() * s, r() * s, 4 + r() * 14, 0, 7);
         g.fill();
       }
     },
@@ -59,22 +122,23 @@ function stoneTex() {
 
 /** Weathered granite: blotchy tones with dark cracks. */
 function rockTex() {
+  const s = canvasSize;
   return canvas(
-    512,
+    s,
     (g, r) => {
       g.fillStyle = "#8a867e";
-      g.fillRect(0, 0, 512, 512);
+      g.fillRect(0, 0, s, s);
       for (let i = 0; i < 260; i++) {
         g.fillStyle = shade([140, 136, 128], 0.7 + r() * 0.5);
         g.beginPath();
-        g.ellipse(r() * 512, r() * 512, 10 + r() * 40, 6 + r() * 24, r() * 3, 0, 7);
+        g.ellipse(r() * s, r() * s, 10 + r() * 40, 6 + r() * 24, r() * 3, 0, 7);
         g.fill();
       }
       g.strokeStyle = "rgba(30,28,25,0.55)";
       for (let i = 0; i < 40; i++) {
         g.lineWidth = 1 + r() * 2.5;
         g.beginPath();
-        let x = r() * 512, y = r() * 512;
+        let x = r() * s, y = r() * s;
         g.moveTo(x, y);
         for (let k = 0; k < 6; k++) g.lineTo((x += (r() - 0.5) * 60), (y += r() * 40));
         g.stroke();
@@ -82,7 +146,7 @@ function rockTex() {
       for (let i = 0; i < 80; i++) {
         g.fillStyle = "rgba(90,110,60,0.22)";
         g.beginPath();
-        g.arc(r() * 512, r() * 512, 3 + r() * 12, 0, 7);
+        g.arc(r() * s, r() * s, 3 + r() * 12, 0, 7);
         g.fill();
       }
     },
@@ -92,15 +156,16 @@ function rockTex() {
 
 /** Overlapping rounded slate / shingle scales. */
 function slateTex() {
+  const s = canvasSize;
   return canvas(
-    512,
+    s,
     (g, r) => {
       g.fillStyle = "#2a2a2e";
-      g.fillRect(0, 0, 512, 512);
-      const w = 32, h = 24;
-      for (let row = 0; row < 512 / h + 1; row++) {
+      g.fillRect(0, 0, s, s);
+      const w = s / 16, h = s / 21;
+      for (let row = 0; row < s / h + 1; row++) {
         const off = row % 2 ? w / 2 : 0;
-        for (let x = -w; x < 512 + w; x += w) {
+        for (let x = -w; x < s + w; x += w) {
           const v = 0.7 + r() * 0.45;
           g.fillStyle = shade([200, 200, 205], v);
           g.beginPath();
@@ -120,28 +185,30 @@ function slateTex() {
 
 /** Cream plaster with dark timber framing and cross braces. */
 function timberTex() {
+  const s = canvasSize;
   return canvas(
-    512,
+    s,
     (g, r) => {
       g.fillStyle = "#d8ccb0";
-      g.fillRect(0, 0, 512, 512);
-      for (let i = 0; i < 3000; i++) {
+      g.fillRect(0, 0, s, s);
+      for (let i = 0; i < (s * s) / 85; i++) {
         g.fillStyle = r() < 0.5 ? "rgba(120,100,70,0.08)" : "rgba(255,255,255,0.1)";
-        g.fillRect(r() * 512, r() * 512, 3, 3);
+        g.fillRect(r() * s, r() * s, 3, 3);
       }
       g.fillStyle = "#3e2a1a";
-      g.fillRect(0, 0, 512, 22);
-      g.fillRect(0, 490, 512, 22);
-      g.fillRect(0, 245, 512, 16);
-      for (let x = 0; x < 512; x += 128) g.fillRect(x, 0, 18, 512);
-      g.lineWidth = 14;
+      const beam = Math.max(10, s * 0.04);
+      g.fillRect(0, 0, s, beam);
+      g.fillRect(0, s - beam, s, beam);
+      g.fillRect(0, s / 2 - beam / 2, s, beam * 0.75);
+      for (let x = 0; x < s; x += s / 4) g.fillRect(x, 0, beam * 0.85, s);
+      g.lineWidth = beam * 0.65;
       g.strokeStyle = "#3e2a1a";
-      for (let x = 0; x < 512; x += 128) {
+      for (let x = 0; x < s; x += s / 4) {
         g.beginPath();
-        g.moveTo(x + 9, 22);
-        g.lineTo(x + 128, 245);
-        g.moveTo(x + 9, 490);
-        g.lineTo(x + 128, 261);
+        g.moveTo(x + beam / 2, beam);
+        g.lineTo(x + s / 4, s / 2);
+        g.moveTo(x + beam / 2, s - beam);
+        g.lineTo(x + s / 4, s / 2 + beam);
         g.stroke();
       }
     },
@@ -150,17 +217,18 @@ function timberTex() {
 }
 
 function woodTex() {
+  const s = Math.min(256, canvasSize);
   return canvas(
-    256,
+    s,
     (g, r) => {
       g.fillStyle = "#5a3c22";
-      g.fillRect(0, 0, 256, 256);
-      for (let x = 0; x < 256; x += 32) {
+      g.fillRect(0, 0, s, s);
+      for (let x = 0; x < s; x += s / 8) {
         g.fillStyle = shade([100, 68, 40], 0.8 + r() * 0.35);
-        g.fillRect(x + 1, 0, 30, 256);
+        g.fillRect(x + 1, 0, s / 8 - 2, s);
         for (let i = 0; i < 20; i++) {
           g.fillStyle = "rgba(0,0,0,0.15)";
-          g.fillRect(x + 2 + r() * 26, r() * 256, 1, 20 + r() * 50);
+          g.fillRect(x + 2 + r() * (s / 8 - 6), r() * s, 1, 20 + r() * 50);
         }
       }
     },
@@ -183,9 +251,19 @@ function mat(name: TexName, rx: number, ry: number, color = 0xffffff, bump = 0) 
   let m = matCache.get(key);
   if (!m) {
     const t = base(name).clone();
+    t.colorSpace = THREE.SRGBColorSpace;
     t.repeat.set(rx, ry);
+    t.anisotropy = texAnisotropy;
     t.needsUpdate = true;
-    m = new THREE.MeshStandardMaterial({ map: t, bumpMap: bump ? t : null, bumpScale: bump, color, roughness: 0.9 });
+    const bumpMap = bump && allowBump ? bumpFromAlbedo(t) : null;
+    m = new THREE.MeshStandardMaterial({
+      map: t,
+      bumpMap,
+      bumpScale: bumpMap ? bump : 0,
+      color,
+      roughness: 0.9,
+    });
+    m.userData.bumpScale = bump;
     matCache.set(key, m);
   }
   return m;
