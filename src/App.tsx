@@ -153,6 +153,7 @@ export default function App() {
     }
   });
   const [quality, setQuality] = useState<QualityInfo>({ setting: "auto", tier: "high", fps: 60 });
+  const [booting, setBooting] = useState(true);
   const [zoomT, setZoomT] = useState(0.39);
   const [tapMarkers, setTapMarkers] = useState<TapMarker[]>([]);
   const tapIdRef = useRef(0);
@@ -327,6 +328,8 @@ export default function App() {
     let prev = performance.now();
     let uiTick = 0;
     let snapAcc = 0;
+    let stopped = false;
+    let live = false;
     const frame = (now: number) => {
       let elapsed = (now - prev) / 1000;
       prev = now;
@@ -369,10 +372,21 @@ export default function App() {
       }
       if (!document.hidden) raf = requestAnimationFrame(frame);
     };
-    raf = requestAnimationFrame(frame);
+    const begin = () => {
+      if (live || stopped) return;
+      live = true;
+      prev = performance.now();
+      raf = requestAnimationFrame(frame);
+    };
     const heart = window.setInterval(() => {
+      if (!live) return;
       if (document.hidden && roleRef.current === "host" && liveRef.current) frame(performance.now());
     }, 50);
+    void renderer.prepare(sim.getState()).finally(() => {
+      if (stopped) return;
+      setBooting(false);
+      begin();
+    });
 
     const local = (ev: PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
@@ -537,12 +551,14 @@ export default function App() {
         clearLongPress();
         return;
       }
+      if (!live) return;
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(frame);
     };
     document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
+      stopped = true;
       ro?.disconnect();
       window.clearTimeout(resizeTimer);
       window.removeEventListener("resize", scheduleResize);
@@ -938,6 +954,12 @@ export default function App() {
 
         <div className={sheetOpen ? "stage sheet-open" : "stage"} ref={stageRef}>
           <canvas ref={canvasRef} className="battlefield" />
+          {booting && (
+            <div className="overlay boot-overlay" role="status" aria-live="polite">
+              <h1>Roadkeep</h1>
+              <p>Building the field…</p>
+            </div>
+          )}
           {selectionBox && (
             <div
               className="selection-box"

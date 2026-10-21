@@ -297,10 +297,29 @@ export class GameRenderer {
     this.buildSky();
     this.fitCamera();
     this.applyTier(this.tier, false);
-    void ensureModelsLoaded().then(() => {
-      // Force one remesh pass so trees/units upgrade to GLBs
+  }
+
+  /**
+   * Build the battlefield and wait until its shaders are linked before the first
+   * presented frame. Mobile GPUs compile in parallel; drawing early drops the
+   * color pass while the cheaper shadow pass still lands.
+   */
+  async prepare(state: GameState): Promise<void> {
+    try {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      this.resize();
+      await ensureModelsLoaded();
       this.lastMapId = "";
-    });
+      this.syncScene(state);
+      await Promise.race([
+        this.renderer.compileAsync(this.scene, this.camera),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 12000)),
+      ]);
+      this.renderer.render(this.scene, this.camera);
+    } catch {
+      /* Still open the field if a compile rejects. */
+    }
+    this.wallClock = performance.now();
   }
 
   private rebuildBattlefield(state: GameState) {
@@ -885,6 +904,18 @@ export class GameRenderer {
     this.wallClock = now;
     this.sampleFrame(rawMs);
 
+    this.syncScene(state, step);
+
+    const profile = TIER_PROFILE[this.tier];
+    if (profile.shadows && profile.shadowEvery > 1) {
+      this.shadowFrame = (this.shadowFrame + 1) % profile.shadowEvery;
+      if (this.shadowFrame === 0) this.renderer.shadowMap.needsUpdate = true;
+    }
+
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  private syncScene(state: GameState, step = 0) {
     if (state.mapId !== this.lastMapId) {
       this.rebuildBattlefield(state);
     }
@@ -906,14 +937,6 @@ export class GameRenderer {
 
     this.sun.intensity = 2.25 + Math.sin(state.time * 0.35) * 0.1;
     this.hemi.intensity = 1.3 + Math.sin(state.time * 0.22) * 0.05;
-
-    const profile = TIER_PROFILE[this.tier];
-    if (profile.shadows && profile.shadowEvery > 1) {
-      this.shadowFrame = (this.shadowFrame + 1) % profile.shadowEvery;
-      if (this.shadowFrame === 0) this.renderer.shadowMap.needsUpdate = true;
-    }
-
-    this.renderer.render(this.scene, this.camera);
   }
 
   /** Mixers near the camera tick every frame; distant ones at half/third rate (accumulated dt). */
