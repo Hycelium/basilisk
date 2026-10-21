@@ -1,8 +1,8 @@
 import * as THREE from "three";
-import { ROAD_Y_MAX, ROAD_Y_MIN, WORLD_H, WORLD_W } from "./balance";
+import { WORLD_H, WORLD_W } from "./balance";
 import { groundLookForSeed, groundTexture, wheatTexture } from "./groundLooks";
 import { buildRockPile, buildTree, SCENERY_TREES } from "./models/nature";
-import { MAP_CX, mapBounds, mapLanes, riverSpec, rngFromSeed, roadCenterX } from "./map";
+import { BACK_FIELD, MAP_CX, mapBounds, mapLanes, riverSpec, rngFromSeed, roadCenterX } from "./map";
 import { buildBackdrop, buildCliffs, fbm } from "./landscape";
 import type { Team } from "./types";
 
@@ -62,21 +62,31 @@ function sampleGround(simX: number, simY: number, seed: number, river: ReturnTyp
   h += fbm(simX * 0.2, simY * 0.2, seed + 5, 3) * 0.5;
 
   // Flatten playable strip + roads
-  const onRoad = simY > ROAD_Y_MIN - 8 && simY < ROAD_Y_MAX + 8 && roadGap(seed, simX, simY) < 22;
+  const onRoad = simY > 40 && simY < WORLD_H - 40 && roadGap(seed, simX, simY) < 22;
   const riverY = river.y + Math.sin((simX / WORLD_W) * Math.PI * 2 + river.phase) * river.amplitude;
   const onRiver = river.enabled && Math.abs(simY - riverY) < river.width * 0.62;
-  const inField = simX > minX + 20 && simX < maxX - 20 && simY > 60 && simY < WORLD_H - 40;
+  const inField = simX > minX + 20 && simX < maxX - 20 && simY > -20 && simY < WORLD_H + 40;
   if (onRiver) h = -2.2;
   else if (onRoad) h *= 0.05;
   else if (inField) h *= 0.35;
-  else h += Math.max(0, Math.abs(simX - MAP_CX) / width - 0.35) * 18;
+  else h += Math.max(0, Math.abs(simX - MAP_CX) / width - 0.35) * 12.6;
 
-  // Edge cliffs
+  // Deep valley in the center behind each keep, past the house yard.
+  const southDrop = Math.max(0, simY - (WORLD_H + 28));
+  const northDrop = Math.max(0, -28 - simY);
+  const along = Math.max(southDrop, northDrop);
+  if (along > 0) {
+    const mid = Math.max(0, 1 - Math.abs(simX - MAP_CX) / (width * 0.42));
+    h -= Math.min(48, along * mid * mid * 0.35);
+  }
+
+  // Side and far-end cliffs — the far rise starts past the house yard, 30% lower than before.
   const sideEdge = Math.min(Math.max(0, minX + 28 - simX, simX - (maxX - 28)), 30);
-  const edge = Math.max(sideEdge * 0.6, 40 - simY, simY - (WORLD_H - 30));
-  if (edge > 0) h += edge * 0.4 + fbm(simX * 0.06, simY * 0.06, seed + 11) * Math.min(edge, 20) * 0.25;
+  const endCliff = Math.max(0, -BACK_FIELD + 50 - simY, simY - (WORLD_H + BACK_FIELD - 50));
+  const edge = Math.max(sideEdge * 0.6, endCliff);
+  if (edge > 0) h += edge * 0.28 + fbm(simX * 0.06, simY * 0.06, seed + 11) * Math.min(edge, 20) * 0.18;
 
-  return { h: Math.max(-2, h), onRoad, onRiver, inField, riverY };
+  return { h: Math.max(-48, h), onRoad, onRiver, inField, riverY };
 }
 
 /** High-poly displaced battlefield; ground look (painted / textured, wheat patches) rotates per seed. */
@@ -86,9 +96,9 @@ export function buildTerrain(seed: number) {
   const look = groundLookForSeed(seed);
   const { minX, width } = mapBounds(seed);
   const segsX = Math.round((200 * width) / WORLD_W);
-  const segsZ = 330;
   const sizeX = width + 120;
-  const sizeZ = WORLD_H + 100;
+  const sizeZ = WORLD_H + BACK_FIELD * 2;
+  const segsZ = Math.round((330 * sizeZ) / (WORLD_H + 100));
   const geo = new THREE.PlaneGeometry(sizeX, sizeZ, segsX, segsZ);
   geo.rotateX(-Math.PI / 2);
 
@@ -172,8 +182,10 @@ export function buildTerrain(seed: number) {
   // Raised curved cobble roads
   for (const i of mapLanes(seed)) {
     const roadPts: THREE.Vector3[] = [];
-    for (let s = 0; s <= 64; s++) {
-      const simY = ROAD_Y_MIN - 10 + (s / 64) * (ROAD_Y_MAX - ROAD_Y_MIN + 20);
+    const roadMin = 48;
+    const roadMax = WORLD_H - 48;
+    for (let s = 0; s <= 96; s++) {
+      const simY = roadMin + (s / 96) * (roadMax - roadMin);
       roadPts.push(
         new THREE.Vector3(roadCenterX(seed, i, simY) - WORLD_W / 2, 0.6, simY - WORLD_H / 2),
       );
@@ -192,7 +204,7 @@ export function buildTerrain(seed: number) {
 
     // Path edge stones
     for (let s = 0; s < 18; s++) {
-      const zy = ROAD_Y_MIN + (s / 17) * (ROAD_Y_MAX - ROAD_Y_MIN);
+      const zy = 72 + (s / 17) * (WORLD_H - 144);
       const cx = roadCenterX(seed, i, zy);
       for (const side of [-1, 1]) {
         const pebble = new THREE.Mesh(
@@ -298,14 +310,15 @@ export function buildScenery(seed: number) {
         y = 80 + rng() * (WORLD_H - 160);
       } else if (edge === 2) {
         x = minX + 40 + rng() * (width - 80);
-        y = 30 + rng() * 50;
+        y = -BACK_FIELD + 40 + rng() * (BACK_FIELD - 20);
       } else {
         x = minX + 40 + rng() * (width - 80);
-        y = WORLD_H - 70 + rng() * 50;
+        y = WORLD_H + 20 + rng() * (BACK_FIELD - 40);
       }
     }
     if (roadGap(seed, x, y) < 30) continue;
-    if (Math.abs(x - MAP_CX) < 40 && (y < 140 || y > 500)) continue;
+    // Keep both yards and the valley floor clear.
+    if (Math.abs(x - MAP_CX) < 80 && (y < 140 || y > WORLD_H - 90)) continue;
 
     // Scenery never uses the oak, which marks wood nodes.
     const kind = SCENERY_TREES[Math.floor(rng() * SCENERY_TREES.length)];
@@ -320,6 +333,7 @@ export function buildScenery(seed: number) {
     const x = minX + 30 + rng() * (width - 60);
     const y = 70 + rng() * (WORLD_H - 140);
     if (roadGap(seed, x, y) < 26) continue;
+    if (Math.abs(x - MAP_CX) < 70 && (y < 90 || y > WORLD_H - 90)) continue;
     const pile = buildRockPile(rng() * 3, 0.9 + rng() * 1.1);
     pile.position.set(x - WORLD_W / 2, 0, y - WORLD_H / 2);
     pile.rotation.y = rng() * Math.PI * 2;

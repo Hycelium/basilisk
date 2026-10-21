@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { WORLD_H } from "./balance";
-import { mapBounds, rngFromSeed } from "./map";
+import { BACK_FIELD, mapBounds, rngFromSeed } from "./map";
 import { materials } from "./models/materials";
 import { buildTree } from "./models/nature";
 
@@ -112,13 +112,13 @@ function mistTexture() {
   return (mistTex = new THREE.CanvasTexture(cv));
 }
 
-const WALL_H = 74;
+const WALL_H = 52;
 
 /** Craggy side walls running the full map length, with gorges where waterfalls spill into the valley. */
 export function buildCliffs(seed: number) {
   const g = new THREE.Group();
   const rng = rngFromSeed(seed ^ 0x77e1);
-  const L = WORLD_H + 260;
+  const L = WORLD_H + BACK_FIELD * 2 + 80;
   for (const s of [-1, 1] as const) {
     const sd = seed + (s > 0 ? 501 : 0);
     const nFalls = 1 + Math.floor(rng() * 2);
@@ -281,26 +281,36 @@ function waterfall(s: -1 | 1, z0: number, faceX: (z: number, y: number) => numbe
   return g;
 }
 
-/** Snow-capped ridged range behind the foe's end of the valley and wrapping round the flanks. */
+/** Snow-capped ridged ranges past each keep, pushed back past the house-yard valley. */
 export function buildBackdrop(seed: number) {
+  const g = new THREE.Group();
+  g.add(makeRange(seed, -1), makeRange(seed + 91, 1));
+  return g;
+}
+
+function makeRange(seed: number, south: -1 | 1) {
   const halfW = mapBounds(seed).width / 2;
-  const sizeX = halfW * 2 + 900, sizeZ = 420;
+  const sizeX = halfW * 2 + 900;
+  const sizeZ = 420;
   const geo = new THREE.PlaneGeometry(sizeX, sizeZ, 260, 110).rotateX(-Math.PI / 2);
   const p = geo.attributes.position as THREE.BufferAttribute;
   const crevice = new Float32Array(p.count);
   for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i), z = p.getZ(i);
-    const back = (sizeZ / 2 - z) / sizeZ;
+    const x = p.getX(i);
+    const z = p.getZ(i);
+    const back = south < 0 ? (sizeZ / 2 - z) / sizeZ : (z + sizeZ / 2) / sizeZ;
     const side = Math.max(0, Math.abs(x) - (halfW + 60)) / 300;
     const rise = THREE.MathUtils.smoothstep(back, 0.05, 0.5) + side * 0.6;
     const r = ridged(x * 0.008, z * 0.008, seed + 33, 6);
-    p.setY(i, 30 + rise * (40 + r * 150) + fbm(x * 0.03, z * 0.03, seed + 34) * 8);
+    // 30% lower than the original range.
+    p.setY(i, 0.7 * (30 + rise * (40 + r * 150) + fbm(x * 0.03, z * 0.03, seed + 34) * 8));
     crevice[i] = 0.55 - r * 0.8;
   }
   const uvs = geo.attributes.uv as THREE.BufferAttribute;
   for (let i = 0; i < uvs.count; i++) uvs.setXY(i, uvs.getX(i) * (sizeX / 40), uvs.getY(i) * (sizeZ / 40));
-  geo.translate(0, 0, -WORLD_H / 2 - 40 - sizeZ / 2);
-  paintRock(geo, crevice, seed, 135);
+  const gap = 200;
+  geo.translate(0, 0, south * (WORLD_H / 2 + gap + sizeZ / 2));
+  paintRock(geo, crevice, seed, 95);
   const m = new THREE.Mesh(geo, rockMaterial(2));
   m.receiveShadow = true;
   return m;

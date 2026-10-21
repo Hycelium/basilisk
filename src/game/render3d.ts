@@ -233,11 +233,11 @@ export class GameRenderer {
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.bias = -0.0002;
     this.sun.shadow.camera.near = 10;
-    this.sun.shadow.camera.far = 1100;
-    this.sun.shadow.camera.left = -360;
-    this.sun.shadow.camera.right = 360;
-    this.sun.shadow.camera.top = 480;
-    this.sun.shadow.camera.bottom = -480;
+    this.sun.shadow.camera.far = 1400;
+    this.sun.shadow.camera.left = -420;
+    this.sun.shadow.camera.right = 420;
+    this.sun.shadow.camera.top = 620;
+    this.sun.shadow.camera.bottom = -620;
     this.scene.add(this.sun);
     this.scene.add(new THREE.AmbientLight(0xc8d8f0, 0.85));
     const fill = new THREE.DirectionalLight(0xb0d0ff, 0.75);
@@ -318,7 +318,7 @@ export class GameRenderer {
   }
 
   private buildSky() {
-    const skyGeo = new THREE.SphereGeometry(900, 24, 16);
+    const skyGeo = new THREE.SphereGeometry(1400, 24, 16);
     const skyMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
@@ -403,7 +403,7 @@ export class GameRenderer {
     this.camLook.addScaledVector(forward, -dy * scale);
     const panX = this.mapWidth / 2 - 40;
     this.camLook.x = THREE.MathUtils.clamp(this.camLook.x, -panX, panX);
-    this.camLook.z = THREE.MathUtils.clamp(this.camLook.z, -280, 280);
+    this.camLook.z = THREE.MathUtils.clamp(this.camLook.z, -400, 400);
     this.applyCamera();
   }
 

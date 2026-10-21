@@ -24,6 +24,8 @@ export function hashSeed(...parts: number[]) {
 
 /** Both keeps sit on this X. Wider maps grow outward from it, so 3-road maps reach below x = 0. */
 export const MAP_CX = WORLD_W / 2;
+/** Extra ground past each keep so the house yard sits on the field, not the cliff. */
+export const BACK_FIELD = 180;
 const LANE_SPACING = ROAD_X[1] - ROAD_X[0];
 const HALF_WIDTH: Record<LaneCount, number> = { 1: 160, 2: 200, 3: 280 };
 const ALL_LANES: Lane[] = [0, 1, 2];
@@ -42,8 +44,23 @@ export function mapBounds(seed: number) {
   return { minX: MAP_CX - half, maxX: MAP_CX + half, width: half * 2 };
 }
 
-function roadBaseX(seed: number, lane: Lane) {
-  return MAP_CX + (lane - (laneCount(seed) - 1) / 2) * LANE_SPACING;
+/** Outer roads close to this fraction of mid-map spacing at each keep (~14px, inside the wall). */
+const KEEP_FAN_IN = 0.08;
+/** Fraction of the march used to open/close the fan. */
+const FAN_ZONE = 0.26;
+
+function smoothstep(lo: number, hi: number, x: number) {
+  const k = Math.max(0, Math.min(1, (x - lo) / (hi - lo)));
+  return k * k * (3 - 2 * k);
+}
+
+/** Road spine before bends. On 3-road maps the outer roads fan in to both keeps. */
+function roadBaseX(seed: number, lane: Lane, t: number) {
+  const n = laneCount(seed);
+  const offset = (lane - (n - 1) / 2) * LANE_SPACING;
+  if (n < 3) return MAP_CX + offset;
+  const fan = smoothstep(0, FAN_ZONE, t) * smoothstep(0, FAN_ZONE, 1 - t);
+  return MAP_CX + offset * (KEEP_FAN_IN + (1 - KEEP_FAN_IN) * fan);
 }
 
 export function laneName(seed: number, lane: Lane) {
@@ -62,7 +79,7 @@ export function roadCenterX(seed: number, lane: Lane, y: number) {
   const b = ((hashSeed(seed, lane, 31) % 2001) / 1000 - 1) * 11;
   const phase = ((hashSeed(seed, lane, 47) % 1000) / 1000) * Math.PI * 2;
   return (
-    roadBaseX(seed, lane) +
+    roadBaseX(seed, lane, t) +
     envelope * (a * Math.sin(Math.PI * t + phase) + b * Math.sin(Math.PI * 3 * t - phase * 0.4))
   );
 }
@@ -352,7 +369,7 @@ export function buildPads(map: MapDef): Pad[] {
   for (let k = 0; k < ecoCount; k++) {
     const offset = k - map.lanes / 2;
     const x = MAP_CX + offset * 52;
-    const y = 692 + Math.abs(offset) * 6;
+    const y = 718 + Math.abs(offset) * 8;
     pads.push({
       id: `you-eco-${k}`,
       team: "you",
