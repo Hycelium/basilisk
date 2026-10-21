@@ -50,6 +50,8 @@ export interface Unit {
   targetUnitId?: number;
   targetKeep: boolean;
   fromBarracks: boolean;
+  /** Runner only. The next melee hit is a charge until it connects; leaving contact arms it again. */
+  chargeReady?: boolean;
   ignoreEnemyCreeps: boolean;
   rallyPoint?: Vec2;
   /** Spot where auto-engage broke off. The unit returns here before chasing again. */

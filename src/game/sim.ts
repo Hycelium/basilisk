@@ -15,6 +15,7 @@ import {
   FOE_SIEGE_Y,
   HOUSE_POP,
   KEEP_THREAT_RADIUS,
+  LEVY_VS_WARD_DAMAGE,
   MAX_PEON_QUEUE,
   MAX_TRAIN_QUEUE,
   AGGRO_LEASH_MULT,
@@ -29,6 +30,7 @@ import {
   PEON_TRAIN_WOOD,
   YOU_SIEGE_Y,
   RATE_MULT,
+  RUNNER_CHARGE_DAMAGE,
   RUSH_BONUS,
   START_GOLD,
   START_KEEP_HP,
@@ -1162,6 +1164,7 @@ export class GameSim {
       siegeGap: def.siegeGap,
       targetKeep: false,
       fromBarracks,
+      chargeReady: kind === "runner",
       ignoreEnemyCreeps: !fromBarracks,
       rallyPoint: barracks?.rallyPoint ? { ...barracks.rallyPoint } : undefined,
       aiHeldForRush,
@@ -1872,6 +1875,39 @@ export class GameSim {
     return seen;
   }
 
+  /** True when a runner is already touching an enemy, so the charge stays spent. */
+  private runnerInMelee(u: Unit) {
+    const contact = 18;
+    const enemyTeam = this.enemy(u.team);
+    for (const other of this.state.units) {
+      if (other.hp <= 0 || other.team !== enemyTeam) continue;
+      if (dist(u.pos, other.pos) <= contact) return true;
+    }
+    if (!u.fromBarracks) return false;
+    for (const villager of this.state.villagers) {
+      if (villager.hp <= 0 || villager.team !== enemyTeam || villager.state === "garrisoned") continue;
+      if (dist(u.pos, villager.pos) <= contact) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Melee damage for a soldier strike. Levies hit wards harder. A runner's
+   * first connected strike after closing in is a charge; the cooldown stays
+   * the unit's normal attack rate.
+   */
+  private meleeDamage(attacker: Unit, target: Unit | Villager) {
+    let dealt = attacker.damage;
+    if (attacker.kind === "levy" && "kind" in target && target.kind === "ward") {
+      dealt *= LEVY_VS_WARD_DAMAGE;
+    }
+    if (attacker.kind === "runner" && attacker.chargeReady !== false) {
+      dealt *= RUNNER_CHARGE_DAMAGE;
+      attacker.chargeReady = false;
+    }
+    return dealt;
+  }
+
   private fightMilitary(u: Unit, target: Unit | Villager, team: Team, dt: number) {
     const contact = u.kind === "archer" ? ARCHER_RANGE : 18;
     if (dist(u.pos, target.pos) > contact) {
@@ -1879,12 +1915,13 @@ export class GameSim {
       return;
     }
     if (u.attackTimer > 0) return;
-    target.hp -= u.damage;
-    u.attackTimer = u.attackCooldown;
     const ranged = u.kind === "archer";
+    const dealt = ranged ? u.damage : this.meleeDamage(u, target);
+    target.hp -= dealt;
+    u.attackTimer = u.attackCooldown;
     this.emitCombat(ranged ? "arrow" : "meleeHit", u.pos, target.pos, team);
     this.addFloat(
-      `-${Math.round(u.damage)}`,
+      `-${Math.round(dealt)}`,
       target.pos.x,
       target.pos.y - 7,
       ranged ? "#e8d39a" : "#ffd1cc",
@@ -1895,6 +1932,7 @@ export class GameSim {
     const enemyTeam = this.enemy(team);
     for (const u of this.state.units.filter((x) => x.team === team)) {
       u.attackTimer -= dt;
+      if (u.kind === "runner" && !this.runnerInMelee(u)) u.chargeReady = true;
       const gateY = laneYGate(team);
       const enemies = this.state.units.filter((e) => e.team === enemyTeam && e.lane === u.lane);
       if (u.fromBarracks) {
@@ -1951,10 +1989,11 @@ export class GameSim {
         : undefined;
       if (meleeTarget) {
         if (u.attackTimer <= 0) {
-          meleeTarget.hp -= u.damage;
+          const dealt = this.meleeDamage(u, meleeTarget);
+          meleeTarget.hp -= dealt;
           u.attackTimer = u.attackCooldown;
           this.emitCombat("meleeHit", u.pos, meleeTarget.pos, team);
-          this.addFloat(`-${Math.round(u.damage)}`, meleeTarget.pos.x, meleeTarget.pos.y - 6, "#ffd1cc");
+          this.addFloat(`-${Math.round(dealt)}`, meleeTarget.pos.x, meleeTarget.pos.y - 6, "#ffd1cc");
         }
         continue;
       }

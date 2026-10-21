@@ -945,6 +945,57 @@ export class GameRenderer {
     return this.scratchLive;
   }
 
+  private playAnimation(key: EntityKey, choices: string[], speed = 1) {
+    const animated = this.animationMap.get(key);
+    if (!animated) return;
+    const clip = choices
+      .map((name) => animated.clips.find((candidate) => candidate.name.toLowerCase() === name))
+      .find((candidate): candidate is THREE.AnimationClip => Boolean(candidate));
+    if (!clip || animated.current === clip.name) return;
+
+    const oldAction = animated.current ? animated.actions.get(animated.current) : undefined;
+    let action = animated.actions.get(clip.name);
+    if (!action) {
+      action = animated.mixer.clipAction(clip);
+      animated.actions.set(clip.name, action);
+    }
+    oldAction?.fadeOut(0.14);
+    action.reset().setEffectiveTimeScale(speed).fadeIn(0.14).play();
+    animated.current = clip.name;
+  }
+
+  /** Play every named clip at once. Split upper/lower rigs need both layers. */
+  private playTogether(key: EntityKey, names: string[], speed = 1) {
+    const animated = this.animationMap.get(key);
+    if (!animated) return;
+    const wanted = names
+      .map((name) => animated.clips.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase()))
+      .filter((candidate): candidate is THREE.AnimationClip => Boolean(candidate));
+    if (!wanted.length) {
+      this.playAnimation(key, names, speed);
+      return;
+    }
+    const sig = wanted.map((clip) => clip.name).join("|");
+    if (animated.current === sig) return;
+    const keep = new Set(wanted.map((clip) => clip.name));
+    for (const [name, action] of animated.actions) {
+      if (!keep.has(name)) action.fadeOut(0.14);
+    }
+    for (const clip of wanted) {
+      let action = animated.actions.get(clip.name);
+      if (!action) {
+        action = animated.mixer.clipAction(clip);
+        animated.actions.set(clip.name, action);
+      }
+      action.reset().setEffectiveTimeScale(speed).fadeIn(0.14).play();
+    }
+    animated.current = sig;
+  }
+
+  private usesSplitClips(key: EntityKey) {
+    return this.animationMap.get(key)?.clips.some((clip) => clip.name === "walk-lower") ?? false;
+  }
+
   private clearAnimation(key: EntityKey) {
     const animated = this.animationMap.get(key);
     if (!animated) return;
@@ -959,6 +1010,7 @@ export class GameRenderer {
       if (!live.has(k)) {
         this.dynamicRoot.remove(obj);
         this.clearAnimation(k);
+        if (k.startsWith("unit-")) this.clearAnimation(`${k}#rider`);
         this.entityMap.delete(k);
       }
     }
@@ -1213,8 +1265,326 @@ export class GameRenderer {
     this.prune("bar-", live);
   }
 
-  private makeUnit(u: Unit) {
-    return buildUnitModel(u.kind, u.team);
+  private addArcherGear(model: THREE.Object3D, team: Team) {
+    const wood = new THREE.MeshStandardMaterial({ color: 0x6b3d1f, roughness: 0.78 });
+    const bow = new THREE.Mesh(new THREE.TorusGeometry(2.7, 0.16, 5, 18, Math.PI * 1.55), wood);
+    bow.position.set(2.7, 7.2, 0.4);
+    bow.rotation.z = -0.85;
+    model.add(bow);
+    const string = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, -2.5, 0),
+        new THREE.Vector3(-1.25, 0, 0),
+        new THREE.Vector3(0, 2.5, 0),
+      ]),
+      new THREE.LineBasicMaterial({ color: 0xe7d9bd }),
+    );
+    string.position.copy(bow.position);
+    string.rotation.copy(bow.rotation);
+    model.add(string);
+    const quiver = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.65, 0.85, 4.8, 7),
+      new THREE.MeshStandardMaterial({ color: team === "you" ? 0x315f91 : 0x8c3340, roughness: 0.8 }),
+    );
+    quiver.position.set(-1.5, 6.5, -1.2);
+    quiver.rotation.z = 0.25;
+    model.add(quiver);
+  }
+
+  /** Heater shield, authored about 1 unit tall, parented in the knight's local space. */
+  private makeWardShield(team: Team) {
+    const shape = new THREE.Shape();
+    const w = 0.36;
+    const h = 0.5;
+    shape.moveTo(0, h);
+    shape.lineTo(w, h * 0.62);
+    shape.lineTo(w, -h * 0.08);
+    shape.quadraticCurveTo(w * 0.2, -h * 0.95, 0, -h);
+    shape.quadraticCurveTo(-w * 0.2, -h * 0.95, -w, -h * 0.08);
+    shape.lineTo(-w, h * 0.62);
+    shape.closePath();
+    const faceGeo = new THREE.ExtrudeGeometry(shape, {
+      depth: 0.08,
+      bevelEnabled: true,
+      bevelThickness: 0.018,
+      bevelSize: 0.02,
+      bevelSegments: 1,
+      curveSegments: 8,
+    });
+    faceGeo.translate(0, 0, -0.04);
+    const rimShape = new THREE.Shape();
+    const rw = w * 1.14;
+    const rh = h * 1.08;
+    rimShape.moveTo(0, rh);
+    rimShape.lineTo(rw, rh * 0.62);
+    rimShape.lineTo(rw, -rh * 0.08);
+    rimShape.quadraticCurveTo(rw * 0.2, -rh * 0.95, 0, -rh);
+    rimShape.quadraticCurveTo(-rw * 0.2, -rh * 0.95, -rw, -rh * 0.08);
+    rimShape.lineTo(-rw, rh * 0.62);
+    rimShape.closePath();
+    const rimGeo = new THREE.ExtrudeGeometry(rimShape, { depth: 0.045, bevelEnabled: false, curveSegments: 8 });
+    rimGeo.translate(0, 0, -0.07);
+    const group = new THREE.Group();
+    const rim = new THREE.Mesh(
+      rimGeo,
+      new THREE.MeshStandardMaterial({ color: 0x1c140e, roughness: 0.46, metalness: 0.42 }),
+    );
+    const face = new THREE.Mesh(
+      faceGeo,
+      new THREE.MeshStandardMaterial({ color: teamColor(team, true), roughness: 0.38, metalness: 0.18 }),
+    );
+    const boss = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.085, 0.085, 0.05, 12),
+      new THREE.MeshStandardMaterial({ color: 0xe8c56a, roughness: 0.32, metalness: 0.5 }),
+    );
+    boss.rotation.x = Math.PI / 2;
+    boss.position.z = 0.055;
+    const stripe = new THREE.Mesh(
+      new THREE.BoxGeometry(0.07, 0.72, 0.03),
+      new THREE.MeshStandardMaterial({ color: 0xf0d48a, roughness: 0.38, metalness: 0.42 }),
+    );
+    stripe.position.z = 0.05;
+    for (const mesh of [rim, face, boss, stripe]) mesh.castShadow = true;
+    group.add(rim, face, boss, stripe);
+    return group;
+  }
+
+  /**
+   * Team heater on the knight's left front. The face points mostly along the
+   * model's forward axis so the south/north RTS camera sees the plate, and it
+   * is wide enough to stick out past the body from behind.
+   */
+  private addWardShield(model: THREE.Object3D, team: Team, heightFrac: number) {
+    model.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const shield = this.makeWardShield(team);
+    const parentScale = new THREE.Vector3();
+    model.getWorldScale(parentScale);
+    const sx = Math.max(0.001, Math.abs(parentScale.x));
+    const sy = Math.max(0.001, Math.abs(parentScale.y));
+    const sz = Math.max(0.001, Math.abs(parentScale.z));
+    const height = size.y * heightFrac;
+    const width = height * 0.72;
+    const depth = Math.max(height * 0.14, size.y * 0.06);
+    // Authored shield is 1 tall, 0.72 wide, and about 0.16 thick.
+    shield.scale.set(width / 0.72 / sx, height / sy, depth / 0.16 / sz);
+    const world = new THREE.Vector3(
+      center.x + size.x * 0.55,
+      box.min.y + size.y * 0.56,
+      center.z + size.z * 0.55,
+    );
+    model.worldToLocal(world);
+    shield.position.copy(world);
+    shield.rotation.set(-0.28, -0.5, 0.06);
+    model.add(shield);
+  }
+
+  /** Steel helm and a team plume so the blocky body reads as a knight. */
+  private addHelmet(model: THREE.Object3D, team: Team) {
+    model.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const parentScale = new THREE.Vector3();
+    model.getWorldScale(parentScale);
+    const sx = Math.max(0.001, Math.abs(parentScale.x));
+    const sy = Math.max(0.001, Math.abs(parentScale.y));
+    const sz = Math.max(0.001, Math.abs(parentScale.z));
+    const diameter = size.y * 0.36;
+    const steel = new THREE.MeshStandardMaterial({ color: 0xd5dce6, metalness: 0.64, roughness: 0.28 });
+    const group = new THREE.Group();
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.5, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.58), steel);
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.66, 0.1, 12), steel);
+    brim.position.y = -0.04;
+    const plume = new THREE.Mesh(
+      new THREE.BoxGeometry(0.14, 0.62, 0.26),
+      new THREE.MeshStandardMaterial({ color: teamColor(team, true), roughness: 0.42, metalness: 0.12 }),
+    );
+    plume.position.set(0, 0.52, -0.04);
+    group.add(dome, brim, plume);
+    group.scale.set(diameter / sx, diameter / sy, diameter / sz);
+    const top = new THREE.Vector3(center.x, box.max.y - diameter * 0.22, center.z);
+    model.worldToLocal(top);
+    group.position.copy(top);
+    for (const mesh of [dome, brim, plume]) mesh.castShadow = true;
+    model.add(group);
+  }
+
+  /** Solid team armor. Materials are cloned so the shared template stays gray. */
+  private paintTeam(model: THREE.Object3D, team: Team) {
+    const color = new THREE.Color(team === "you" ? 0x24588f : 0x8a303c);
+    model.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const painted = list.map((mat) => {
+        const cloned = mat.clone();
+        if ("color" in cloned) {
+          const std = cloned as THREE.MeshStandardMaterial;
+          std.color.copy(color);
+          if ("metalness" in std) {
+            std.metalness = 0.46;
+            std.roughness = 0.36;
+            std.envMapIntensity = 0.85;
+          }
+        }
+        return cloned;
+      });
+      mesh.material = Array.isArray(mesh.material) ? painted : painted[0];
+    });
+  }
+
+  /**
+   * Shielded knight. The body is player-hero, not the levy's Kenney character.
+   * Character C is only the stand-in when that file cannot be parsed.
+   */
+  private makeKnight(u: Unit, key: EntityKey, height: number, role: "ward" | "rider") {
+    const animated = cloneAnimatedModel("knight", height) ?? cloneAnimatedModel("kCharC", height);
+    if (!animated) {
+      const body = new THREE.Group();
+      const torso = new THREE.Mesh(
+        new THREE.CapsuleGeometry(3.1, 5.2, 6, 10),
+        new THREE.MeshStandardMaterial({ color: u.team === "you" ? 0x24588f : 0x8a303c, roughness: 0.4, metalness: 0.4 }),
+      );
+      torso.position.y = 6.6;
+      torso.castShadow = true;
+      body.add(torso);
+      body.scale.setScalar(height / 12);
+      this.addHelmet(body, u.team);
+      this.addWardShield(body, u.team, role === "rider" ? 0.5 : 0.8);
+      return body;
+    }
+    this.paintTeam(animated.object, u.team);
+    this.addHelmet(animated.object, u.team);
+    this.addWardShield(animated.object, u.team, role === "rider" ? 0.5 : 0.8);
+    this.registerAnimation(key, animated.object, animated.clips);
+    return animated.object;
+  }
+
+  private makeProceduralHorse() {
+    const g = new THREE.Group();
+    const hide = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.74 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x24160f, roughness: 0.7 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3.6, 3.2, 8.4), hide);
+    body.position.set(0, 5.8, -0.3);
+    const neck = new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.8, 1.7), hide);
+    neck.position.set(0, 7.8, 3.5);
+    neck.rotation.x = -0.55;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(1.55, 1.45, 2.8), hide);
+    head.position.set(0, 9.1, 5.1);
+    const mane = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.5, 2.4), dark);
+    mane.position.set(0, 8.7, 3.7);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.4, 2.4, 0.4), dark);
+    tail.position.set(0, 6.6, -4.6);
+    tail.rotation.x = 0.45;
+    g.add(body, neck, head, mane, tail);
+    for (const [x, z] of [
+      [1.15, 2.5],
+      [-1.15, 2.5],
+      [1.15, -3],
+      [-1.15, -3],
+    ] as const) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.72, 4.6, 0.72), dark);
+      leg.position.set(x, 2.3, z);
+      g.add(leg);
+    }
+    g.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.isMesh) mesh.castShadow = true;
+    });
+    g.scale.setScalar(1.35);
+    return g;
+  }
+
+  /** Knight on a horse. The mount is the Quaternius horse; a block horse is only the missing-file fallback. */
+  private makeCavalry(u: Unit, key: EntityKey) {
+    const root = new THREE.Group();
+    // A levy is fitted to 12. The horse is a little taller and clearly longer.
+    const horseH = 14.5;
+    const riderH = 9;
+    const horse = cloneAnimatedModel("horse", horseH);
+    const saddle = new THREE.Vector3(0, horseH * 0.57, 0);
+    if (horse) {
+      root.add(horse.object);
+      this.registerAnimation(key, horse.object, horse.clips);
+      root.updateMatrixWorld(true);
+      // Torso2 is the mid-back. Torso itself sits on the rump.
+      const seat =
+        horse.object.getObjectByName("Torso2") ??
+        horse.object.getObjectByName("Torso3") ??
+        horse.object.getObjectByName("Torso");
+      if (seat) seat.getWorldPosition(saddle);
+      saddle.y += horseH * 0.02;
+    } else {
+      const procedural = this.makeProceduralHorse();
+      root.add(procedural);
+      saddle.set(0, 9.2, -0.2);
+    }
+    const rider = this.makeKnight(u, `${key}#rider`, riderH, "rider");
+    // fitModel plants the feet at y=0. The hero hip is about 36% of height.
+    const hip = riderH * 0.36;
+    rider.position.set(saddle.x, saddle.y - hip, saddle.z);
+    root.add(rider);
+    const cloth = new THREE.Mesh(
+      new THREE.BoxGeometry(horseH * 0.22, horseH * 0.045, horseH * 0.38),
+      new THREE.MeshStandardMaterial({ color: teamColor(u.team, true), roughness: 0.48 }),
+    );
+    cloth.position.set(saddle.x, saddle.y + horseH * 0.015, saddle.z);
+    cloth.castShadow = true;
+    root.add(cloth);
+    return root;
+  }
+
+  private makeUnit(u: Unit, key: EntityKey) {
+    if (u.kind === "rammer") {
+      const ram = cloneModel("kRam", 14);
+      if (ram) {
+        // The asset's forward axis is sideways to the game's marching axis.
+        // Keep that correction on an inner model so team-facing can use the wrapper.
+        const root = new THREE.Group();
+        ram.rotation.y = Math.PI / 2;
+        ram.userData.movingRamBody = true;
+        root.add(ram);
+        return root;
+      }
+    }
+    if (u.kind === "runner") return this.makeCavalry(u, key);
+    if (u.kind === "ward") return this.makeKnight(u, key, 12, "ward");
+    const animatedKenney = cloneAnimatedModel(
+      u.team === "you" ? "kCharA" : "kCharB",
+      u.kind === "brute" ? 16 : 12,
+    );
+    if (animatedKenney) {
+      this.registerAnimation(key, animatedKenney.object, animatedKenney.clips);
+      if (u.kind === "archer") this.addArcherGear(animatedKenney.object, u.team);
+      return animatedKenney.object;
+    }
+    if (u.kind === "brute") {
+      const boss = cloneModel("mindflayer", 16) ?? cloneModel("hero", 16);
+      if (boss) return boss;
+    }
+    const animatedSoldier = cloneAnimatedModel(u.team === "you" ? "blue" : "red", 12);
+    if (animatedSoldier) {
+      this.registerAnimation(key, animatedSoldier.object, animatedSoldier.clips);
+      return animatedSoldier.object;
+    }
+
+    // Procedural fallback
+    const g = new THREE.Group();
+    const bodyMat = new THREE.MeshStandardMaterial({ color: teamColor(u.team, true), roughness: 0.55 });
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(3.5, 6, 6, 10), bodyMat);
+    body.position.y = 7;
+    body.castShadow = true;
+    g.add(body);
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(2.4, 12, 12),
+      new THREE.MeshStandardMaterial({ color: 0xe8d0b0 }),
+    );
+    head.position.y = 14;
+    g.add(head);
+    return g;
   }
 
   private syncUnits(state: GameState) {
@@ -1236,6 +1606,30 @@ export class GameRenderer {
           body.position.y = Math.abs(Math.sin(state.time * 5.5 + u.id)) * 0.35;
           body.rotation.z = Math.sin(state.time * 5.5 + u.id) * 0.012;
         }
+      } else if (u.kind === "runner") {
+        this.playAnimation(
+          key,
+          u.attackTimer > 0 ? ["attack_kick", "gallop", "walk"] : ["gallop", "walk", "idle"],
+          1.15,
+        );
+        const riderKey = `${key}#rider`;
+        if (this.usesSplitClips(riderKey)) this.playTogether(riderKey, ["idle-mounted-lower", "idle-mounted-upper"]);
+        else this.playAnimation(riderKey, ["drive", "sit", "idle"]);
+      } else if (u.kind === "ward") {
+        if (this.usesSplitClips(key)) {
+          if (u.attackTimer > 0) this.playTogether(key, ["sword-attack-1"]);
+          else this.playTogether(key, ["walk-lower", "walk-upper"]);
+        } else if (u.attackTimer > 0) {
+          this.playAnimation(key, ["attack-melee-right", "attack", "simple_interact"]);
+        } else {
+          this.playAnimation(key, ["walk", "walk_lower", "run_lower"]);
+        }
+      } else if (u.kind === "archer" && u.attackTimer > 0) {
+        this.playAnimation(key, ["attack-ranged-right", "attack-range-right", "interact-right", "attack-melee-right"]);
+      } else if (u.attackTimer > 0) {
+        this.playAnimation(key, ["attack-melee-right", "attack", "simple_interact"]);
+      } else {
+        this.playAnimation(key, ["walk", "walk_lower", "run_lower"]);
       }
       animateUnit(obj, state.time + u.id * 0.37, { x: u.pos.x, y: u.pos.y, timer: u.attackTimer });
     }

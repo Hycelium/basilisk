@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 
 /** Kenney CC0 (kenney.nl) + a few local glTFs. See public/models/kenney/CREDITS.txt */
 export type ModelKey =
@@ -30,7 +31,9 @@ export type ModelKey =
   | "kFlag"
   | "kCharA"
   | "kCharB"
-  | "kCharC";
+  | "kCharC"
+  | "horse"
+  | "knight";
 
 const asset = (path: string) => `${import.meta.env.BASE_URL}${path}`;
 
@@ -63,6 +66,10 @@ const URLS: Record<ModelKey, string> = {
   kCharA: asset("models/kenney/chars/character-a.glb"),
   kCharB: asset("models/kenney/chars/character-b.glb"),
   kCharC: asset("models/kenney/chars/character-c.glb"),
+  horse: asset("models/horse.glb"),
+  // Same file as `hero`, loaded without its KTX2 textures so it does not need a
+  // basis transcoder. Team armor is painted on the clone.
+  knight: asset("models/player-hero.glb"),
 };
 
 interface ModelTemplate {
@@ -244,8 +251,10 @@ function prep(root: THREE.Object3D, key: ModelKey, cast = true) {
     const mats = Array.isArray(m.material) ? m.material : [m.material];
     for (const mat of mats) {
       // Castle kit is authored double-sided. Forcing FrontSide turns the far
-      // side into a hollow shell as soon as the camera orbits.
-      if (mat.side !== THREE.DoubleSide) mat.side = THREE.FrontSide;
+      // side into a hollow shell as soon as the camera orbits. The horse and the
+      // solid knight are flat-colored; keep both sides so thin parts don't vanish.
+      if (key === "horse" || key === "knight") mat.side = THREE.DoubleSide;
+      else if (mat.side !== THREE.DoubleSide) mat.side = THREE.FrontSide;
       if ("metalness" in mat) {
         const std = mat as THREE.MeshStandardMaterial;
         const name = std.name.toLowerCase();
@@ -255,7 +264,7 @@ function prep(root: THREE.Object3D, key: ModelKey, cast = true) {
 
         // Never leave a failed/missing texture as a featureless white canvas.
         // Castle assets normally use their restored colormap; this is a robust fallback.
-        if (!std.map && std.color.getHex() > 0xeeeeee) {
+        if (!std.map && std.color.getHex() > 0xeeeeee && key !== "horse" && key !== "knight") {
           const castle = key.startsWith("k") && ["kTower", "kKeep", "kBallista", "kCatapult", "kRam", "kWall", "kGate", "kFlag"].includes(key);
           std.color.setHex(castle ? 0x8b8174 : 0x8a765f);
           std.roughness = 0.82;
@@ -266,7 +275,9 @@ function prep(root: THREE.Object3D, key: ModelKey, cast = true) {
         }
       }
     }
-    if (colormap) skinWithColormap(m, key, colormap);
+    // Horse and knight bring their own colors. The atlas pass is for Kenney
+    // nature and castle meshes that ship without an albedo.
+    if (colormap && key !== "horse" && key !== "knight") skinWithColormap(m, key, colormap);
   });
   return root;
 }
@@ -300,13 +311,111 @@ export function cloneAnimatedModel(
 ): { object: THREE.Object3D; clips: THREE.AnimationClip[] } | null {
   const template = cache.get(key);
   if (!template) return null;
-  const object = template.root.clone(true);
+  // Skinned meshes (the horse) keep the source skeleton if cloned with
+  // Object3D.clone, so the mount renders as a speck. SkeletonUtils retargets.
+  const object = key === "horse" ? cloneSkinned(template.root) : template.root.clone(true);
+  // The skinned clone's matrices are stale until a full update, and a fit
+  // against that box shrinks the horse to a speck.
+  if (key === "horse") object.updateMatrixWorld(true);
   if (targetH != null) fitModel(object, targetH);
   return { object, clips: template.clips };
 }
 
 export function modelsReady() {
   return cache.size >= 4;
+}
+
+/**
+ * player-hero.glb requires KTX2. Drop the textures and keep the blocky body
+ * so the ward and the rider can be team-painted without a basis transcoder.
+ */
+function glbWithoutTextures(buffer: ArrayBuffer): ArrayBuffer {
+  const view = new DataView(buffer);
+  const jsonLen = view.getUint32(12, true);
+  const json = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 20, jsonLen))) as {
+    extensionsUsed?: unknown;
+    extensionsRequired?: unknown;
+    images?: unknown;
+    textures?: unknown;
+    samplers?: unknown;
+    materials?: Array<{
+      extensions?: unknown;
+      alphaMode?: string;
+      alphaCutoff?: number;
+      normalTexture?: unknown;
+      occlusionTexture?: unknown;
+      emissiveTexture?: unknown;
+      pbrMetallicRoughness?: {
+        baseColorTexture?: unknown;
+        metallicRoughnessTexture?: unknown;
+        baseColorFactor?: number[];
+        metallicFactor?: number;
+        roughnessFactor?: number;
+      };
+    }>;
+  };
+  delete json.extensionsUsed;
+  delete json.extensionsRequired;
+  delete json.images;
+  delete json.textures;
+  delete json.samplers;
+  for (const mat of json.materials ?? []) {
+    delete mat.extensions;
+    delete mat.normalTexture;
+    delete mat.occlusionTexture;
+    delete mat.emissiveTexture;
+    const pbr = (mat.pbrMetallicRoughness ??= {});
+    delete pbr.baseColorTexture;
+    delete pbr.metallicRoughnessTexture;
+    pbr.baseColorFactor = [0.72, 0.75, 0.8, 1];
+    pbr.metallicFactor = 0.35;
+    pbr.roughnessFactor = 0.45;
+    mat.alphaMode = "OPAQUE";
+    delete mat.alphaCutoff;
+  }
+  let text = JSON.stringify(json);
+  while (text.length % 4 !== 0) text += " ";
+  const jsonChunk = new TextEncoder().encode(text);
+  const binHeader = 20 + jsonLen;
+  const binLen = view.getUint32(binHeader, true);
+  const bin = new Uint8Array(buffer, binHeader + 8, binLen);
+  const total = 12 + 8 + jsonChunk.length + 8 + bin.length;
+  const out = new ArrayBuffer(total);
+  const bytes = new Uint8Array(out);
+  const header = new DataView(out);
+  header.setUint32(0, 0x46546c67, true);
+  header.setUint32(4, 2, true);
+  header.setUint32(8, total, true);
+  header.setUint32(12, jsonChunk.length, true);
+  header.setUint32(16, 0x4e4f534a, true);
+  bytes.set(jsonChunk, 20);
+  const binStart = 20 + jsonChunk.length;
+  header.setUint32(binStart, bin.length, true);
+  header.setUint32(binStart + 4, 0x004e4942, true);
+  bytes.set(bin, binStart + 8);
+  return out;
+}
+
+function loadKnight(loader: GLTFLoader): Promise<void> {
+  return fetch(URLS.knight)
+    .then((res) => {
+      if (!res.ok) throw new Error(String(res.status));
+      return res.arrayBuffer();
+    })
+    .then(
+      (raw) =>
+        new Promise<void>((resolve, reject) => {
+          loader.parse(
+            glbWithoutTextures(raw),
+            "",
+            (gltf) => {
+              cache.set("knight", { root: prep(gltf.scene, "knight"), clips: gltf.animations });
+              resolve();
+            },
+            reject,
+          );
+        }),
+    );
 }
 
 export function ensureModelsLoaded(): Promise<void> {
@@ -316,21 +425,21 @@ export function ensureModelsLoaded(): Promise<void> {
     const loader = new GLTFLoader();
     const keys = Object.keys(URLS) as ModelKey[];
     await Promise.all(
-      keys.map(
-        (key) =>
-          new Promise<void>((resolve) => {
-            loader.load(
-              URLS[key],
-              (gltf) => {
-                const root = prep(gltf.scene, key);
-                cache.set(key, { root, clips: gltf.animations });
-                resolve();
-              },
-              undefined,
-              () => resolve(), // soft-fail — procedural fallbacks still work
-            );
-          }),
-      ),
+      keys.map((key) => {
+        if (key === "knight") return loadKnight(loader).catch(() => undefined);
+        return new Promise<void>((resolve) => {
+          loader.load(
+            URLS[key],
+            (gltf) => {
+              const root = prep(gltf.scene, key);
+              cache.set(key, { root, clips: gltf.animations });
+              resolve();
+            },
+            undefined,
+            () => resolve(), // soft-fail — procedural fallbacks still work
+          );
+        });
+      }),
     );
   })();
   return loadPromise;
