@@ -14,7 +14,7 @@
   --sab: env(safe-area-inset-bottom, 0px);
   --sal: env(safe-area-inset-left, 0px);
   --panel-w: 340px;
-  font-family: Georgia, "Palatino Linotype", Palatino, "Times New Roman", serif;
+  font-family: "IM Fell English", Georgia, "Palatino Linotype", Palatino, serif;
   color: var(--ink);
   background: var(--page);
   color-scheme: dark;
@@ -162,7 +162,7 @@ button:disabled {
   border-right: 0;
 }
 
-/* Side layout: stage fills the left, HUD + build panel on the right. */
+/* Wide layout: the map fills the screen. The iron bar sits above it and the build dock below. */
 .layout-side {
   height: 100vh;
   height: 100dvh;
@@ -171,53 +171,32 @@ button:disabled {
 
 .layout-side .shell {
   height: 100%;
-  max-width: 1800px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--panel-w);
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 8px 10px;
-  padding: calc(8px + var(--sat)) calc(8px + var(--sar)) calc(8px + var(--sab)) calc(8px + var(--sal));
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  padding: var(--sat) var(--sar) 0 var(--sal);
 }
 
 .layout-side .brand {
-  grid-column: 2;
-  grid-row: 1;
-  margin: 0;
-}
-
-.layout-side.is-phone .brand {
   display: none;
 }
 
 .layout-side .stage {
-  grid-column: 1;
-  grid-row: 1 / 4;
+  flex: 1 1 auto;
   min-height: 0;
 }
 
 .layout-side .hud {
-  grid-column: 2;
-  grid-row: 2;
-  min-height: 0;
+  flex: none;
   margin: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  border-radius: 0;
+  overflow: visible;
 }
 
 .layout-side .build-wrap {
-  grid-column: 2;
-  grid-row: 3;
+  flex: none;
   margin: 0;
-}
-
-.layout-side.is-phone {
-  --panel-w: 236px;
-}
-
-@media (min-width: 1280px) {
-  .layout-side {
-    --panel-w: 372px;
-  }
+  padding-bottom: var(--sab);
 }
 
 /* ------------------------------------------------------------------ stage */
@@ -328,7 +307,7 @@ button:disabled {
   z-index: 9;
   left: 10px;
   bottom: 12px;
-  right: 76px;
+  right: 12px;
   max-width: 440px;
   display: flex;
   align-items: center;
@@ -397,9 +376,10 @@ button:disabled {
   position: absolute;
   z-index: 11;
   left: 12px;
-  right: 76px;
+  right: auto;
+  width: max-content;
+  max-width: min(420px, calc(100% - 170px));
   bottom: 64px;
-  max-width: 420px;
   padding: 9px 12px;
   border-radius: 10px;
   border: 1px solid rgba(201, 164, 90, 0.6);
@@ -1256,7 +1236,7 @@ button:disabled {
 .sheet-dock {
   position: absolute;
   left: 10px;
-  right: 74px;
+  right: 10px;
   bottom: 12px;
   z-index: 10;
   display: flex;
@@ -1287,7 +1267,7 @@ button:disabled {
 
 .layout-side.is-phone .sheet-dock {
   left: 8px;
-  right: 74px;
+  right: 8px;
   bottom: 12px;
   flex-direction: row;
   align-items: flex-end;
@@ -1647,8 +1627,8 @@ button:disabled {
 }
 
 .map-card.selected {
-  border-color: #7eb8ff;
-  box-shadow: 0 0 0 1px rgba(126, 184, 255, 0.4);
+  border-color: #e2c27a;
+  box-shadow: inset 0 0 0 1px rgba(226, 194, 122, 0.45);
 }
 
 .map-card span {
@@ -1891,7 +1871,7 @@ button:disabled {
 .link-pill {
   position: absolute;
   top: 8px;
-  right: 8px;
+  left: 8px;
   z-index: 8;
   padding: 4px 8px;
   border: 1px solid var(--panel-edge);
@@ -1992,5 +1972,369 @@ button:disabled {
   border-radius: 10px;
   background: rgba(14, 12, 18, 0.94);
   color: var(--ink);
+}
+
+/* ------------------------------------------------------------------ iron keep */
+
+.page {
+  background: #0c0b09;
+}
+
+button,
+.quality-pick,
+.label,
+.pennant,
+.banner-zoom {
+  font-family: Cinzel, Palatino, Georgia, serif;
+}
+
+.battlefield {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  box-shadow: none;
+}
+
+.hud.compact,
+.layout-column .hud,
+.layout-side .hud {
+  background: linear-gradient(180deg, #3a342c, #1c1916 58%, #12100e);
+  border: 0;
+  border-bottom: 3px solid #8a7a62;
+  border-radius: 0;
+  box-shadow: inset 0 8px 0 rgba(106, 96, 78, 0.35);
+}
+
+.hud.compact .stat,
+.hud .stat {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.hud .label {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b7a78c;
+}
+
+.hud .value {
+  font-family: Cinzel, Palatino, serif;
+  font-weight: 600;
+}
+
+.hud .bar {
+  background: #2a241c;
+  border-radius: 0;
+  height: 4px;
+}
+
+.hud .fill,
+.train-bar .fill {
+  background: #c45a2a;
+  border-radius: 0;
+}
+
+.bar.xp .fill,
+.hud .bar.xp .fill {
+  background: #c6a15a;
+}
+
+.phase-tag {
+  color: #c6a15a;
+}
+
+.hud-controls button,
+.build-btn,
+.detail-actions button,
+.cta,
+.ghost,
+.tutorial-btn,
+.quality-pick,
+.train-opt,
+.queue-chip,
+.map-card {
+  border-radius: 0;
+  background: #2a241c;
+  border: 1px solid #6e6254;
+  box-shadow: inset 0 1px 0 rgba(255, 230, 190, 0.16);
+  color: #efe4d0;
+}
+
+.rush-btn {
+  border-color: #c45a2a !important;
+  background: #3a2014 !important;
+  color: #ffd0b0 !important;
+}
+
+.ghost {
+  background: transparent;
+}
+
+.layout-column .build-wrap,
+.layout-side .build-wrap,
+.build-wrap.compact {
+  background: linear-gradient(180deg, #2c261e, #1a1612);
+  border-top: 3px solid #8a7a62;
+}
+
+.build-wrap.compact .buildbar {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  overflow: visible;
+}
+
+.build-wrap.compact .build-btn {
+  width: auto;
+  flex: none;
+  min-height: 74px;
+  border-radius: 0;
+  align-items: flex-start;
+  padding: 8px 10px;
+}
+
+.build-wrap.compact .build-copy {
+  align-items: flex-start;
+}
+
+.build-btn.selected {
+  outline: 1px solid #e2c27a;
+  outline-offset: -3px;
+  background: #3a3024;
+}
+
+.build-wrap.compact .cost,
+.cost {
+  position: static;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  color: #c6a15a;
+  font-family: Cinzel, Palatino, serif;
+}
+
+.build-icon {
+  border-radius: 0;
+}
+
+.selection-box {
+  border-color: #e2c27a;
+  background: rgba(198, 161, 90, 0.16);
+  box-shadow: none;
+}
+
+.tap-marker {
+  border-color: #e2c27a;
+}
+
+.unit-command-bar,
+.sheet-float,
+.overlay,
+.toast,
+.skirmish-end,
+.mode-banner,
+.hint-toast,
+.opponent-down {
+  border-radius: 0;
+  background: rgba(18, 16, 14, 0.94);
+  border-color: #8a7a62;
+}
+
+.unit-command-bar button,
+.unit-command-bar button.active {
+  border-radius: 0;
+  background: #2a241c;
+  border-color: #6e6254;
+  color: #efe4d0;
+  box-shadow: none;
+}
+
+.unit-command-bar button.active,
+.unit-command-bar strong {
+  color: #e2c27a;
+  border-color: #e2c27a;
+}
+
+.sheet-float {
+  background: linear-gradient(180deg, rgba(32, 28, 24, 0.98), rgba(14, 12, 10, 0.98));
+}
+
+.detail-title,
+.overlay h1,
+.overlay h2,
+.skirmish-end h2 {
+  font-family: Cinzel, Palatino, serif;
+  letter-spacing: 0.08em;
+}
+
+.cta {
+  background: #6a3018;
+  border-color: #c45a2a;
+  color: #ffe6c8;
+}
+
+.danger-btn {
+  background: #4a1818 !important;
+  border-color: #a05050 !important;
+}
+
+.toasts {
+  right: 168px;
+}
+
+.banner-rail {
+  position: absolute;
+  top: 8px;
+  right: 0;
+  bottom: 8px;
+  z-index: 13;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  width: min(220px, 42vw);
+  pointer-events: none;
+}
+
+.command-banners {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  width: 100%;
+  min-height: 0;
+}
+
+.command-banners.open {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.command-banners:not(.open) .banner-stack {
+  display: none;
+}
+
+.banner-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.pennant {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  flex: none;
+  min-height: 34px;
+  margin: 0;
+  padding: 4px 12px 4px 22px;
+  border: 0;
+  border-radius: 0;
+  clip-path: polygon(14px 0, 100% 0, 100% 100%, 14px 100%, 0 50%);
+  background: linear-gradient(180deg, #8d2433, #641824);
+  color: #f6ecd4;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  box-shadow: none;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.pennant span {
+  color: #e2c27a;
+}
+
+.pennant.active,
+.command-banners.open .command-toggle {
+  background: linear-gradient(180deg, #a68448, #6a4e24);
+  color: #fff6df;
+}
+
+.pennant:disabled {
+  opacity: 0.4;
+}
+
+.work-pennant {
+  background: linear-gradient(180deg, #7a2a38, #4c1420);
+}
+
+.banner-stack .drag-mode {
+  position: static;
+  right: auto;
+  bottom: auto;
+  top: auto;
+  pointer-events: auto;
+  border-radius: 0;
+  border: 1px solid #e2c27a;
+  background: #1a1014;
+}
+
+.banner-zoom {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 4px 12px 4px 22px;
+  color: #e2c27a;
+  background: #1a1014;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  clip-path: polygon(14px 0, 100% 0, 100% 100%, 14px 100%, 0 50%);
+}
+
+.banner-zoom input {
+  width: 88px;
+  accent-color: #c6a15a;
+}
+
+.hud.compact .quality-pick {
+  min-width: 128px;
+}
+
+.hud.compact .quality-pick select {
+  width: auto;
+  min-width: 7.5em;
+}
+
+.is-phone .pennant {
+  font-size: 11px;
+  min-height: 44px;
+  letter-spacing: 0.04em;
+}
+
+.is-phone .toasts {
+  top: 58px;
+  right: 12px;
+}
+
+@media (max-width: 720px) {
+  .build-wrap.compact .buildbar {
+    display: flex;
+    overflow-x: auto;
+  }
+
+  .build-wrap.compact .build-btn {
+    width: 92px;
+    flex: 0 0 auto;
+    align-items: center;
+  }
+
+  .build-wrap.compact .build-copy {
+    align-items: center;
+  }
 }
 

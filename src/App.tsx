@@ -135,6 +135,10 @@ export default function App() {
   const hpRef = useRef(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fsSupported] = useState(fullscreenSupported);
+  /** Fullscreen is the default. A browser only allows it from a click or key press, so the first one enters. Leaving fullscreen keeps the windowed view for the rest of the session. */
+  const fullscreenWantedRef = useRef(true);
+  const fullscreenRequestRef = useRef<Promise<void> | null>(null);
+  const fullscreenTriedRef = useRef(false);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const patrolModeRef = useRef(false);
   const selectionBoxRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
@@ -167,21 +171,41 @@ export default function App() {
 
   const refreshUi = useCallback(() => setUi(sim.getUiSnapshot()), [sim]);
 
-  const toggleFullscreen = useCallback(async () => {
-    const d = document as FsDocument;
+  const requestFullscreen = useCallback(async () => {
+    if (!fullscreenWantedRef.current || fullscreenElement() || fullscreenRequestRef.current) return;
     const el = pageRef.current as FsElement | null;
-    try {
-      if (fullscreenElement()) {
-        if (d.exitFullscreen) await d.exitFullscreen();
-        else await d.webkitExitFullscreen?.();
-      } else if (el) {
+    if (!el) return;
+    const task = (async () => {
+      try {
         if (el.requestFullscreen) await el.requestFullscreen();
         else await el.webkitRequestFullscreen?.();
+      } catch {
+        /* iOS Safari and some embedded browsers reject — the dvh layout already fills the screen */
+      }
+    })();
+    fullscreenRequestRef.current = task;
+    try {
+      await task;
+    } finally {
+      fullscreenRequestRef.current = null;
+    }
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    const d = document as FsDocument;
+    try {
+      if (fullscreenElement()) {
+        fullscreenWantedRef.current = false;
+        if (d.exitFullscreen) await d.exitFullscreen();
+        else await d.webkitExitFullscreen?.();
+      } else {
+        fullscreenWantedRef.current = true;
+        await requestFullscreen();
       }
     } catch {
       /* iOS Safari and some embedded browsers reject — the dvh layout already fills the screen */
     }
-  }, []);
+  }, [requestFullscreen]);
 
   function beep(freq: number, dur = 0.06) {
     if (!sim.getState().soundOn || !sim.getState().audioUnlocked) return;
@@ -577,16 +601,27 @@ export default function App() {
 
   useEffect(() => {
     const onFullscreenChange = () => {
-      setIsFullscreen(Boolean(fullscreenElement()));
+      const on = Boolean(fullscreenElement());
+      if (!on) fullscreenWantedRef.current = false;
+      setIsFullscreen(on);
       requestAnimationFrame(() => rendererRef.current?.resize());
+    };
+    const enter = () => {
+      if (fullscreenTriedRef.current) return;
+      fullscreenTriedRef.current = true;
+      void requestFullscreen();
     };
     document.addEventListener("fullscreenchange", onFullscreenChange);
     document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+    window.addEventListener("pointerdown", enter, true);
+    window.addEventListener("keydown", enter, true);
     return () => {
       document.removeEventListener("fullscreenchange", onFullscreenChange);
       document.removeEventListener("webkitfullscreenchange", onFullscreenChange);
+      window.removeEventListener("pointerdown", enter, true);
+      window.removeEventListener("keydown", enter, true);
     };
-  }, []);
+  }, [requestFullscreen]);
 
   useEffect(() => {
     const prev = phaseRef.current;
@@ -728,8 +763,8 @@ export default function App() {
   };
 
   const sheetOpen = ui.selectedKeepTeam === ui.localTeam || Boolean(ui.selectedBuildingId && ui.selectedBuildingKind);
-  const compactHud = layout.layout === "column" || layout.phone;
-  const compactBuild = layout.layout === "column" && layout.phone;
+  const compactHud = true;
+  const compactBuild = true;
 
   const clusterActions: ClusterAction[] = [
     {
@@ -1029,28 +1064,12 @@ export default function App() {
               onDismiss={dismissRadial}
             />
           )}
-          <ControlCluster
-            expanded={clusterOpen}
-            onToggle={setClusterOpen}
-            actions={clusterActions}
-            touch={layout.touch}
-            flip={sheetOpen}
-            dragMode={touchDrag}
-            onDragMode={setTouchDrag}
-            zoom={zoomT}
-            onZoom={(t) => {
-              rendererRef.current?.setZoomT(t);
-              setZoomT(t);
-            }}
-          />
-          {!layout.touch && (
-            <p className="cam-hint">Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom</p>
-          )}
-          <div className="sheet-dock">
-            {ui.phase === "running" && ui.idlePeonCount > 0 && (
+          {ui.phase === "running" && (
+          <div className="banner-rail">
+            {ui.idlePeonCount > 0 && (
               <button
                 type="button"
-                className="work-call"
+                className="pennant work-pennant"
                 aria-label={`Send ${ui.idlePeonCount} idle peon${ui.idlePeonCount === 1 ? "" : "s"} back to work`}
                 title={`Send ${ui.idlePeonCount} idle peon${ui.idlePeonCount === 1 ? "" : "s"} back to work`}
                 onClick={() => {
@@ -1059,12 +1078,30 @@ export default function App() {
                   beep(340);
                 }}
               >
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <circle cx="12" cy="7" r="3.15" />
-                  <path d="M5.1 19.6c.7-4.1 3.1-6.2 6.9-6.2s6.2 2.1 6.9 6.2c.2.9-.5 1.7-1.4 1.7H6.5c-.9 0-1.6-.8-1.4-1.7z" />
-                </svg>
+                To work
+                <span>{ui.idlePeonCount}</span>
               </button>
             )}
+            <ControlCluster
+              expanded={clusterOpen}
+              onToggle={setClusterOpen}
+              actions={clusterActions}
+              touch={layout.touch}
+              flip={sheetOpen}
+              dragMode={touchDrag}
+              onDragMode={setTouchDrag}
+              zoom={zoomT}
+              onZoom={(t) => {
+                rendererRef.current?.setZoomT(t);
+                setZoomT(t);
+              }}
+            />
+          </div>
+          )}
+          {!layout.touch && (
+            <p className="cam-hint">Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom</p>
+          )}
+          <div className="sheet-dock">
             <div className="sheet-slot">
             <DetailSheet
             ui={ui}
