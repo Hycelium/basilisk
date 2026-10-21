@@ -1491,6 +1491,18 @@ button:disabled {
   font-size: 17px !important;
 }
 
+.boot-overlay {
+  z-index: 40;
+  inset: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+  border: none;
+  border-radius: 0;
+  pointer-events: auto;
+}
+
 .title-overlay {
   overflow-y: auto;
   justify-content: flex-start !important;
