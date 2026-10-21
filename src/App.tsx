@@ -60,6 +60,7 @@ const defaultUi: UiSnapshot = {
   peonQueue: [],
   peonCount: 2,
   peonCap: 2,
+  idlePeonCount: 0,
   keepGarrisoned: 0,
   keepGarrisonMax: 5,
   canTrainPeon: false,
@@ -1045,7 +1046,27 @@ export default function App() {
           {!layout.touch && (
             <p className="cam-hint">Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom</p>
           )}
-          <DetailSheet
+          <div className="sheet-dock">
+            {ui.phase === "running" && ui.idlePeonCount > 0 && (
+              <button
+                type="button"
+                className="work-call"
+                aria-label={`Send ${ui.idlePeonCount} idle peon${ui.idlePeonCount === 1 ? "" : "s"} back to work`}
+                title={`Send ${ui.idlePeonCount} idle peon${ui.idlePeonCount === 1 ? "" : "s"} back to work`}
+                onClick={() => {
+                  sim.sendPeonsToWork(sim.getLocalTeam());
+                  refreshUi();
+                  beep(340);
+                }}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="7" r="3.15" />
+                  <path d="M5.1 19.6c.7-4.1 3.1-6.2 6.9-6.2s6.2 2.1 6.9 6.2c.2.9-.5 1.7-1.4 1.7H6.5c-.9 0-1.6-.8-1.4-1.7z" />
+                </svg>
+              </button>
+            )}
+            <div className="sheet-slot">
+            <DetailSheet
             ui={ui}
             onClose={() => {
               sim.cancelSelection();
@@ -1093,6 +1114,8 @@ export default function App() {
               beep(260);
             }}
           />
+            </div>
+          </div>
           <Overlays
             ui={ui}
             hideTitle={skirmish.lobby.open || skirmish.lobby.live}

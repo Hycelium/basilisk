@@ -396,6 +396,10 @@ export class GameSim {
       this.previewRecall(team);
       return;
     }
+    if (order.t === "work") {
+      this.holdPrediction(this.assignIdlePeons(team));
+      return;
+    }
     if (order.t === "stop") {
       this.stopIds(team, order.ids);
       this.holdPrediction(order.ids);
@@ -1378,6 +1382,69 @@ export class GameSim {
       v.timer = 0;
     }
     this.tell(team, "🔔 Recall! All peons return to the keep.");
+  }
+
+  /** Idle, recalled, defending, and garrisoned peons head for the team's groves and mines. */
+  sendPeonsToWork(team: Team) {
+    if (team === this.localTeam && this.redirect({ t: "work", team })) return;
+    this.assignIdlePeons(team);
+  }
+
+  private peonReadyForWork(v: Villager) {
+    if (v.hp <= 0) return false;
+    if (v.state === "idle" || v.state === "home" || v.state === "garrisoned" || v.state === "toGarrison") return true;
+    if (v.state === "defend" && !v.forcedAttack) return true;
+    if (v.state === "toKeep" && !v.targetNodeId) return true;
+    return false;
+  }
+
+  private pickWorkNode(team: Team) {
+    const lowWood = this.state.wood[team] < 100;
+    const lowGold = this.state.gold[team] < 100;
+    return this.state.nodes
+      .filter((n) => n.team === team && n.loadsLeft > 0 && n.workers < n.maxWorkers)
+      .sort((a, b) => {
+        const score = (n: ResourceNode) => {
+          const demand = n.kind === "pine" ? (lowWood ? 3 : 1) : lowGold ? 2.6 : 1.2;
+          return (n.woodPerLoad + n.goldPerLoad) * demand - n.workers * 18;
+        };
+        return score(b) - score(a);
+      })[0];
+  }
+
+  /** Assigns free peons and returns their ids. Peons already on a node stay there. */
+  private assignIdlePeons(team: Team) {
+    const peons = this.state.villagers.filter((v) => v.team === team && v.hp > 0);
+    const free = peons.filter((v) => this.peonReadyForWork(v));
+    for (const node of this.state.nodes) {
+      if (node.team !== team) continue;
+      node.workers = peons.filter((v) => v.targetNodeId === node.id && !free.includes(v)).length;
+    }
+    const pool = [...free];
+    const sent: number[] = [];
+    while (pool.length > 0) {
+      const target = this.pickWorkNode(team);
+      if (!target) break;
+      pool.sort((a, b) => dist(a.pos, target.pos) - dist(b.pos, target.pos));
+      const peon = pool.shift()!;
+      peon.targetEnemyId = undefined;
+      peon.targetBarricadeId = undefined;
+      peon.moveTarget = undefined;
+      peon.patrolA = undefined;
+      peon.patrolB = undefined;
+      peon.patrolToB = undefined;
+      peon.engageFrom = undefined;
+      peon.forcedAttack = false;
+      target.workers += 1;
+      peon.targetNodeId = target.id;
+      peon.state = peon.carryingGold > 0 || peon.carryingWood > 0 ? "toKeep" : "toNode";
+      sent.push(peon.id);
+    }
+    if (sent.length > 0 && team === this.localTeam) this.state.firstVillagerAssigned = true;
+    if (sent.length > 0) this.tell(team, `${sent.length} peon(s) sent back to work.`);
+    else if (free.length > 0) this.tell(team, "Groves and mines are full.");
+    else this.tell(team, "Peons are already at work.");
+    return sent;
   }
 
   private tryBuildOnPad(padId: string) {
@@ -2997,6 +3064,9 @@ export class GameSim {
         case "recall":
           this.callVillagersHome(team);
           break;
+        case "work":
+          this.sendPeonsToWork(team);
+          break;
         case "build":
           this.buildFor(team, order.kind, order.padId);
           break;
@@ -3529,6 +3599,9 @@ export class GameSim {
       peonQueue,
       peonCount: s.villagers.filter((v) => v.team === view).length,
       peonCap: this.peonCap(view),
+      idlePeonCount: s.villagers.filter(
+        (v) => v.team === view && v.hp > 0 && (v.state === "idle" || v.state === "home"),
+      ).length,
       keepGarrisoned: s.villagers.filter((v) => v.team === view && v.state === "garrisoned").length,
       keepGarrisonMax: KEEP_GARRISON_MAX,
       canTrainPeon: keepSelected && this.peonSlotsUsed(view) < this.peonCap(view),

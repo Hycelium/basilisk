@@ -343,6 +343,8 @@ export interface UiSnapshot {
   peonQueue: QueueSlotUi[];
   peonCount: number;
   peonCap: number;
+  /** Peons standing idle or walking home with no job. */
+  idlePeonCount: number;
   keepGarrisoned: number;
   keepGarrisonMax: number;
   canTrainPeon: boolean;

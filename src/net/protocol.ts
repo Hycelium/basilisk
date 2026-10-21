@@ -22,6 +22,7 @@ export type RemoteOrder =
   | { t: "attack"; team: Team; ids: number[]; targetId: number }
   | { t: "gather"; team: Team; ids: number[]; nodeId: string }
   | { t: "recall"; team: Team }
+  | { t: "work"; team: Team }
   | { t: "build"; team: Team; kind: BuildingKind; padId: string }
   | { t: "train"; team: Team; kind: TrainKind; buildingId: number }
   | { t: "peon"; team: Team }
