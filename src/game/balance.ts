@@ -72,6 +72,19 @@ export const MELEE_AGGRO_RANGE = 42;
 export const AGGRO_LEASH_MULT = 1.75;
 
 /**
+ * Levy melee versus a ward only. 1.25 is +25% of that levy's current attack.
+ * Levy hits on every other target stay at the levy's normal damage.
+ */
+export const LEVY_VS_WARD_DAMAGE = 1.25;
+
+/**
+ * A runner's first melee strike after closing in from outside contact.
+ * Later strikes in that same fight use normal damage and the normal cooldown.
+ * Leaving melee range arms the charge again. Move speed is unchanged.
+ */
+export const RUNNER_CHARGE_DAMAGE = 2;
+
+/**
  * Watchtowers (archers) are weak vs units already on the keep and
  * cannot target peons. Only ballistae/catapults can hit peons.
  */
@@ -140,13 +153,13 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
     hp: 58, speed: 34, damage: 8, cooldown: 0.65, bounty: 11,
     towerResist: 0.05, keepMult: 0.9, siegeGap: 0.25,
     cost: 26, woodCost: 0, trainTime: 3.8,
-    label: "Levy", blurb: "Cheap fighter",
+    label: "Levy", blurb: "Cheap fighter · bonus vs wards",
   },
   runner: {
     hp: 42, speed: 54, damage: 6, cooldown: 0.5, bounty: 13,
     towerResist: 0.72, keepMult: 0.7, siegeGap: 0.3,
     cost: 28, woodCost: 22, trainTime: 3.2,
-    label: "Runner", blurb: "Near-hard vs towers · needs wood",
+    label: "Runner", blurb: "Cavalry charge · near-hard vs towers",
   },
   archer: {
     hp: 44, speed: 29, damage: 7, cooldown: 1.05, bounty: 14,
@@ -158,7 +171,7 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
     hp: 150, speed: 22, damage: 5, cooldown: 0.75, bounty: 15,
     towerResist: 0.88, keepMult: 0.55, siegeGap: 0.4,
     cost: 46, woodCost: 10, trainTime: 5.2,
-    label: "Ward", blurb: "Near-hard arrow sponge",
+    label: "Ward", blurb: "Shield knight · near-hard vs arrows",
   },
   rammer: {
     hp: 95, speed: 27, damage: 7, cooldown: 0.8, bounty: 18,
