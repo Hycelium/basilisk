@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Roadkeep – Building Preview</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; font: 14px Georgia, serif; }
+      #ui { position: fixed; top: 10px; left: 10px; background: #1a1612e0; color: #f0dfb8; padding: 10px 14px; border-radius: 8px; display: grid; gap: 6px; }
+      #ui label { display: flex; justify-content: space-between; gap: 10px; }
+      select { font: inherit; }
+    </style>
+  </head>
+  <body>
+    <div id="ui">
+      <b>Building preview</b>
+      <label>Model <select id="model"></select></label>
+      <label>Compare with current <input type="checkbox" id="compare" /></label>
+      <label>Spin <input type="checkbox" id="spin" checked /></label>
+      <label>Unit animation <select id="anim"><option>cycle</option><option>walk</option><option>attack</option><option>idle</option></select></label>
+    </div>
+    <script type="module" src="./building.ts"></script>
+  </body>
+</html>

@@ -1,7 +1,9 @@
 import * as THREE from "three";
 import { ROAD_Y_MAX, ROAD_Y_MIN, WORLD_H, WORLD_W } from "./balance";
-import { cloneModel, type ModelKey } from "./assets3d";
+import { groundLookForSeed, groundTexture, wheatTexture } from "./groundLooks";
+import { buildRockPile, buildTree, SCENERY_TREES } from "./models/nature";
 import { riverSpec, rngFromSeed, roadCenterX } from "./map";
+import { buildBackdrop, buildCliffs, fbm } from "./landscape";
 import type { Team } from "./types";
 
 function teamColor(team: Team, lite = false) {
@@ -9,31 +11,15 @@ function teamColor(team: Team, lite = false) {
   return lite ? 0xf08090 : 0xa03040;
 }
 
-function hash2(x: number, z: number, seed: number) {
-  let n = (x * 374761393 + z * 668265263 + seed * 1274126177) | 0;
-  n = (n ^ (n >>> 13)) * 1274126177;
-  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
-}
-
-function fbm(x: number, z: number, seed: number) {
-  let a = 0;
-  let f = 1;
-  let amp = 1;
-  let tot = 0;
-  for (let i = 0; i < 5; i++) {
-    a += amp * (hash2(Math.floor(x * f), Math.floor(z * f), seed + i * 97) * 2 - 1);
-    tot += amp;
-    f *= 2.05;
-    amp *= 0.5;
-  }
-  return a / tot;
-}
-
 function makeRibbon(points: THREE.Vector3[], width: number, material: THREE.Material) {
   const verts: number[] = [];
+  const uvs: number[] = [];
   const indices: number[] = [];
   const half = width / 2;
+  let along = 0;
   for (let i = 0; i < points.length; i++) {
+    if (i > 0) along += points[i].distanceTo(points[i - 1]);
+    uvs.push(0, along / width, 1, along / width);
     const prev = points[Math.max(0, i - 1)];
     const next = points[Math.min(points.length - 1, i + 1)];
     const dx = next.x - prev.x;
@@ -51,11 +37,12 @@ function makeRibbon(points: THREE.Vector3[], width: number, material: THREE.Mate
     );
     if (i < points.length - 1) {
       const a = i * 2;
-      indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
     }
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(indices);
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(geo, material);
@@ -63,76 +50,96 @@ function makeRibbon(points: THREE.Vector3[], width: number, material: THREE.Mate
   return mesh;
 }
 
-/** High-poly displaced battlefield with vertex colors + cobbled roads. */
+function sampleGround(simX: number, simY: number, seed: number, river: ReturnType<typeof riverSpec>) {
+  let h = fbm(simX * 0.012, simY * 0.01, seed) * 9;
+  h += fbm(simX * 0.05, simY * 0.05, seed + 3) * 2.4;
+  h += fbm(simX * 0.2, simY * 0.2, seed + 5, 3) * 0.5;
+
+  // Flatten playable strip + roads
+  const onRoad =
+    simY > ROAD_Y_MIN - 8 &&
+    simY < ROAD_Y_MAX + 8 &&
+    (Math.abs(simX - roadCenterX(seed, 0, simY)) < 22 || Math.abs(simX - roadCenterX(seed, 1, simY)) < 22);
+  const riverY = river.y + Math.sin((simX / WORLD_W) * Math.PI * 2 + river.phase) * river.amplitude;
+  const onRiver = river.enabled && Math.abs(simY - riverY) < river.width * 0.62;
+  const inField = simX > 20 && simX < WORLD_W - 20 && simY > 60 && simY < WORLD_H - 40;
+  if (onRiver) h = -2.2;
+  else if (onRoad) h *= 0.05;
+  else if (inField) h *= 0.35;
+  else h += Math.max(0, Math.abs(simX - WORLD_W / 2) / WORLD_W - 0.35) * 18;
+
+  // Edge cliffs
+  const sideEdge = Math.min(Math.max(0, 28 - simX, simX - (WORLD_W - 28)), 30);
+  const edge = Math.max(sideEdge * 0.6, 40 - simY, simY - (WORLD_H - 30));
+  if (edge > 0) h += edge * 0.4 + fbm(simX * 0.06, simY * 0.06, seed + 11) * Math.min(edge, 20) * 0.25;
+
+  return { h: Math.max(-2, h), onRoad, onRiver, inField, riverY };
+}
+
+/** High-poly displaced battlefield; ground look (painted / textured, wheat patches) rotates per seed. */
 export function buildTerrain(seed: number) {
   const g = new THREE.Group();
   const river = riverSpec(seed);
-  const segsX = 96;
-  const segsZ = 160;
-  const geo = new THREE.PlaneGeometry(WORLD_W + 120, WORLD_H + 100, segsX, segsZ);
+  const look = groundLookForSeed(seed);
+  const segsX = 200;
+  const segsZ = 330;
+  const sizeX = WORLD_W + 120;
+  const sizeZ = WORLD_H + 100;
+  const geo = new THREE.PlaneGeometry(sizeX, sizeZ, segsX, segsZ);
   geo.rotateX(-Math.PI / 2);
 
   const pos = geo.attributes.position as THREE.BufferAttribute;
+  const uv = geo.attributes.uv as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);
-  const cSouth = new THREE.Color(0x4a8a58);
-  const cNorth = new THREE.Color(0x7a4a55);
-  const cMid = new THREE.Color(0x5a7a52);
+  const cSouth = new THREE.Color(0x9c7a30);
+  const cMid = new THREE.Color(0x8a7832);
+  const cNorth = new THREE.Color(0x7c5a2a);
+  const cOlive = new THREE.Color(0x6e6c2c);
+  const cStraw = new THREE.Color(0xb09048);
   const cRoad = new THREE.Color(0x8a6e52);
-  const cDirt = new THREE.Color(0x6a5a42);
 
   for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
-    const simX = x + WORLD_W / 2;
-    const simY = z + WORLD_H / 2;
-
-    let h = fbm(simX * 0.035, simY * 0.028, seed) * 7;
-    h += fbm(simX * 0.09, simY * 0.08, seed + 3) * 2.2;
-
-    // Flatten playable strip + roads
-    const onRoad =
-      simY > ROAD_Y_MIN - 8 &&
-      simY < ROAD_Y_MAX + 8 &&
-      (Math.abs(simX - roadCenterX(seed, 0, simY)) < 22 ||
-        Math.abs(simX - roadCenterX(seed, 1, simY)) < 22);
-    const riverY = river.y + Math.sin((simX / WORLD_W) * Math.PI * 2 + river.phase) * river.amplitude;
-    const onRiver = river.enabled && Math.abs(simY - riverY) < river.width * 0.62;
-    const inField = simX > 20 && simX < WORLD_W - 20 && simY > 60 && simY < WORLD_H - 40;
-    if (onRiver) h = -2.2;
-    else if (onRoad) h *= 0.05;
-    else if (inField) h *= 0.35;
-    else h += Math.max(0, Math.abs(simX - WORLD_W / 2) / WORLD_W - 0.35) * 18;
-
-    // Edge cliffs
-    const edge = Math.max(0, 28 - simX, simX - (WORLD_W - 28), 40 - simY, simY - (WORLD_H - 30));
-    if (edge > 0) h += edge * 0.55;
-
-    pos.setY(i, Math.max(-2, h));
+    const simX = pos.getX(i) + WORLD_W / 2;
+    const simY = pos.getZ(i) + WORLD_H / 2;
+    const s = sampleGround(simX, simY, seed, river);
+    pos.setY(i, s.h);
+    uv.setXY(i, uv.getX(i) * (sizeX / 14), uv.getY(i) * (sizeZ / 14));
 
     const t = THREE.MathUtils.clamp(simY / WORLD_H, 0, 1);
     const col = cSouth.clone().lerp(cMid, t * 1.2).lerp(cNorth, Math.max(0, t - 0.45) * 1.8);
-    if (onRiver) col.setHex(0x315f72);
-    else if (onRoad) col.copy(cRoad);
-    else if (Math.abs(h) < 1.2 && inField) col.lerp(cDirt, 0.25);
+    col.lerp(cOlive, (fbm(simX * 0.02, simY * 0.02, seed + 21) * 0.5 + 0.5) * 0.6);
+    col.lerp(cStraw, Math.max(0, fbm(simX * 0.008, simY * 0.008, seed + 22)) * 0.5);
+    col.multiplyScalar(0.92 + fbm(simX * 0.15, simY * 0.15, seed + 23, 3) * 0.12);
+    if (s.onRiver) col.setHex(0x315f72);
+    else if (s.onRoad) col.lerp(cRoad, 0.35);
     colors[i * 3] = col.r;
     colors[i * 3 + 1] = col.g;
     colors[i * 3 + 2] = col.b;
   }
-  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
+  const nrm = geo.attributes.normal as THREE.BufferAttribute;
+  const cRock = new THREE.Color(0x857868);
+  const tmp = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const slope = THREE.MathUtils.smoothstep(1 - nrm.getY(i), 0.06, 0.3);
+    if (slope <= 0) continue;
+    tmp.fromArray(colors, i * 3).lerp(cRock, slope * 0.85).toArray(colors, i * 3);
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
 
-  const ground = new THREE.Mesh(
-    geo,
-    new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 0.92,
-      metalness: 0.02,
-      flatShading: false,
-    }),
-  );
+  const groundMat = new THREE.MeshStandardMaterial({
+    vertexColors: !look.ground || look.tint,
+    map: look.ground ? groundTexture(look.ground) : null,
+    roughness: 0.92,
+    metalness: 0.02,
+  });
+  if (look.ground) groundMat.color.setScalar(look.tint ? 1.15 : 0.7);
+  const ground = new THREE.Mesh(geo, groundMat);
   ground.receiveShadow = true;
   ground.castShadow = false;
   g.add(ground);
+
+  if (look.wheat) g.add(buildWheatPatches(seed, river));
 
   // River ribbon first; roads cross it on timber/stone bridges.
   if (river.enabled) {
@@ -164,13 +171,18 @@ export function buildTerrain(seed: number) {
     for (let s = 0; s <= 64; s++) {
       const simY = ROAD_Y_MIN - 10 + (s / 64) * (ROAD_Y_MAX - ROAD_Y_MIN + 20);
       roadPts.push(
-        new THREE.Vector3(roadCenterX(seed, i as 0 | 1, simY) - WORLD_W / 2, 0.32, simY - WORLD_H / 2),
+        new THREE.Vector3(roadCenterX(seed, i as 0 | 1, simY) - WORLD_W / 2, 0.6, simY - WORLD_H / 2),
       );
     }
     const road = makeRibbon(
       roadPts,
       29,
-      new THREE.MeshStandardMaterial({ color: i === 0 ? 0x6a5340 : 0x7a5c44, roughness: 0.95, metalness: 0.05 }),
+      new THREE.MeshStandardMaterial({
+        map: groundTexture(look.road),
+        color: i === 0 ? 0xc4b49c : 0xb8a890,
+        roughness: 0.95,
+        metalness: 0.05,
+      }),
     );
     g.add(road);
 
@@ -215,40 +227,52 @@ export function buildTerrain(seed: number) {
   return g;
 }
 
+/** Striped crop fields draped on the terrain, kept clear of roads and the river. */
+function buildWheatPatches(seed: number, river: ReturnType<typeof riverSpec>) {
+  const g = new THREE.Group();
+  const rng = rngFromSeed(seed ^ 0x3c3c);
+  const tex = wheatTexture();
+  const mat = new THREE.MeshStandardMaterial({
+    map: tex,
+    color: 0xc4b28c,
+    roughness: 1,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+  });
+  for (let tries = 0, placed = 0; tries < 60 && placed < 14; tries++) {
+    const cx = 30 + rng() * (WORLD_W - 60);
+    const cy = 70 + rng() * (WORLD_H - 120);
+    const w = 30 + rng() * 30;
+    const d = 22 + rng() * 22;
+    const r = Math.hypot(w, d) / 2;
+    const roadGap = Math.min(Math.abs(cx - roadCenterX(seed, 0, cy)), Math.abs(cx - roadCenterX(seed, 1, cy)));
+    const riverY = river.y + Math.sin((cx / WORLD_W) * Math.PI * 2 + river.phase) * river.amplitude;
+    if (roadGap < r + 18) continue;
+    if (river.enabled && Math.abs(cy - riverY) < r + river.width) continue;
+
+    const geo = new THREE.PlaneGeometry(w, d, 12, 12).rotateX(-Math.PI / 2).rotateY(rng() * Math.PI);
+    const p = geo.attributes.position as THREE.BufferAttribute;
+    const puv = geo.attributes.uv as THREE.BufferAttribute;
+    for (let j = 0; j < p.count; j++) {
+      p.setY(j, sampleGround(cx + p.getX(j), cy + p.getZ(j), seed, river).h + 0.7);
+      puv.setXY(j, puv.getX(j) * (w / 20), puv.getY(j) * (d / 20));
+    }
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(cx - WORLD_W / 2, 0, cy - WORLD_H / 2);
+    m.receiveShadow = true;
+    g.add(m);
+    placed++;
+  }
+  return g;
+}
+
 /** Seeded forests, cliffs, rocks — uses oak GLB when loaded. */
 export function buildScenery(seed: number) {
   const g = new THREE.Group();
   const rng = rngFromSeed(seed ^ 0xA5A5);
 
-  // Distant mountain ridges (high-ish poly)
-  for (let i = 0; i < 11; i++) {
-    const ridge = new THREE.Mesh(
-      new THREE.ConeGeometry(32 + (i % 4) * 14, 55 + (i % 5) * 18, 7 + (i % 3)),
-      new THREE.MeshStandardMaterial({
-        color: new THREE.Color().setHSL(0.58, 0.18, 0.12 + (i % 4) * 0.03),
-        roughness: 1,
-        flatShading: true,
-      }),
-    );
-    ridge.position.set(-220 + i * 48 + rng() * 10, 22, -WORLD_H / 2 - 55 - rng() * 30);
-    ridge.rotation.y = rng() * Math.PI;
-    g.add(ridge);
-  }
-
-  // Side cliffs
-  for (const side of [-1, 1] as const) {
-    for (let i = 0; i < 8; i++) {
-      const cliff = new THREE.Mesh(
-        new THREE.BoxGeometry(18 + rng() * 14, 28 + rng() * 40, 40 + rng() * 50, 2, 4, 3),
-        new THREE.MeshStandardMaterial({ color: 0x2a3038, roughness: 0.95, flatShading: true }),
-      );
-      cliff.position.set(side * (WORLD_W / 2 + 28 + rng() * 20), 10 + rng() * 12, -WORLD_H / 2 + 40 + i * 85);
-      cliff.rotation.y = side * 0.2;
-      cliff.castShadow = true;
-      cliff.receiveShadow = true;
-      g.add(cliff);
-    }
-  }
+  g.add(buildBackdrop(seed), buildCliffs(seed));
 
   // Forest belt
   const treeCount = 52;
@@ -278,32 +302,15 @@ export function buildScenery(seed: number) {
     ) continue;
     if (Math.abs(x - 200) < 40 && (y < 140 || y > 500)) continue;
 
-    // Scenery is dark pines/cones only — never the bright oak used for wood nodes.
-    const scenic: ModelKey[] = ["kPine", "kPine2", "kCone", "kBush"];
-    const pickKey = scenic[Math.floor(rng() * scenic.length)];
-    const scenicMesh = cloneModel(pickKey, pickKey === "kBush" ? 6 + rng() * 4 : 14 + rng() * 12);
-    if (scenicMesh) {
-      scenicMesh.position.set(x - WORLD_W / 2, 0, y - WORLD_H / 2);
-      scenicMesh.rotation.y = rng() * Math.PI * 2;
-      g.add(scenicMesh);
-    } else {
-      const tree = makeAoETree(0.55 + rng() * 0.25);
-      tree.position.set(x - WORLD_W / 2, 0, y - WORLD_H / 2);
-      tree.rotation.y = rng() * Math.PI * 2;
-      tree.traverse((o) => {
-        const m = o as THREE.Mesh;
-        const mat = m.material;
-        if (m.isMesh && mat instanceof THREE.MeshStandardMaterial) {
-          const c = mat.clone();
-          c.color.multiplyScalar(0.45);
-          m.material = c;
-        }
-      });
-      g.add(tree);
-    }
+    // Scenery never uses the oak, which marks wood nodes.
+    const kind = SCENERY_TREES[Math.floor(rng() * SCENERY_TREES.length)];
+    const tree = buildTree(kind, rng() * 3, 14 + rng() * 12);
+    tree.position.set(x - WORLD_W / 2, 0, y - WORLD_H / 2);
+    tree.rotation.y = rng() * Math.PI * 2;
+    g.add(tree);
   }
 
-  // Boulder fields
+  // Rock piles
   for (let i = 0; i < 28; i++) {
     const x = 30 + rng() * (WORLD_W - 60);
     const y = 70 + rng() * (WORLD_H - 140);
@@ -311,19 +318,10 @@ export function buildScenery(seed: number) {
       Math.abs(x - roadCenterX(seed, 0, y)) < 26 ||
       Math.abs(x - roadCenterX(seed, 1, y)) < 26
     ) continue;
-    const rock = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(3 + rng() * 6, 2),
-      new THREE.MeshStandardMaterial({
-        color: new THREE.Color().setHSL(0.08, 0.08, 0.28 + rng() * 0.15),
-        roughness: 0.92,
-        flatShading: true,
-      }),
-    );
-    rock.position.set(x - WORLD_W / 2, 2 + rng() * 2, y - WORLD_H / 2);
-    rock.rotation.set(rng() * 2, rng() * 2, rng() * 2);
-    rock.castShadow = true;
-    rock.receiveShadow = true;
-    g.add(rock);
+    const pile = buildRockPile(rng() * 3, 0.9 + rng() * 1.1);
+    pile.position.set(x - WORLD_W / 2, 0, y - WORLD_H / 2);
+    pile.rotation.y = rng() * Math.PI * 2;
+    g.add(pile);
   }
 
   // Grass tuft instances

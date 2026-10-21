@@ -1,25 +1,25 @@
 import * as THREE from "three";
 import { BUILD_RANGE, STARTER_GUARD_RANGE, WORLD_H, WORLD_W } from "./balance";
 import { homeCameraFrame } from "./homeCamera";
-import { cloneAnimatedModel, cloneModel, ensureModelsLoaded, setSharedAnisotropy } from "./assets3d";
+import { cloneModel, ensureModelsLoaded, setSharedAnisotropy } from "./assets3d";
 import type { Barricade, Building, GameState, Team, Unit } from "./types";
 import {
   buildScenery,
   buildTerrain,
-  makeAoETree,
-  makeBallista,
-  makeBarracks,
-  makeCatapult,
-  makeHouse,
-  makeKeepMesh,
-  makeMine,
-  makeWatchtower,
 } from "./worldMesh";
+import { buildKeepModel } from "./models/keep";
+import { buildTree } from "./models/nature";
+import { buildGoldMine } from "./models/mine";
+import { animateUnit, buildPeonModel, buildUnitModel, setPeonGear } from "./models/units";
+import {
+  buildBallistaModel,
+  buildBarracksModel,
+  buildCatapultModel,
+  buildHouseModel,
+  buildWatchtowerModel,
+} from "./models/buildings";
 
-function teamColor(team: Team, lite = false) {
-  if (team === "you") return lite ? 0x8ec8ff : 0x3a7ec8;
-  return lite ? 0xf08090 : 0xa03040;
-}
+
 
 /** Map 2D sim coords (y down) â†’ Three.js XZ ground (Y up). Allocates â€” use only off the hot path. */
 function to3(x: number, y: number, h = 0) {
@@ -940,22 +940,6 @@ export class GameRenderer {
     return obj;
   }
 
-  private registerAnimation(
-    key: EntityKey,
-    object: THREE.Object3D,
-    clips: THREE.AnimationClip[],
-  ) {
-    if (!clips.length) return;
-    this.animationMap.set(key, {
-      mixer: new THREE.AnimationMixer(object),
-      clips,
-      actions: new Map(),
-      root: object,
-      accum: 0,
-      frame: Math.floor(Math.random() * 3), // stagger throttled updates
-    });
-  }
-
   private liveSet() {
     this.scratchLive.clear();
     return this.scratchLive;
@@ -1033,23 +1017,11 @@ export class GameRenderer {
   }
 
   private makeKeep(team: Team) {
-    const kit = cloneModel("kKeep", 42);
-    const g = kit ? new THREE.Group() : makeKeepMesh(team);
-    if (kit) {
-      g.add(kit);
-      const flag = cloneModel("kFlag", 16);
-      if (flag) {
-        flag.position.set(0, 28, 0);
-        g.add(flag);
-      }
-      const wallL = cloneModel("kWall", 18);
-      const wallR = cloneModel("kWall", 18);
-      if (wallL && wallR) {
-        wallL.position.set(-22, 0, 8);
-        wallR.position.set(22, 0, 8);
-        g.add(wallL, wallR);
-      }
-    }
+    const g = new THREE.Group();
+    const keep = buildKeepModel(team);
+    // Gate faces the enemy: player keep sits at +z, foe at -z.
+    if (team === "you") keep.rotation.y = Math.PI;
+    g.add(keep);
     const light = new THREE.PointLight(0xffaa55, 1.6, 110, 2);
     light.position.set(-16, 28, 14);
     light.visible = TIER_PROFILE[this.tier].pointLights;
@@ -1077,20 +1049,12 @@ export class GameRenderer {
     this.prune("keep-", live);
   }
 
-  private kitOr(key: "kTower" | "kBallista" | "kCatapult" | "kGate" | "kWall", height: number, fallback: () => THREE.Object3D) {
-    const m = cloneModel(key, height);
-    if (!m) return fallback();
-    const g = new THREE.Group();
-    g.add(m);
-    return g;
-  }
-
   private makeBuilding(kind: Building["kind"], team: Team) {
-    if (kind === "watchtower") return this.kitOr("kTower", 34, () => makeWatchtower(team));
-    if (kind === "ballista") return this.kitOr("kBallista", 16, () => makeBallista(team));
-    if (kind === "catapult") return this.kitOr("kCatapult", 18, () => makeCatapult(team));
-    if (kind === "house") return makeHouse(team);
-    return makeBarracks(team);
+    if (kind === "watchtower") return buildWatchtowerModel(team);
+    if (kind === "ballista") return buildBallistaModel(team);
+    if (kind === "catapult") return buildCatapultModel(team);
+    if (kind === "house") return buildHouseModel(team);
+    return buildBarracksModel(team);
   }
 
   private syncBuildings(state: GameState) {
@@ -1231,7 +1195,7 @@ export class GameRenderer {
     const g = new THREE.Group();
     if (n.kind === "pine") {
       // Bright oak + log pile = wood. Scenery pines never look like this.
-      const canopy = cloneModel("kOak", 30) ?? cloneModel("oak", 30) ?? makeAoETree(1.2);
+      const canopy = buildTree("oak", n.pos.x + n.pos.y, 30);
       canopy.name = "canopy";
       g.add(canopy);
       const logs = cloneModel("kLogs", 7);
@@ -1246,26 +1210,7 @@ export class GameRenderer {
     } else {
       const rocks = new THREE.Group();
       rocks.name = "canopy";
-      const a = cloneModel("kRock", 10);
-      const b = cloneModel("kRock2", 8);
-      const c = cloneModel("kStone", 7);
-      if (a) rocks.add(a);
-      if (b) {
-        b.position.set(6, 0, 2);
-        rocks.add(b);
-      }
-      if (c) {
-        c.position.set(-5, 0, 3);
-        rocks.add(c);
-      }
-      if (rocks.children.length === 0) rocks.add(makeMine());
-      // Gold seam so mines read as ore, not random boulders
-      const nugget = new THREE.Mesh(
-        new THREE.OctahedronGeometry(2.2, 0),
-        new THREE.MeshStandardMaterial({ color: 0xffd24a, emissive: 0xaa7700, emissiveIntensity: 0.6, metalness: 0.8, roughness: 0.25 }),
-      );
-      nugget.position.set(0, 8, 0);
-      rocks.add(nugget);
+      rocks.add(buildGoldMine());
       g.add(rocks);
       g.add(
         this.resourceBeacon(own ? "GOLD" : "RAID GOLD", own ? 0x4aa0ff : 0xff704f),
@@ -1648,7 +1593,7 @@ export class GameRenderer {
       const key = `unit-${u.id}`;
       live.add(key);
       const obj = this.ensure(key, () => {
-        const made = this.makeUnit(u, key);
+        const made = this.makeUnit(u);
         made.userData.ramBody = made.children.find((child) => child.userData.movingRamBody) ?? null;
         return made;
       });
@@ -1686,6 +1631,7 @@ export class GameRenderer {
       } else {
         this.playAnimation(key, ["walk", "walk_lower", "run_lower"]);
       }
+      animateUnit(obj, state.time + u.id * 0.37, { x: u.pos.x, y: u.pos.y, timer: u.attackTimer });
     }
     this.prune("unit-", live);
   }
@@ -1699,30 +1645,10 @@ export class GameRenderer {
       const obj = this.ensure(key, () => {
         const g = new THREE.Group();
         g.userData.selection = null;
-        const animated =
-          cloneAnimatedModel("kCharC", 14) ??
-          cloneAnimatedModel(v.team === "you" ? "blue" : "red", 14);
-        const m = animated?.object;
-        if (m) {
-          m.name = "rig";
-          g.add(m);
-          this.registerAnimation(key, m, animated.clips);
-          return g;
-        }
-        const body = new THREE.Mesh(
-          new THREE.CapsuleGeometry(2.4, 6, 6, 10),
-          new THREE.MeshStandardMaterial({ color: 0x8ec8ff, roughness: 0.6 }),
-        );
-        body.position.y = 5.5;
-        body.castShadow = true;
-        body.name = "body";
-        g.add(body);
-        const head = new THREE.Mesh(
-          new THREE.SphereGeometry(2, 10, 10),
-          new THREE.MeshStandardMaterial({ color: 0xe8d0b0 }),
-        );
-        head.position.y = 11;
-        g.add(head);
+        const m = buildPeonModel(v.team);
+        m.name = "rig";
+        g.add(m);
+        g.userData.rig = m;
         return g;
       });
       setPos3(obj, v.pos.x, v.pos.y, 0);
@@ -1747,15 +1673,16 @@ export class GameRenderer {
         obj.userData.selection = selection;
       }
       selection.visible = state.selectedVillagerIds.includes(v.id);
-      if (v.state === "defend" && v.attackTimer > 0) {
-        this.playAnimation(key, ["attack-melee-right", "attack", "simple_interact"]);
-      } else if (v.state === "gathering" || v.state === "buildingBarricade") {
-        this.playAnimation(key, ["interact-right", "pick-up", "simple_interact"]);
-      } else if (v.state === "idle") {
-        this.playAnimation(key, ["idle", "idle_lower"]);
-      } else {
-        this.playAnimation(key, ["walk", "walk_lower", "run_lower"]);
-      }
+      const rig = obj.userData.rig as THREE.Object3D;
+      const node = v.targetNodeId ? state.nodes.find((n) => n.id === v.targetNodeId) : undefined;
+      setPeonGear(rig, node?.kind === "copper" ? "pick" : "axe", v.carryingGold > 0 ? "gold" : v.carryingWood > 0 ? "wood" : "none");
+      animateUnit(rig, state.time + v.id * 0.37, {
+        x: v.pos.x,
+        y: v.pos.y,
+        timer: v.attackTimer,
+        fighting: v.state === "defend" && v.attackTimer > -0.35,
+        work: v.state === "gathering" || v.state === "buildingBarricade",
+      });
     }
     this.prune("vil-", live);
   }
