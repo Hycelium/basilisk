@@ -48,7 +48,7 @@ export function BuildBar({ ui, compact = false, getCost, onSelect, onCancel }: B
             <button
               key={kind}
               type="button"
-              className={selected ? "build-btn selected" : "build-btn"}
+              className={`build-btn${selected ? " selected" : ""}${afford ? " afford" : ""}`}
               onClick={() => (selected ? onCancel() : onSelect(kind))}
               aria-pressed={selected}
               aria-label={`${label} — ${blurb} — ${formatCost(cost)}`}

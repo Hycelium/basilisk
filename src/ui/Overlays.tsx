@@ -55,12 +55,27 @@ interface OverlaysProps {
   skirmishLive?: boolean;
   onStart: () => void;
   onSkirmish: () => void;
+  onCampaign: () => void;
   onRestart: () => void;
+  onReturnToMap: () => void;
+  onMarchAgain: () => void;
   onRerollMap: () => void;
 }
 
-export function Overlays({ ui, hideTitle, skirmishLive, onStart, onSkirmish, onRestart, onRerollMap }: OverlaysProps) {
+export function Overlays({
+  ui,
+  hideTitle,
+  skirmishLive,
+  onStart,
+  onSkirmish,
+  onCampaign,
+  onRestart,
+  onReturnToMap,
+  onMarchAgain,
+  onRerollMap,
+}: OverlaysProps) {
   const [shareNote, setShareNote] = useState("");
+  const [arcadeOpen, setArcadeOpen] = useState(false);
   const roads = laneCount(ui.mapSeed);
 
   useEffect(() => {
@@ -85,45 +100,70 @@ export function Overlays({ ui, hideTitle, skirmishLive, onStart, onSkirmish, onR
     <>
       {ui.phase === "title" && !hideTitle && (
         <div className="overlay title-overlay">
+          {!arcadeOpen && (
+            <img className="menu-logo" src={`${import.meta.env.BASE_URL}icons/icon-512.png`} alt="" />
+          )}
           <h1>Roadkeep</h1>
           <p className="keep-lvl">
             Keep Level {ui.keepLevel} · XP {ui.keepXp}/{ui.keepXpNext}
           </p>
-          <p>Every keep level forges a new battlefield. Infinite campaign maps.</p>
+          <p>Every keep level forges a new battlefield. The Ten Marches unlock the units you can muster.</p>
 
-          <div className="map-card selected campaign-map">
-            <strong>{ui.mapName}</strong>
-            <span>{ui.mapTagline}</span>
-            <span className="map-meta">
-              Campaign Lv {ui.campaignLevel}
-              {ui.scoutSalt > 0 ? ` · Scout ${ui.scoutSalt}` : ""} · {roads === 1 ? "1 road" : `${roads} roads`} · seed{" "}
-              {ui.mapSeed}
-            </span>
-          </div>
+          {arcadeOpen ? (
+            <>
+              <div className="map-card selected campaign-map">
+                <strong>{ui.mapName}</strong>
+                <span>{ui.mapTagline}</span>
+                <span className="map-meta">
+                  Campaign Lv {ui.campaignLevel}
+                  {ui.scoutSalt > 0 ? ` · Scout ${ui.scoutSalt}` : ""} · {roads === 1 ? "1 road" : `${roads} roads`} · seed{" "}
+                  {ui.mapSeed}
+                </span>
+              </div>
 
-          <button type="button" className="ghost reroll-btn" onClick={onRerollMap}>
-            Scout new terrain
-          </button>
+              <button type="button" className="ghost reroll-btn" onClick={onRerollMap}>
+                Scout new terrain
+              </button>
 
-          <p className="foe-brain-tease">
-            Foe intellect {ui.foeIntellect}
-            {ui.foeGames > 0 ? ` · ${ui.foeWins}W / ${ui.foeGames} games learned` : " · virgin Q-table"}
-          </p>
+              <p className="foe-brain-tease">
+                Foe intellect {ui.foeIntellect}
+                {ui.foeGames > 0 ? ` · ${ui.foeWins}W / ${ui.foeGames} games learned` : " · virgin Q-table"}
+              </p>
 
-          <ul className="tips">
-            <li>The foe Q-learns your builds across sessions</li>
-            <li>Level up → brand-new map layout forever</li>
-            <li>Scout new terrain → reroll pads &amp; resources at this level</li>
-          </ul>
+              <div className="title-actions">
+                <button type="button" className="cta" onClick={onStart}>
+                  Start
+                </button>
+                <button type="button" className="ghost" onClick={() => setArcadeOpen(false)}>
+                  Back
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="foe-brain-tease">
+                Foe intellect {ui.foeIntellect}
+                {ui.foeGames > 0 ? ` · ${ui.foeWins}W / ${ui.foeGames} games learned` : " · virgin Q-table"}
+              </p>
 
-          <div className="title-actions">
-            <button type="button" className="cta" onClick={onStart}>
-              Take the field — {ui.mapName}
-            </button>
-            <button type="button" className="ghost" onClick={onSkirmish}>
-              Skirmish
-            </button>
-          </div>
+              <ul className="tips">
+                <li>Beat a nation that fields one unit, and that unit joins your muster</li>
+                <li>Level up → brand-new map layout forever</li>
+              </ul>
+
+              <div className="title-actions">
+                <button type="button" className="cta" onClick={onCampaign}>
+                  Campaign
+                </button>
+                <button type="button" className="ghost" onClick={() => setArcadeOpen(true)}>
+                  Arcade mode
+                </button>
+                <button type="button" className="ghost" onClick={onSkirmish}>
+                  Multiplayer
+                </button>
+              </div>
+            </>
+          )}
 
           <div className="title-share" role="group" aria-label="Share this game">
             <button type="button" onClick={() => void copyLink()}>
@@ -162,14 +202,46 @@ export function Overlays({ ui, hideTitle, skirmishLive, onStart, onSkirmish, onR
             Your keep: {ui.stats.yourKeep} · Theirs: {ui.stats.foeKeep}
           </p>
           {ui.lastXpGain > 0 && <p className="xp-gain">+{ui.lastXpGain} Keep XP</p>}
+          {ui.missionId != null && ui.freshUnlock ? (
+            <p className="xp-gain">{ui.freshUnlock} unlocked.</p>
+          ) : null}
           <p className="keep-lvl">Keep Level {ui.keepLevel}</p>
           <p className="foe-brain-tease">
             Foe intellect {ui.foeIntellect} · remembered {ui.foeGames} sieges
           </p>
-          <p className="map-next-hint">Play again loads the map for your current keep level. The foe keeps learning.</p>
-          <button type="button" className="cta" onClick={onRestart}>
-            Play again
-          </button>
+          {ui.missionId != null ? (
+            <>
+              <p className="map-next-hint">
+                {ui.missionName} fields one unit. Held marches stay on the map.
+              </p>
+              {ui.endReason.startsWith("Victory") ? (
+                <>
+                  <button type="button" className="cta" onClick={onReturnToMap}>
+                    The map
+                  </button>
+                  <button type="button" className="ghost" onClick={onMarchAgain}>
+                    March again
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button type="button" className="cta" onClick={onMarchAgain}>
+                    March again
+                  </button>
+                  <button type="button" className="ghost" onClick={onReturnToMap}>
+                    The map
+                  </button>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="map-next-hint">Play again loads the map for your current keep level. The foe keeps learning.</p>
+              <button type="button" className="cta" onClick={onRestart}>
+                Play again
+              </button>
+            </>
+          )}
         </div>
       )}
 

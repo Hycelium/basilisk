@@ -8,6 +8,7 @@ import { Hud } from "./ui/Hud";
 import { BuildBar } from "./ui/BuildBar";
 import { DetailSheet } from "./ui/DetailSheet";
 import { Overlays } from "./ui/Overlays";
+import { CampaignMap } from "./ui/CampaignMap";
 import { ControlCluster, type ClusterAction } from "./ui/ControlCluster";
 import { RadialMenu, type RadialItem } from "./ui/RadialMenu";
 import { useHints } from "./ui/hints";
@@ -80,6 +81,10 @@ const defaultUi: UiSnapshot = {
   foeLastAction: "wait",
   localTeam: "you",
   pvp: false,
+  missionId: null,
+  missionName: "",
+  freshUnlock: "",
+  freshHold: false,
 };
 
 const LONG_PRESS_MS = 350;
@@ -137,6 +142,8 @@ export default function App() {
   const [fsSupported] = useState(fullscreenSupported);
   /** Fullscreen is the default. A browser only allows it from a click or key press, so the first one enters. Leaving fullscreen keeps the windowed view for the rest of the session. */
   const fullscreenWantedRef = useRef(true);
+  const [campaignOpen, setCampaignOpen] = useState(false);
+  const [triumph, setTriumph] = useState<{ id: number; unlock: string } | null>(null);
   const fullscreenRequestRef = useRef<Promise<void> | null>(null);
   const fullscreenTriedRef = useRef(false);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -1155,7 +1162,7 @@ export default function App() {
           </div>
           <Overlays
             ui={ui}
-            hideTitle={skirmish.lobby.open || skirmish.lobby.live}
+            hideTitle={skirmish.lobby.open || skirmish.lobby.live || campaignOpen}
             skirmishLive={skirmish.lobby.live}
             onRerollMap={() => {
               sim.rerollMap();
@@ -1163,8 +1170,13 @@ export default function App() {
               beep(440);
             }}
             onSkirmish={skirmish.openLobby}
+            onCampaign={() => {
+              setTriumph(null);
+              setCampaignOpen(true);
+            }}
             onStart={() => {
               if (skirmish.lobby.open || skirmish.lobby.live) return;
+              setCampaignOpen(false);
               afterPortalBreak(() => {
                 sim.setMatchMode("ai");
                 sim.setLocalTeam("you");
@@ -1180,7 +1192,46 @@ export default function App() {
               refreshUi();
               hpRef.current = 100;
             }}
+            onReturnToMap={() => {
+              if (ui.missionId != null && ui.freshHold) {
+                setTriumph({ id: ui.missionId, unlock: ui.freshUnlock });
+              } else {
+                setTriumph(null);
+              }
+              sim.reset();
+              setCampaignOpen(true);
+              refreshUi();
+              hpRef.current = 100;
+            }}
+            onMarchAgain={() => {
+              if (ui.missionId == null) return;
+              afterPortalBreak(() => {
+                sim.startCampaign(ui.missionId!);
+                setCampaignOpen(false);
+                refreshUi();
+                beep(520);
+              });
+            }}
           />
+          {campaignOpen && ui.phase === "title" && (
+            <CampaignMap
+              triumph={triumph}
+              onTriumphDone={() => setTriumph(null)}
+              onClose={() => {
+                setTriumph(null);
+                setCampaignOpen(false);
+              }}
+              onMarch={(id) => {
+                setTriumph(null);
+                afterPortalBreak(() => {
+                  sim.startCampaign(id);
+                  setCampaignOpen(false);
+                  refreshUi();
+                  beep(520);
+                });
+              }}
+            />
+          )}
           {skirmish.lobby.open && !skirmish.lobby.live && (
             <SkirmishLobby
               name={skirmish.name}

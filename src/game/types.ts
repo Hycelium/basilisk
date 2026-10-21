@@ -372,6 +372,13 @@ export interface UiSnapshot {
   /** Side this screen commands. Guest is `foe` while the map stays north-up. */
   localTeam: Team;
   pvp: boolean;
+  /** Set while a Ten Marches mission is the live match. */
+  missionId: number | null;
+  missionName: string;
+  /** Unit name just won from this mission, or empty. Onslaughts hold the ground without a new unit. */
+  freshUnlock: string;
+  /** This victory was the first time the march was held. */
+  freshHold: boolean;
 }
 
 export interface RectHit {

@@ -56,6 +56,7 @@ import {
 import {
   buildNodes,
   buildPads,
+  generateMap,
   getOrCreateCampaignMap,
   keepPos,
   laneName,
@@ -79,6 +80,15 @@ import {
   xpForNextLevel,
   xpProgress,
 } from "./progress";
+import {
+  campaignPerLane,
+  loadCampaign,
+  missionById,
+  missionStatus,
+  recordVictory,
+  unitPlural,
+  type CampaignMission,
+} from "./campaign";
 import { snapshotUsable, type MatchSnapshot, type RemoteOrder } from "../net/protocol";
 import type {
   Building,
@@ -139,6 +149,10 @@ export class GameSim {
   private activeMap: MapDef;
   private controlGroups = new Map<number, number[]>();
   private matchMode: "ai" | "pvp" = "ai";
+  private campaignMission: CampaignMission | null = null;
+  private lastUnlock = "";
+  /** True when the match that just ended was the first time that march was held. */
+  private freshHold = false;
   private localTeam: Team = "you";
   private orderSink: ((order: RemoteOrder) => void) | null = null;
   private remoteNote: ((text: string) => void) | null = null;
@@ -518,10 +532,75 @@ export class GameSim {
   }
 
   reset() {
+    this.campaignMission = null;
+    this.lastUnlock = "";
+    this.freshHold = false;
     this.reloadCampaignMap();
   }
 
+  /** Ordered mission. The foe and the waves field only that nation's unit. */
+  startCampaign(id: number) {
+    const mission = missionById(id);
+    if (!mission || missionStatus(id, loadCampaign()) === "locked") return false;
+    this.campaignMission = mission;
+    this.lastUnlock = "";
+    this.freshHold = false;
+    this.matchMode = "ai";
+    this.localTeam = "you";
+    const map = generateMap(mission.seed);
+    map.name = mission.nation;
+    map.tagline = mission.blurb;
+    this.activeMap = map;
+    this.nextId = 1;
+    this.aiTimer = 0;
+    this.aiRushDeadline = 0;
+    this.shownMap = null;
+    this.linkDown = false;
+    this.poses.clear();
+    this.predicted.clear();
+    this.pendingOwnPad = null;
+    this.state = this.makeFreshState(map);
+    this.state.commandTeam = "you";
+    if (mission.mode === "onslaught") this.widenField();
+    this.state.phase = "running";
+    this.state.wavePhase = "build";
+    this.state.buildTimer = FIRST_BUILD;
+    notifyAiMatchStart();
+    const unit = unitPlural(mission.unit);
+    this.addToast(
+      mission.mode === "onslaught"
+        ? `${mission.nation} — an onslaught of ${unit}, with extra ground to build on.`
+        : `${mission.nation} fields ${unit} and nothing else.`,
+    );
+    return true;
+  }
+
+  /** Onslaught maps duplicate every combat pad so the field has room for a longer defense. */
+  private widenField() {
+    const combat = this.state.pads.filter((p) => p.zone === "combat");
+    for (const pad of combat) {
+      const towardCenter = pad.pos.x < 200 ? 28 : -28;
+      this.state.pads.push({
+        id: `${pad.id}-host`,
+        team: pad.team,
+        zone: "combat",
+        laneCoverage: [...pad.laneCoverage],
+        pos: {
+          x: Math.min(360, Math.max(40, pad.pos.x + towardCenter)),
+          y: Math.min(700, Math.max(36, pad.pos.y + (pad.team === "you" ? -22 : 22))),
+        },
+      });
+    }
+  }
+
+  private waveCap() {
+    return this.campaignMission?.waves ?? WAVES.length;
+  }
+
   startMatch() {
+    this.campaignMission = null;
+    this.lastUnlock = "";
+    this.freshHold = false;
     this.state.phase = "running";
     this.state.wavePhase = "build";
     this.state.buildTimer = FIRST_BUILD;
@@ -1227,7 +1306,7 @@ export class GameSim {
 
   private launchNextWave() {
     const s = this.state;
-    if (s.waveIndex >= WAVES.length) return;
+    if (s.waveIndex >= this.waveCap()) return;
     const idx = s.waveIndex;
     this.enqueueWave(idx);
     const prevWave = s.waveIndex;
@@ -1240,10 +1319,10 @@ export class GameSim {
     s.gold.foe += income;
     s.stats.you.goldEarned += income;
     s.stats.foe.goldEarned += income;
-    this.addToast(`Wave ${s.waveIndex}/${WAVES.length} — +${income}g`);
+    this.addToast(`Wave ${s.waveIndex}/${this.waveCap()} — +${income}g`);
     this.addFloat(`+${income}`, s.keeps.you.pos.x - 30, s.keeps.you.pos.y - 40, "#8cd6ff");
     this.emitCombat("waveHorn", s.keeps.you.pos);
-    if (s.waveIndex >= WAVES.length) s.allWavesLaunched = true;
+    if (s.waveIndex >= this.waveCap()) s.allWavesLaunched = true;
   }
 
   rushNextWave() {
@@ -1252,7 +1331,7 @@ export class GameSim {
     if (this.redirect({ t: "rush" })) return;
     const s = this.state;
     if (s.phase !== "running" || s.wavePhase !== "build") return;
-    if (s.waveIndex >= WAVES.length) return;
+    if (s.waveIndex >= this.waveCap()) return;
     s.gold.you += RUSH_BONUS;
     s.gold.foe += RUSH_BONUS;
     s.stats.you.goldEarned += RUSH_BONUS;
@@ -1292,6 +1371,18 @@ export class GameSim {
   }
 
   private enqueueWave(index: number) {
+    const mission = this.campaignMission;
+    if (mission) {
+      // The nation attacks. A mirror host on the player's side would march
+      // straight into their keep and win the march without a fight.
+      const perLane = campaignPerLane(mission, index);
+      for (const lane of mapLanes(this.activeMap.seed)) {
+        for (let i = 0; i < perLane; i++) {
+          this.state.pendingWaveUnits.push({ team: "foe", kind: mission.unit, lane });
+        }
+      }
+      return;
+    }
     const spec = WAVES[index];
     const pairs: { kind: UnitKind; count: number }[] = [
       { kind: "raider", count: spec.raider },
@@ -1593,7 +1684,7 @@ export class GameSim {
       this.tell(team, "Training queue is full.");
       return false;
     }
-    if ((this.matchMode === "pvp" || team === this.localTeam) && !unitUnlocked(kind, s.keepLevel)) {
+    if ((this.matchMode === "pvp" || team === this.localTeam) && !unitUnlocked(kind, s.keepLevel, this.campaignMission == null)) {
       this.tell(team, unlockHint(kind));
       return false;
     }
@@ -2567,6 +2658,13 @@ export class GameSim {
     s.won = won;
     if (this.matchMode === "pvp") return;
     notifyAiMatchEnd(won);
+    this.freshHold = false;
+    if (won === true && this.campaignMission) {
+      const claimed = recordVictory(this.campaignMission.id);
+      this.freshHold = claimed.fresh;
+      this.lastUnlock = claimed.unit ? unitPlural(claimed.unit) : "";
+      if (this.lastUnlock) s.endReason = `${reason} ${this.lastUnlock} join your muster.`;
+    }
     if (won !== null) {
       const { gain, leveledUp } = awardMatchXp({
         won,
@@ -2617,7 +2715,7 @@ export class GameSim {
 
     if (s.wavePhase === "build") {
       s.buildTimer -= dt;
-      if (s.buildTimer <= 0 && s.waveIndex < WAVES.length) {
+      if (s.buildTimer <= 0 && s.waveIndex < this.waveCap()) {
         this.launchNextWave();
       }
     } else if (s.wavePhase === "spawning") {
@@ -2682,10 +2780,14 @@ export class GameSim {
     }
     if (
       s.allWavesLaunched &&
-      s.wavesCleared >= WAVES.length &&
+      s.wavesCleared >= this.waveCap() &&
       s.pendingWaveUnits.length === 0 &&
       s.units.length === 0
     ) {
+      if (this.campaignMission) {
+        this.finishMatch("Victory. The march is held.", true);
+        return;
+      }
       if (s.keeps.you.hp > s.keeps.foe.hp) this.finishMatch("Victory by stone. Your keep held stronger.", true);
       else if (s.keeps.you.hp < s.keeps.foe.hp) this.finishMatch("Defeat by stone. The foe held stronger.", false);
       else this.finishMatch("Stalemate. Equal keep stone after the siege.", null);
@@ -2981,16 +3083,21 @@ export class GameSim {
   }
 
   aiEnqueueTrain(kind: TrainKind) {
-    const def = UNIT_DEFS[kind];
+    const train = this.campaignMission?.unit ?? kind;
+    const def = UNIT_DEFS[train];
     const cost: ResCost = { gold: def.cost ?? 30, wood: def.woodCost ?? 0 };
     if (this.state.gold.foe < cost.gold + AI_RESERVE) return false;
     if (this.state.wood.foe < cost.wood) return false;
     const bars = this.state.buildings.filter((b) => b.team === "foe" && b.kind === "barracks");
     if (bars.length === 0) return false;
-    return this.enqueueTrain(kind, "foe");
+    return this.enqueueTrain(train, "foe");
   }
 
   aiTrainUnits() {
+    if (this.campaignMission) {
+      this.aiEnqueueTrain(this.campaignMission.unit);
+      return;
+    }
     const bars = this.state.buildings.filter((b) => b.team === "foe" && b.kind === "barracks");
     if (bars.length === 0) return false;
     if (bars.every((b) => b.queue.length >= 3)) return false;
@@ -3522,7 +3629,7 @@ export class GameSim {
               blurb: def.blurb,
               cost: def.cost ?? 0,
               woodCost: def.woodCost ?? 0,
-              unlocked: unitUnlocked(kind, s.keepLevel),
+              unlocked: unitUnlocked(kind, s.keepLevel, this.campaignMission == null),
               lockHint: unlockHint(kind),
             };
           })
@@ -3569,15 +3676,15 @@ export class GameSim {
       yourWood: Math.floor(s.wood[view]),
       foeGold: Math.floor(s.gold[other]),
       foeWood: Math.floor(s.wood[other]),
-      waveLabel: `${Math.min(WAVES.length, Math.max(1, s.waveIndex || 1))}/${WAVES.length}`,
+      waveLabel: `${Math.min(this.waveCap(), Math.max(1, s.waveIndex || 1))}/${this.waveCap()}`,
       wavePhase: s.wavePhase,
       buildTimer: Math.max(0, s.buildTimer),
       canRush:
         this.matchMode !== "pvp" &&
         s.wavePhase === "build" &&
-        s.waveIndex < WAVES.length &&
+        s.waveIndex < this.waveCap() &&
         s.phase === "running",
-      totalWaves: WAVES.length,
+      totalWaves: this.waveCap(),
       toasts: s.toasts.map((t) => t.text),
       buildSelection: s.buildSelection,
       selectedBuildingId: selected?.id ?? null,
@@ -3627,6 +3734,10 @@ export class GameSim {
       foeLastAction: brain.lastAction,
       localTeam: view,
       pvp: this.matchMode === "pvp",
+      missionId: this.campaignMission?.id ?? null,
+      missionName: this.campaignMission?.nation ?? "",
+      freshUnlock: this.lastUnlock,
+      freshHold: this.freshHold,
     };
   }
 }
