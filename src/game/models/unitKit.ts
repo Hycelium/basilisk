@@ -202,6 +202,52 @@ const DRAW: Record<UTex, Draw> = {
   },
 };
 
+let texAnisotropy = 8;
+let allowBump = true;
+
+/** Match structure-material mobile rules: separate linear bump maps, optional disable. */
+export function configureUnitMaterials(opts: { anisotropy: number; bump: boolean }) {
+  texAnisotropy = Math.max(1, opts.anisotropy);
+  allowBump = opts.bump;
+  for (const tex of texCache.values()) {
+    if (tex.anisotropy !== texAnisotropy) {
+      tex.anisotropy = texAnisotropy;
+      tex.needsUpdate = true;
+    }
+  }
+  for (const mat of matCache.values()) {
+    let changed = false;
+    if (mat.map && mat.map.anisotropy !== texAnisotropy) {
+      mat.map.anisotropy = texAnisotropy;
+      mat.map.needsUpdate = true;
+      changed = true;
+    }
+    const want = (mat.userData.bumpScale as number) || 0;
+    if (!allowBump && mat.bumpMap) {
+      mat.bumpMap = null;
+      mat.bumpScale = 0;
+      changed = true;
+    } else if (allowBump && mat.map && !mat.bumpMap && want > 0) {
+      mat.bumpMap = bumpFromAlbedo(mat.map);
+      mat.bumpScale = want;
+      changed = true;
+    }
+    if (changed) mat.needsUpdate = true;
+  }
+}
+
+function bumpFromAlbedo(albedo: THREE.Texture) {
+  const bump = albedo.clone();
+  bump.colorSpace = THREE.NoColorSpace;
+  bump.wrapS = albedo.wrapS;
+  bump.wrapT = albedo.wrapT;
+  bump.repeat.copy(albedo.repeat);
+  bump.offset.copy(albedo.offset);
+  bump.anisotropy = albedo.anisotropy;
+  bump.needsUpdate = true;
+  return bump;
+}
+
 const texCache = new Map<UTex, THREE.Texture>();
 function baseTex(name: UTex) {
   let t = texCache.get(name);
@@ -212,7 +258,8 @@ function baseTex(name: UTex) {
     t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.anisotropy = 8;
+    t.anisotropy = texAnisotropy;
+    t.needsUpdate = true;
     texCache.set(name, t);
   }
   return t;
@@ -228,7 +275,7 @@ export interface MatOpts {
 }
 
 const matCache = new Map<string, THREE.MeshStandardMaterial>();
-/** Smooth-shaded standard material, optionally with a tinted procedural texture doubling as bump map. */
+/** Smooth-shaded standard material, optionally with a tinted procedural texture and a separate bump map. */
 export function M(color: number, t: UTex | null = null, o: MatOpts = {}) {
   const rep = o.rep ?? [2, 2];
   const key = `${color}|${t}|${rep}|${o.rough}|${o.metal}|${o.bump}|${o.side}|${o.emissive}`;
@@ -243,12 +290,16 @@ export function M(color: number, t: UTex | null = null, o: MatOpts = {}) {
     });
     if (t) {
       const tx = baseTex(t).clone();
+      tx.colorSpace = THREE.SRGBColorSpace;
       tx.repeat.set(rep[0], rep[1]);
+      tx.anisotropy = texAnisotropy;
       tx.needsUpdate = true;
       m.map = tx;
-      if (o.bump) {
-        m.bumpMap = tx;
-        m.bumpScale = o.bump;
+      const bump = o.bump ?? 0;
+      m.userData.bumpScale = bump;
+      if (bump && allowBump) {
+        m.bumpMap = bumpFromAlbedo(tx);
+        m.bumpScale = bump;
       }
     }
     matCache.set(key, m);

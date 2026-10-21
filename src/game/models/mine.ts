@@ -57,6 +57,8 @@ function build() {
     p.setXYZ(i, x * 10 * k, Math.max(y, -0.05) * 11 * k, Math.min(z * 8 * k, 4.5));
   }
   geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  geo.computeBoundingBox();
   const rockMat = materials.granite(4, 4).clone();
   rockMat.flatShading = true;
   rockMat.color.setHex(0xe8e0d4);

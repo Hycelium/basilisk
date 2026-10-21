@@ -16,6 +16,8 @@ export function buildKeepModel(team: Team) {
     rp.setXYZ(i, x * 21 * k, Math.max(y, -0.2) * 7 * k, z * 21 * k);
   }
   rockGeo.computeVertexNormals();
+  rockGeo.computeBoundingSphere();
+  rockGeo.computeBoundingBox();
   const rock = new THREE.Mesh(rockGeo, materials.granite(3, 2));
   rock.position.y = 0.5;
   rock.receiveShadow = rock.castShadow = true;

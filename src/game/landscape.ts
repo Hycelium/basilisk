@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { WORLD_H } from "./balance";
 import { BACK_FIELD, MAP_CX, mapBounds, rngFromSeed } from "./map";
-import { materials } from "./models/materials";
+import { cloneBumpMap, materials } from "./models/materials";
 import { buildTree } from "./models/nature";
 
 /** Smooth value noise / fbm / ridged noise shared by the terrain, cliff walls and mountain backdrop. */
@@ -51,9 +51,13 @@ const GRASS = new THREE.Color(0x7a7a34);
 const SNOW = new THREE.Color(0xeef2f6);
 
 function rockMaterial(bump = 3) {
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, map: materials.granite(1, 1).map });
-  m.bumpMap = m.map;
-  m.bumpScale = bump;
+  const albedo = materials.granite(1, 1).map;
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, map: albedo });
+  const bumpTex = bump > 0 ? cloneBumpMap(albedo) : null;
+  if (bumpTex) {
+    m.bumpMap = bumpTex;
+    m.bumpScale = bump;
+  }
   return m;
 }
 

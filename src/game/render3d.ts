@@ -9,8 +9,10 @@ import {
   buildTerrain,
 } from "./worldMesh";
 import { buildKeepModel } from "./models/keep";
+import { configureStructureMaterials } from "./models/materials";
 import { buildTree } from "./models/nature";
 import { buildGoldMine } from "./models/mine";
+import { configureUnitMaterials } from "./models/unitKit";
 import { animateUnit, buildPeonModel, buildUnitModel, setPeonGear } from "./models/units";
 import {
   buildBallistaModel,
@@ -219,6 +221,9 @@ export class GameRenderer {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.55;
+    // Before any procedural building/unit material is created: separate bump
+    // maps (and disable them on touch / low tier) so mobile GPUs keep the color pass.
+    this.configureProceduralMaterials();
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 5, 3200);
     this.scene.fog = new THREE.FogExp2(0x8eb4d0, 0.00055);
@@ -597,6 +602,22 @@ export class GameRenderer {
     this.applyTier(setting === "auto" ? this.detectedTier : setting, true);
   }
 
+  private configureProceduralMaterials() {
+    const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
+    const touch = isTouchDevice();
+    // Desktop keeps bump (except low tier). Touch disables it — shared sRGB+bump
+    // CanvasTextures break the lit color pass on many mobile GPUs.
+    const bump = !touch && this.tier !== "low";
+    const anisotropy =
+      this.tier === "low" ? 1 : this.tier === "medium" || touch ? Math.min(4, maxAniso) : Math.min(8, maxAniso);
+    configureStructureMaterials({
+      anisotropy,
+      bump,
+      canvasSize: touch || this.tier === "low" ? 256 : 512,
+    });
+    configureUnitMaterials({ anisotropy, bump });
+  }
+
   private applyTier(tier: QualityTier, notify: boolean) {
     const profile = TIER_PROFILE[tier];
     const prev = this.tier;
@@ -612,6 +633,7 @@ export class GameRenderer {
     this.scene.fog = profile.fog ? new THREE.FogExp2(0x8eb4d0, 0.00055) : null;
     for (const light of this.torchLights) light.visible = profile.pointLights;
     if (this.particles.length > profile.particles) this.particles.length = profile.particles;
+    this.configureProceduralMaterials();
     if (prev !== tier) {
       // Shadow/fog toggles need shader recompiles.
       this.scene.traverse((o) => {
