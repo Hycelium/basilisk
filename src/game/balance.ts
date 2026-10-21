@@ -1,4 +1,4 @@
-import type { BuildingKind, Team, TrainKind, UnitKind, WaveSpec } from "./types";
+import type { BuildingKind, LaneCount, Team, TrainKind, UnitKind, WaveSpec } from "./types";
 
 export const WORLD_W = 400;
 export const WORLD_H = 720;
@@ -9,6 +9,14 @@ export const LANE_OFFSET = { you: -13, foe: 13 } as const;
 
 export const START_GOLD = 100;
 export const START_WOOD = 80;
+
+/** Opening purse for a 2-road map. One road is half, three roads are 1.5×, both sides alike. */
+export function openingStash(lanes: LaneCount) {
+  return {
+    gold: Math.round((START_GOLD * lanes) / 2),
+    wood: Math.round((START_WOOD * lanes) / 2),
+  };
+}
 /** Bloons-style life pool: chips, not melts. ~10–15 min matches. */
 export const START_KEEP_HP = 280;
 

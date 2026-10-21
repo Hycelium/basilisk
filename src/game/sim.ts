@@ -32,9 +32,8 @@ import {
   RATE_MULT,
   RUNNER_CHARGE_DAMAGE,
   RUSH_BONUS,
-  START_GOLD,
+  openingStash,
   START_KEEP_HP,
-  START_WOOD,
   STARTER_GUARD_RANGE,
   TRAIN_ORDER,
   UNIT_DEFS,
@@ -156,6 +155,7 @@ export class GameSim {
 
   private makeFreshState(map: MapDef): GameState {
     const meta = loadMeta();
+    const stash = openingStash(map.lanes);
     const pads = buildPads(map);
     const nodes = buildNodes(map);
     const youPad = startPadPos(map, "you");
@@ -244,8 +244,8 @@ export class GameSim {
           peonQueue: [],
         },
       },
-      gold: { you: START_GOLD, foe: START_GOLD },
-      wood: { you: START_WOOD, foe: START_WOOD },
+      gold: { you: stash.gold, foe: stash.gold },
+      wood: { you: stash.wood, foe: stash.wood },
       units: [],
       buildings,
       villagers,

@@ -13,7 +13,9 @@ export function homeCameraFrame(team: Team) {
     dist: 520,
     lookX: 0,
     lookY: 14,
-    lookZ: north ? -80 : 80,
+    // Just in front of the home keep, so the keep and the house pads behind it
+    // sit in the lower half instead of falling off the bottom of the screen.
+    lookZ: north ? -240 : 240,
   };
 }
 
