@@ -1782,6 +1782,82 @@ button:disabled {
   pointer-events: none;
 }
 
+.skirmish-end {
+  position: absolute;
+  z-index: 17;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(320px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 14px 12px;
+  text-align: center;
+  border: 1px solid #5a4a58;
+  border-radius: 14px;
+  background: rgba(8, 7, 12, 0.94);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.skirmish-end h2 {
+  margin: 0;
+  color: #f0d8a8;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.skirmish-end p {
+  margin: 0;
+  color: #d8c8a8;
+}
+
+.skirmish-end .map-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skirmish-end .map-picks button {
+  border: 1px solid #3a3028;
+  background: #1c1720;
+  color: #d8c8a8;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  box-shadow: none;
+}
+
+.skirmish-end .map-picks button[aria-selected="true"] {
+  border-color: var(--brass);
+  color: #f0d8a8;
+  background: #2a2218;
+}
+
+.skirmish-end-map {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.skirmish-end-map span {
+  color: #8a7a68;
+  font-size: 12px;
+}
+
+.skirmish-end-down {
+  color: #e0b0a8 !important;
+}
+
+.skirmish-end .cta {
+  margin-top: 0;
+  font-size: 16px;
+  padding: 10px 12px;
+}
+
 .opponent-down {
   position: absolute;
   left: 12px;

@@ -241,6 +241,35 @@ export function getOrCreateCampaignMap(level: number, scoutSalt: number): MapDef
   return map;
 }
 
+/**
+ * Skirmish rematches. Same generator and mirrored starts as a campaign map.
+ * Names are fixed; the seed only changes the road bends and the river.
+ */
+const SKIRMISH_LAYOUTS: { name: string; tagline: string; seed: number }[] = [
+  { name: "Night Crossing", tagline: "Gentle roads. The river crosses the north.", seed: 1 },
+  { name: "Ashen Ford", tagline: "The west road bows out. A quiet river crosses the middle.", seed: 7 },
+  { name: "Copper Bend", tagline: "The east road swings wide. The river runs to the south.", seed: 21 },
+  { name: "Hollow March", tagline: "Both roads lean west. The river crooks through the north half.", seed: 215 },
+];
+
+const skirmishCache = new Map<string, MapDef>();
+
+export function skirmishMaps(): MapDef[] {
+  if (skirmishCache.size === SKIRMISH_LAYOUTS.length) {
+    return SKIRMISH_LAYOUTS.map((entry) => skirmishCache.get(`seed-${entry.seed}`)!);
+  }
+  return SKIRMISH_LAYOUTS.map((entry) => {
+    const map = generateMap(entry.seed);
+    const named: MapDef = { ...map, name: entry.name, tagline: entry.tagline };
+    skirmishCache.set(named.id, named);
+    return named;
+  });
+}
+
+export function skirmishMap(id: string): MapDef | null {
+  return skirmishMaps().find((map) => map.id === id) ?? null;
+}
+
 /** @deprecated kept for any leftover UI — now returns a few sample previews */
 export function previewMapsForLevel(level: number, scoutSalt: number): MapDef[] {
   return [getOrCreateCampaignMap(level, scoutSalt)];

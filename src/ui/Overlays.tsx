@@ -51,13 +51,14 @@ function openExternal(url: string) {
 interface OverlaysProps {
   ui: UiSnapshot;
   hideTitle?: boolean;
+  skirmishLive?: boolean;
   onStart: () => void;
   onSkirmish: () => void;
   onRestart: () => void;
   onRerollMap: () => void;
 }
 
-export function Overlays({ ui, hideTitle, onStart, onSkirmish, onRestart, onRerollMap }: OverlaysProps) {
+export function Overlays({ ui, hideTitle, skirmishLive, onStart, onSkirmish, onRestart, onRerollMap }: OverlaysProps) {
   const [shareNote, setShareNote] = useState("");
 
   useEffect(() => {
@@ -146,7 +147,7 @@ export function Overlays({ ui, hideTitle, onStart, onSkirmish, onRestart, onRero
         </div>
       )}
 
-      {ui.phase === "ended" && (
+      {ui.phase === "ended" && !skirmishLive && (
         <div className="overlay">
           <h2>{ui.endReason}</h2>
           <p>Slain: {ui.stats.slain}</p>

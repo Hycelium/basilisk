@@ -54,6 +54,7 @@ import {
   lanePathX,
   laneStartY,
   laneYGate,
+  skirmishMap,
   startPadId,
   startPadPos,
   villagerStart,
@@ -512,6 +513,42 @@ export class GameSim {
     const iq = foeBrainStats().intellect;
     this.addToast(`Build phase — ${FIRST_BUILD}s until wave 1`);
     this.addToast(`Foe intellect ${iq} — learning your patterns`);
+  }
+
+  /**
+   * Fresh skirmish on a catalog map. The local team stays put: a guest remains
+   * `foe` and cannot be written onto the host's side.
+   */
+  applyRematch(mapId: string, role: "host" | "guest" = this.localTeam === "foe" ? "guest" : "host"): boolean {
+    if (this.matchMode !== "pvp") return false;
+    if (role === "guest" && this.localTeam !== "foe") return false;
+    if (role === "host" && this.localTeam !== "you") return false;
+    const map = skirmishMap(mapId);
+    if (!map) return false;
+    const team = this.localTeam;
+    const soundOn = this.state.soundOn;
+    const audioUnlocked = this.state.audioUnlocked;
+    this.activeMap = map;
+    this.nextId = 1;
+    this.aiTimer = 0;
+    this.aiRushDeadline = 0;
+    this.shownMap = { id: map.id, name: map.name, tagline: map.tagline, seed: map.seed };
+    this.poses.clear();
+    this.poseSpan = 0.05;
+    this.lastPoseAt = 0;
+    this.predicted.clear();
+    this.pendingOwnPad = null;
+    this.controlGroups.clear();
+    this.state = this.makeFreshState(map);
+    this.localTeam = team;
+    this.state.commandTeam = team;
+    this.state.soundOn = soundOn;
+    this.state.audioUnlocked = audioUnlocked;
+    this.state.phase = "running";
+    this.state.paused = this.linkDown;
+    if (this.localTeam !== team || this.state.commandTeam !== team || this.state.mapId !== map.id) return false;
+    this.addToast(`Skirmish — ${map.name}.`);
+    return true;
   }
 
   setSound(on: boolean) {
@@ -3113,6 +3150,11 @@ export class GameSim {
     const s = this.state;
     const mapChanged = snap.mapId !== s.mapId;
     if (mapChanged) {
+      const layout = skirmishMap(snap.mapId);
+      if (layout) {
+        this.activeMap = layout;
+        s.nodes = buildNodes(layout);
+      }
       this.poses.clear();
       this.lastPoseAt = 0;
       this.predicted.clear();

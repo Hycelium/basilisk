@@ -1,3 +1,4 @@
+import { skirmishMap } from "../game/map";
 import type {
   BuildingKind,
   GamePhase,
@@ -160,6 +161,8 @@ export interface MatchSnapshot {
 export type NetMsg =
   | { t: "hello"; name: string }
   | { t: "start"; map: MapDef }
+  | { t: "pick"; mapId: string }
+  | { t: "rematch"; mapId: string }
   | { t: "order"; order: RemoteOrder }
   | { t: "snap"; snap: MatchSnapshot }
   | { t: "note"; text: string }
@@ -231,9 +234,15 @@ export function asNetMsg(data: unknown): NetMsg | null {
     }
   }
   if (t === "snap" && !snapshotUsable((data as { snap?: unknown }).snap)) return null;
+  if (t === "pick" || t === "rematch") {
+    const mapId = (data as { mapId?: unknown }).mapId;
+    if (typeof mapId !== "string" || !skirmishMap(mapId)) return null;
+  }
   if (
     t === "hello" ||
     t === "start" ||
+    t === "pick" ||
+    t === "rematch" ||
     t === "order" ||
     t === "snap" ||
     t === "note" ||

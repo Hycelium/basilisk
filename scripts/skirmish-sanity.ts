@@ -1,7 +1,10 @@
 import "./localstorage-shim";
 import { GameSim } from "../src/game/sim";
 import {
+  FIRST_BUILD,
   RUSH_BONUS,
+  START_GOLD,
+  START_WOOD,
   UNIT_DEFS,
   VILLAGER_HP,
   WAVE_START_INCOME,
@@ -10,9 +13,9 @@ import {
   combatWaveScale,
 } from "../src/game/balance";
 import { homeCameraZ } from "../src/game/homeCamera";
-import { keepPos } from "../src/game/map";
+import { buildNodes, buildPads, keepPos, riverSpec, roadCenterX, skirmishMaps, villagerStart } from "../src/game/map";
 import { isEnemyStructure, isOwnStructure } from "../src/game/ownership";
-import { parseRoomInput, snapshotUsable, splitWire, WireReassembly, type NetMsg, type RemoteOrder } from "../src/net/protocol";
+import { asNetMsg, parseRoomInput, snapshotUsable, splitWire, WireReassembly, type NetMsg, type RemoteOrder } from "../src/net/protocol";
 
 function assert(cond: unknown, message: string) {
   if (!cond) throw new Error(message);
@@ -476,5 +479,138 @@ assert(rushAi.getState().wavePhase === "spawning", "vs AI rush starts the wave")
 const rushPay = RUSH_BONUS + WAVE_START_INCOME + Math.floor(aiWave * 3);
 assert(rushAi.getState().gold.you === aiGold.you + rushPay, "vs AI rush still pays the human");
 assert(rushAi.getState().gold.foe === aiGold.foe + rushPay, "vs AI rush still pays the foe");
+
+const campaign = new GameSim();
+const campaignId = campaign.getState().mapId;
+campaign.startMatch();
+assert(campaign.getMatchMode() === "ai", "versus AI stays versus AI");
+assert(campaign.getState().mapId === campaignId, "versus AI keeps its current map");
+
+const layouts = skirmishMaps();
+assert(
+  layouts.map((map) => map.name).join("|") === "Night Crossing|Ashen Ford|Copper Bend|Hollow March",
+  "skirmish maps are named",
+);
+assert(new Set(layouts.map((map) => map.id)).size === layouts.length, "skirmish map ids differ");
+assert(new Set(layouts.map((map) => map.seed)).size === layouts.length, "skirmish seeds differ");
+const rivers = layouts.map((map) => riverSpec(map.seed));
+assert(rivers.every((river) => river.enabled), "each skirmish map has a river");
+for (let i = 0; i < rivers.length; i++) {
+  for (let j = i + 1; j < rivers.length; j++) {
+    assert(Math.abs(rivers[i].y - rivers[j].y) >= 40, "rivers sit in different places");
+  }
+}
+const roadSig = (seed: number) => {
+  const ys = [180, 280, 360, 440, 540];
+  const pts: number[] = [];
+  for (const lane of [0, 1] as const) {
+    for (const y of ys) pts.push(Math.round(roadCenterX(seed, lane, y)));
+  }
+  return pts.join(",");
+};
+assert(new Set(layouts.map((map) => roadSig(map.seed))).size === layouts.length, "roads bend differently");
+for (const map of layouts) {
+  const pads = buildPads(map);
+  const nodes = buildNodes(map);
+  assert(
+    pads.filter((pad) => pad.team === "you").length === pads.filter((pad) => pad.team === "foe").length,
+    `${map.name} pads mirror`,
+  );
+  assert(
+    nodes.filter((node) => node.team === "you").length === nodes.filter((node) => node.team === "foe").length,
+    `${map.name} resources mirror`,
+  );
+  assert(nodes.filter((node) => node.team === "you").length >= 3, `${map.name} has resources`);
+}
+
+const rematchGuest = new GameSim();
+rematchGuest.setMatchMode("pvp");
+rematchGuest.setLocalTeam("foe");
+rematchGuest.startMatch();
+const beforeMap = rematchGuest.getState().mapId;
+const nextMap = layouts.find((map) => map.id !== beforeMap) ?? layouts[0];
+const donor = rematchGuest.getState().villagers[0];
+const spareTower = rematchGuest.getState().buildings[0];
+rematchGuest.getState().villagers.push({ ...donor, id: 4242, pos: { x: donor.pos.x, y: donor.pos.y } });
+rematchGuest.getState().buildings.push({ ...spareTower, id: 4343, kind: "barracks", padId: "leftover-pad" });
+rematchGuest.getState().gold.you = 7777;
+rematchGuest.getState().gold.foe = 7777;
+rematchGuest.getState().wood.you = 1;
+rematchGuest.getState().wood.foe = 1;
+rematchGuest.getState().waveIndex = 11;
+rematchGuest.getState().wavePhase = "fighting";
+rematchGuest.getState().allWavesLaunched = true;
+rematchGuest.getState().phase = "ended";
+const node = rematchGuest.getState().nodes[0];
+node.loadsLeft = 0;
+
+const rematchMsg: NetMsg = { t: "rematch", mapId: nextMap.id };
+const parsedRematch = asNetMsg(JSON.parse(JSON.stringify(rematchMsg)));
+assert(parsedRematch?.t === "rematch" && parsedRematch.mapId === nextMap.id, "rematch message carries the map id");
+if (parsedRematch?.t !== "rematch") throw new Error("rematch message");
+const rematchId = parsedRematch.mapId;
+assert(asNetMsg({ t: "rematch", mapId: "seed-999999" }) === null, "an unknown rematch map is rejected");
+assert(asNetMsg({ t: "pick", mapId: layouts[1].id })?.t === "pick", "map choice message parses");
+
+const hostIdentity = new GameSim();
+hostIdentity.setMatchMode("pvp");
+hostIdentity.setLocalTeam("you");
+hostIdentity.startMatch();
+const hostMap = hostIdentity.getState().mapId;
+const hostPeons = hostIdentity.getState().villagers.length;
+hostIdentity.getState().villagers.push({ ...hostIdentity.getState().villagers[0], id: 5151, pos: { x: 1, y: 1 } });
+assert(!hostIdentity.applyRematch(rematchId, "guest"), "guest cannot apply rematch onto the host's team identity");
+assert(hostIdentity.getLocalTeam() === "you", "host team stays you");
+assert(hostIdentity.getState().mapId === hostMap, "refused rematch does not switch the host map");
+assert(hostIdentity.getState().villagers.some((v) => v.id === 5151), "refused rematch leaves the host match alone");
+assert(hostIdentity.getState().villagers.length === hostPeons + 1, "refused rematch does not reset the host");
+
+assert(rematchGuest.applyRematch(rematchId, "guest"), "guest applies the host rematch");
+assert(rematchGuest.getState().mapId === rematchId && rematchGuest.getState().mapId !== beforeMap, "rematch switches map id");
+assert(rematchGuest.getLocalTeam() === "foe", "guest stays on the north side");
+assert(rematchGuest.getState().commandTeam === "foe", "guest commands stay foe");
+assert(rematchGuest.getUiSnapshot().localTeam === "foe", "guest hud stays foe");
+assert(!rematchGuest.getState().villagers.some((v) => v.id === 4242), "rematch clears a leftover peon");
+assert(!rematchGuest.getState().buildings.some((b) => b.id === 4343), "rematch clears a leftover building");
+assert(rematchGuest.getState().buildings.length === 2, "new match has the two starting towers");
+assert(rematchGuest.getState().buildings.every((b) => b.kind === "watchtower"), "starting towers only");
+assert(rematchGuest.getState().villagers.length === 4, "new match has the starting peons");
+assert(rematchGuest.getState().units.length === 0, "new match has no soldiers");
+assert(rematchGuest.getState().phase === "running", "rematch is a live match");
+assert(rematchGuest.getState().waveIndex === 0 && rematchGuest.getState().wavePhase === "build", "wave state is a new match");
+assert(!rematchGuest.getState().allWavesLaunched, "wave flag resets");
+assert(rematchGuest.getState().buildTimer === FIRST_BUILD, "build clock resets");
+assert(
+  rematchGuest.getState().gold.you === START_GOLD && rematchGuest.getState().gold.foe === START_GOLD,
+  "gold resets for both sides",
+);
+assert(
+  rematchGuest.getState().wood.you === START_WOOD && rematchGuest.getState().wood.foe === START_WOOD,
+  "wood resets for both sides",
+);
+assert(rematchGuest.getState().nodes.every((n) => n.loadsLeft === n.maxLoads), "resources are full again");
+const north = villagerStart("foe", 0);
+const south = villagerStart("you", 0);
+const guestPeon = rematchGuest.getState().villagers.find((v) => v.team === "foe");
+const hostPeon = rematchGuest.getState().villagers.find((v) => v.team === "you");
+assert(guestPeon && Math.abs(guestPeon.pos.y - north.y) < 1, "guest peons start at the north keep");
+assert(hostPeon && Math.abs(hostPeon.pos.y - south.y) < 1, "host peons stay at the south keep");
+assert(!rematchGuest.getUiSnapshot().canRush, "rematch still cannot rush");
+rematchGuest.rushNextWave();
+assert(rematchGuest.getState().waveIndex === 0, "rematch rush does not start a wave");
+
+const walked = { ...guestPeon!.pos };
+rematchGuest.applyRemoteOrder({
+  t: "move",
+  team: "foe",
+  ids: [guestPeon!.id],
+  x: guestPeon!.pos.x + 36,
+  y: guestPeon!.pos.y + 40,
+});
+for (let i = 0; i < 30; i++) rematchGuest.update(0.1);
+assert(moved(guestPeon!.pos, walked) > 8, "orders still move a peon on the new match");
+const picture = rematchGuest.exportSnapshot();
+assert(picture.mapId === rematchId && picture.phase === "running", "snapshot is the new match");
+assert(picture.buildings.length === 2 && picture.villagers.length === 4, "snapshot has no leftovers");
 
 console.log("skirmish sanity ok");

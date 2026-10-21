@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { skirmishMap, skirmishMaps } from "../game/map";
 import type { GameRenderer } from "../game/render3d";
 import type { GameSim } from "../game/sim";
 import { createRoomId, inviteLink, parseRoomInput, type NetMsg } from "./protocol";
 import { SkirmishLink } from "./skirmish";
+
+const DEFAULT_MAP = skirmishMaps()[0].id;
 
 const NAME_KEY = "roadkeep_name";
 const PICTURE_REJECTED = "The match picture was rejected.";
@@ -22,6 +25,8 @@ export interface LobbyState {
   copied: boolean;
   pingMs: number | null;
   link: "off" | "connecting" | "open" | "failed" | "down";
+  /** Map the host has chosen for the next rematch. */
+  selectedMapId: string;
 }
 
 function loadName() {
@@ -57,6 +62,7 @@ const idleLobby = (): LobbyState => ({
   copied: false,
   pingMs: null,
   link: "off",
+  selectedMapId: DEFAULT_MAP,
 });
 
 export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | null>) {
@@ -137,6 +143,18 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
       }
       if (msg.t === "start") {
         beginGuest(msg.map);
+        return;
+      }
+      if (msg.t === "pick") {
+        if (roleRef.current !== "guest" || !skirmishMap(msg.mapId)) return;
+        setLobby((s) => ({ ...s, selectedMapId: msg.mapId }));
+        return;
+      }
+      if (msg.t === "rematch") {
+        if (roleRef.current !== "guest" || lobbyRef.current.link !== "open") return;
+        if (!sim.applyRematch(msg.mapId, "guest")) return;
+        rendererRef.current?.setHomeSide("foe");
+        setLobby((s) => ({ ...s, selectedMapId: msg.mapId, live: true, open: false, link: "open" }));
         return;
       }
       if (msg.t === "order") {
@@ -226,6 +244,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
       copied: false,
       pingMs: null,
       link: "connecting",
+      selectedMapId: DEFAULT_MAP,
     });
     openLink("host", id);
   }, [openLink]);
@@ -255,11 +274,34 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
         copied: false,
         pingMs: null,
         link: "connecting",
+        selectedMapId: DEFAULT_MAP,
       });
       openLink("guest", roomId);
     },
     [openLink],
   );
+
+  const announceMap = useCallback(() => {
+    if (roleRef.current !== "host" || lobbyRef.current.link !== "open") return;
+    const mapId = lobbyRef.current.selectedMapId;
+    if (!skirmishMap(mapId)) return;
+    linkRef.current?.send({ t: "pick", mapId });
+  }, []);
+
+  const pickMap = useCallback((mapId: string) => {
+    if (roleRef.current !== "host" || !skirmishMap(mapId)) return;
+    setLobby((s) => ({ ...s, selectedMapId: mapId }));
+    if (lobbyRef.current.link === "open") linkRef.current?.send({ t: "pick", mapId });
+  }, []);
+
+  const rematch = useCallback(() => {
+    if (roleRef.current !== "host" || !liveRef.current || lobbyRef.current.link !== "open") return;
+    const mapId = lobbyRef.current.selectedMapId;
+    if (!sim.applyRematch(mapId, "host")) return;
+    linkRef.current?.send({ t: "rematch", mapId });
+    linkRef.current?.send({ t: "snap", snap: sim.exportSnapshot() });
+    rendererRef.current?.setHomeSide("you");
+  }, [rendererRef, sim]);
 
   const startSkirmish = useCallback(() => {
     if (roleRef.current !== "host" || !lobbyRef.current.guestConnected) return;
@@ -318,6 +360,9 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
     hostMatch,
     joinMatch,
     startSkirmish,
+    announceMap,
+    pickMap,
+    rematch,
     copyInvite,
     leave,
   };

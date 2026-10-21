@@ -12,8 +12,9 @@ import { ControlCluster, type ClusterAction } from "./ui/ControlCluster";
 import { RadialMenu, type RadialItem } from "./ui/RadialMenu";
 import { useHints } from "./ui/hints";
 import { useLayout } from "./ui/useLayout";
+import { skirmishMaps } from "./game/map";
 import { useSkirmish } from "./net/useSkirmish";
-import { SkirmishLobby } from "./ui/SkirmishLobby";
+import { SkirmishEnd, SkirmishLobby } from "./ui/SkirmishLobby";
 import { afterPortalBreak, bindPortalAudio, onMatchEndToMenu, onMatchStart, onReturnToTitle } from "./portal";
 
 const defaultUi: UiSnapshot = {
@@ -596,6 +597,11 @@ export default function App() {
   }, [ui.phase]);
 
   useEffect(() => {
+    if (ui.phase !== "ended" || !skirmish.lobby.live || skirmish.lobby.role !== "host") return;
+    skirmish.announceMap();
+  }, [skirmish.announceMap, skirmish.lobby.live, skirmish.lobby.role, ui.phase]);
+
+  useEffect(() => {
     let held = false;
     let saved = false;
     bindPortalAudio({
@@ -1090,6 +1096,7 @@ export default function App() {
           <Overlays
             ui={ui}
             hideTitle={skirmish.lobby.open || skirmish.lobby.live}
+            skirmishLive={skirmish.lobby.live}
             onRerollMap={() => {
               sim.rerollMap();
               refreshUi();
@@ -1107,11 +1114,9 @@ export default function App() {
               });
             }}
             onRestart={() => {
-              if (skirmish.lobby.live || ui.pvp) {
-                skirmish.leave();
-              } else {
-                sim.reset();
-              }
+              if (skirmish.lobby.live) return;
+              if (ui.pvp) skirmish.leave();
+              else sim.reset();
               refreshUi();
               hpRef.current = 100;
             }}
@@ -1156,6 +1161,27 @@ export default function App() {
                   ? `Link ${skirmish.lobby.pingMs} ms`
                   : "Link …"}
             </div>
+          )}
+          {skirmish.lobby.live && ui.phase === "ended" && (
+            <SkirmishEnd
+              result={ui.endReason}
+              role={skirmish.lobby.role}
+              maps={skirmishMaps()}
+              mapId={skirmish.lobby.selectedMapId}
+              linkDown={skirmish.lobby.link === "down"}
+              canRematch={skirmish.lobby.role === "host" && skirmish.lobby.link === "open" && skirmish.lobby.guestConnected}
+              onPick={skirmish.pickMap}
+              onRematch={() => {
+                skirmish.rematch();
+                refreshUi();
+                beep(520);
+              }}
+              onLeave={() => {
+                skirmish.leave();
+                refreshUi();
+                hpRef.current = 100;
+              }}
+            />
           )}
           {skirmish.lobby.link === "down" && ui.phase === "running" && (
             <div className="opponent-down" role="alert">
