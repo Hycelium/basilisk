@@ -604,16 +604,19 @@ export class GameRenderer {
 
   private configureProceduralMaterials() {
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
-    const touch = isTouchDevice();
-    // Desktop keeps bump (except low tier). Touch disables it — shared sRGB+bump
-    // CanvasTextures break the lit color pass on many mobile GPUs.
-    const bump = !touch && this.tier !== "low";
+    const ua = navigator.userAgent || "";
+    const mobileUa =
+      /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    const mobile = isTouchDevice() || mobileUa;
+    // Desktop keeps a separate linear bump map. Phones, tablets, and low tier
+    // do not: a shared canvas as sRGB map + bump map drops the color pass.
+    const bump = !mobile && this.tier !== "low";
     const anisotropy =
-      this.tier === "low" ? 1 : this.tier === "medium" || touch ? Math.min(4, maxAniso) : Math.min(8, maxAniso);
+      this.tier === "low" ? 1 : this.tier === "medium" || mobile ? Math.min(4, maxAniso) : Math.min(8, maxAniso);
     configureStructureMaterials({
       anisotropy,
       bump,
-      canvasSize: touch || this.tier === "low" ? 256 : 512,
+      canvasSize: mobile || this.tier === "low" ? 256 : 512,
     });
     configureUnitMaterials({ anisotropy, bump });
   }
