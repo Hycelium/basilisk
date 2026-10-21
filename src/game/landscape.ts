@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { WORLD_H } from "./balance";
-import { BACK_FIELD, mapBounds, rngFromSeed } from "./map";
+import { BACK_FIELD, MAP_CX, mapBounds, rngFromSeed } from "./map";
 import { materials } from "./models/materials";
 import { buildTree } from "./models/nature";
 
@@ -281,6 +281,87 @@ function waterfall(s: -1 | 1, z0: number, faceX: (z: number, y: number) => numbe
   return g;
 }
 
+/** How far the canyon has run from the yard (0) into the range (1). */
+const CANYON_MOUTH_Z = 400;
+const CANYON_DEEP_Z = 840;
+const LAKE_RX = 18;
+const LAKE_LEVEL = -1.4;
+
+function canyonAlong(worldZ: number) {
+  return (Math.abs(worldZ) - CANYON_MOUTH_Z) / (CANYON_DEEP_Z - CANYON_MOUTH_Z);
+}
+
+/** Center of the slot in world X. Straight at the mouth, then a zigzag into the range. */
+export function canyonCenterX(worldZ: number) {
+  const along = canyonAlong(worldZ);
+  if (along <= 0) return 0;
+  const t = Math.min(1, along);
+  const enter = THREE.MathUtils.smoothstep(t, 0, 0.08);
+  const p = (((t * 4.2) % 2) + 2) % 2;
+  const tri = p < 1 ? p * 2 - 1 : 3 - p * 2;
+  const zig = tri * 0.65 + Math.sin((tri * Math.PI) / 2) * 0.35;
+  return (worldZ >= 0 ? 1 : -1) * zig * 96 * enter;
+}
+
+/** 0 on the canyon centerline, 1 at the water's edge. Large when outside the run. */
+export function valleyLakeT(simX: number, simY: number) {
+  const worldZ = simY - WORLD_H / 2;
+  const along = canyonAlong(worldZ);
+  if (along <= 0.02 || along >= 0.98) return 4;
+  const cx = MAP_CX + canyonCenterX(worldZ);
+  return Math.abs(simX - cx) / LAKE_RX;
+}
+
+function canyonRibbon(side: 1 | -1, material: THREE.Material) {
+  const points: THREE.Vector3[] = [];
+  for (let i = 0; i <= 56; i++) {
+    const along = 0.03 + (i / 56) * 0.94;
+    const z = side * (CANYON_MOUTH_Z + (CANYON_DEEP_Z - CANYON_MOUTH_Z) * along);
+    points.push(new THREE.Vector3(canyonCenterX(z), LAKE_LEVEL, z));
+  }
+  const verts: number[] = [];
+  const indices: number[] = [];
+  const half = 14;
+  for (let i = 0; i < points.length; i++) {
+    const prev = points[Math.max(0, i - 1)];
+    const next = points[Math.min(points.length - 1, i + 1)];
+    const dx = next.x - prev.x;
+    const dz = next.z - prev.z;
+    const len = Math.max(0.001, Math.hypot(dx, dz));
+    const px = (-dz / len) * half;
+    const pz = (dx / len) * half;
+    verts.push(points[i].x + px, points[i].y, points[i].z + pz, points[i].x - px, points[i].y, points[i].z - pz);
+    if (i < points.length - 1) {
+      const a = i * 2;
+      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, material);
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+/** Water filling the zigzag canyon behind each keep. */
+export function buildValleyLakes() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: 0x2c7490,
+    roughness: 0.06,
+    metalness: 0.08,
+    transparent: true,
+    opacity: 0.9,
+    clearcoat: 1,
+    clearcoatRoughness: 0.08,
+    depthWrite: false,
+  });
+  g.add(canyonRibbon(1, mat), canyonRibbon(-1, mat));
+  return g;
+}
+
 /** Snow-capped ridged ranges past each keep, pushed back past the house-yard valley. */
 export function buildBackdrop(seed: number) {
   const g = new THREE.Group();
@@ -292,24 +373,32 @@ function makeRange(seed: number, south: -1 | 1) {
   const halfW = mapBounds(seed).width / 2;
   const sizeX = halfW * 2 + 900;
   const sizeZ = 420;
-  const geo = new THREE.PlaneGeometry(sizeX, sizeZ, 260, 110).rotateX(-Math.PI / 2);
+  const geo = new THREE.PlaneGeometry(sizeX, sizeZ, 260, 168).rotateX(-Math.PI / 2);
   const p = geo.attributes.position as THREE.BufferAttribute;
   const crevice = new Float32Array(p.count);
+  const gap = 30;
+  const originZ = south * (WORLD_H / 2 + gap + sizeZ / 2);
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i);
     const z = p.getZ(i);
     const back = south < 0 ? (sizeZ / 2 - z) / sizeZ : (z + sizeZ / 2) / sizeZ;
     const side = Math.max(0, Math.abs(x) - (halfW + 60)) / 300;
-    const rise = THREE.MathUtils.smoothstep(back, 0.05, 0.5) + side * 0.6;
+    const rise = 0.55 + 0.45 * THREE.MathUtils.smoothstep(back, 0.12, 0.62) + side * 0.6;
     const r = ridged(x * 0.008, z * 0.008, seed + 33, 6);
-    // 30% lower than the original range.
-    p.setY(i, 0.7 * (30 + rise * (40 + r * 150) + fbm(x * 0.03, z * 0.03, seed + 34) * 8));
+    const worldZ = z + originZ;
+    // Narrow canyon following the zigzag, so each bend shows another wall.
+    const fold = THREE.MathUtils.smoothstep(Math.abs(x - canyonCenterX(worldZ)), 8, 52);
+    const full = 0.7 * (30 + rise * (40 + r * 150) + fbm(x * 0.03, z * 0.03, seed + 34) * 8);
+    let y = full * fold - (1 - fold) * 6;
+    // Valley-facing lip sits on the field, then climbs into the range.
+    const apron = THREE.MathUtils.smoothstep(back, 0, 0.38);
+    y = THREE.MathUtils.lerp((1 - fold) * -1.5 + 0.4, y, apron);
+    p.setY(i, y);
     crevice[i] = 0.55 - r * 0.8;
   }
   const uvs = geo.attributes.uv as THREE.BufferAttribute;
   for (let i = 0; i < uvs.count; i++) uvs.setXY(i, uvs.getX(i) * (sizeX / 40), uvs.getY(i) * (sizeZ / 40));
-  const gap = 200;
-  geo.translate(0, 0, south * (WORLD_H / 2 + gap + sizeZ / 2));
+  geo.translate(0, 0, originZ);
   paintRock(geo, crevice, seed, 95);
   const m = new THREE.Mesh(geo, rockMaterial(2));
   m.receiveShadow = true;

@@ -11,12 +11,12 @@ interface BuildBarProps {
 }
 
 const builds: { kind: BuildingKind; label: string; blurb: string }[] = [
-  { kind: "watchtower", label: "Watch", blurb: "Arrows · soft vs siege" },
-  { kind: "ballista", label: "Ballista", blurb: "Long shot" },
-  { kind: "catapult", label: "Catapult", blurb: "Splash" },
-  { kind: "barracks", label: "Barracks", blurb: "Trains soldiers" },
+  { kind: "watchtower", label: "Watch", blurb: "Fast arrows · best vs light troops" },
+  { kind: "ballista", label: "Ballista", blurb: "Armor-piercing · wards and riders" },
+  { kind: "catapult", label: "Catapult", blurb: "Splash at the gate · breaks barricades" },
+  { kind: "barracks", label: "Barracks", blurb: "Trains the counter army" },
   { kind: "house", label: "House", blurb: "+3 peon pop · eco pad" },
-  { kind: "barricade", label: "Barricade", blurb: "Peon-built road block" },
+  { kind: "barricade", label: "Barricade", blurb: "Holds the road · rams crush it" },
 ];
 
 export function BuildBar({ ui, compact = false, getCost, onSelect, onCancel }: BuildBarProps) {

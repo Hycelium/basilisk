@@ -113,8 +113,18 @@ export function runAiTurn(sim: GameSim, _reserve: number) {
     .filter((b) => b.kind === "watchtower" || b.kind === "ballista" || b.kind === "catapult");
   const desiredDefenses = state.waveIndex < 2 ? 2 : state.waveIndex < 5 ? 3 : 4;
   if (defenses.length < desiredDefenses) {
-    const heavyCoverage = defenses.length >= 2 && state.waveIndex >= 2;
-    sim.placeAiBuilding(heavyCoverage ? "ballista" : "watchtower", skill >= 45 ? 0 : 10);
+    const watches = defenses.filter((b) => b.kind === "watchtower").length;
+    const ballistas = defenses.filter((b) => b.kind === "ballista").length;
+    const catapults = defenses.filter((b) => b.kind === "catapult").length;
+    const next =
+      watches < 2
+        ? "watchtower"
+        : ballistas < 1
+          ? "ballista"
+          : catapults < 1
+            ? "catapult"
+            : "ballista";
+    sim.placeAiBuilding(next, skill >= 45 ? 0 : 10);
   }
   if (defenses.length >= 2 && state.waveIndex >= 1) {
     sim.aiBuildDefensiveBarricade();

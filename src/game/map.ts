@@ -44,8 +44,10 @@ export function mapBounds(seed: number) {
   return { minX: MAP_CX - half, maxX: MAP_CX + half, width: half * 2 };
 }
 
-/** Outer roads close to this fraction of mid-map spacing at each keep (~14px, inside the wall). */
+/** 3-road outer lanes close to this fraction of mid-map spacing at each keep (~14px, on the gate). */
 const KEEP_FAN_IN = 0.08;
+/** 2-road lanes meet the keep on its side walls, one road to each flank. */
+const KEEP_FLANK = 30;
 /** Fraction of the march used to open/close the fan. */
 const FAN_ZONE = 0.26;
 
@@ -54,12 +56,16 @@ function smoothstep(lo: number, hi: number, x: number) {
   return k * k * (3 - 2 * k);
 }
 
-/** Road spine before bends. On 3-road maps the outer roads fan in to both keeps. */
+/** Road spine before bends. 2-road maps meet the keep flanks; 3-road maps tuck into the gate. */
 function roadBaseX(seed: number, lane: Lane, t: number) {
   const n = laneCount(seed);
   const offset = (lane - (n - 1) / 2) * LANE_SPACING;
-  if (n < 3) return MAP_CX + offset;
+  if (n < 2) return MAP_CX + offset;
   const fan = smoothstep(0, FAN_ZONE, t) * smoothstep(0, FAN_ZONE, 1 - t);
+  if (n === 2) {
+    const atKeep = Math.sign(offset) * KEEP_FLANK;
+    return MAP_CX + atKeep + (offset - atKeep) * fan;
+  }
   return MAP_CX + offset * (KEEP_FAN_IN + (1 - KEEP_FAN_IN) * fan);
 }
 
@@ -118,34 +124,36 @@ const NOUNS = [
   "Notch", "Saddle", "Bend", "Scar", "Chase", "Watch", "Fen", "Spire",
 ];
 
-const TAGLINES: Record<LaneCount, string[]> = {
-  1: [
-    "One road — every tower counts.",
-    "A single march — stack the choke.",
-    "Lone road, quiet flanks — economy first.",
-    "One gate to hold — ballista country.",
-    "Narrow valley — counters decide.",
-  ],
-  2: [
-    "Twin roads, open pads — fair fight.",
-    "Rich ore, fewer pads — economy first.",
-    "Tight choke — counters decide.",
-    "Wide flanks — cover both lanes.",
-    "Sparse timber — copper carries you.",
-    "Crowded pads — fortress builders rejoice.",
-    "Far groves — early scouting pays.",
-    "Ore by the gate — risk the yard.",
-    "Split veins — two economies.",
-    "Narrow shoulders — ballista country.",
-  ],
-  3: [
-    "Three roads — spread thin or pick a wall.",
-    "Wide front — the middle road runs to your gate.",
-    "Triple march — rich ground, long walls.",
-    "Three lanes, deep veins — feed the war.",
-    "Broad valley — the flanks decide it.",
-  ],
-};
+/** One line that names what this seed actually placed. */
+function describeGeneratedMap(
+  seed: number,
+  roads: LaneCount,
+  pads: MapDef["pads"],
+  nodes: MapDef["nodes"],
+) {
+  const road = roads === 1 ? "One road" : roads === 2 ? "Two roads" : "Three roads";
+  const river = riverSpec(seed);
+  const riverLine = !river.enabled
+    ? "No river"
+    : river.y < 330
+      ? "The river crosses the north"
+      : river.y > 400
+        ? "The river crosses the south"
+        : "The river crosses the middle";
+  const pines = nodes.filter((n) => n.kind === "pine");
+  const ore = nodes.filter((n) => n.kind === "copper");
+  const crowdedAt = roads === 1 ? 5 : roads === 2 ? 8 : 10;
+  const fewAt = roads === 1 ? 4 : roads === 2 ? 6 : 8;
+  let ground = "Even pads and veins";
+  if (ore.some((n) => n.yourY >= 560)) ground = "Ore by the gate";
+  else if (ore.length > 0 && ore.every((n) => n.yourY <= 480)) ground = "Mines sit up the road";
+  else if (pines.length > 0 && pines.every((n) => n.yourY <= 500)) ground = "Groves sit forward of the gate";
+  else if (pads.length >= crowdedAt) ground = "Crowded pads";
+  else if (pads.length <= fewAt) ground = "Fewer pads";
+  else if (ore.length > pines.length) ground = "Mines outnumber the groves";
+  else if (pines.length > ore.length) ground = "Timber outnumbers the ore";
+  return `${road}. ${riverLine}. ${ground}.`;
+}
 
 /** Towers on a pad this close to a road's centerline count as covering it. */
 const PAD_REACH = 110;
@@ -176,7 +184,8 @@ export function generateMap(seed: number): MapDef {
   const name = `${adj} ${noun}`;
   const lanes = mapLanes(seed);
   const roads = lanes.length as LaneCount;
-  const tagline = pick(rng, TAGLINES[roads]);
+  // This draw used to pick a random tagline. Keep it so existing layouts stay put.
+  rng();
   const { minX, maxX } = mapBounds(seed);
   const nearRoad = (x: number, y: number, gap: number) =>
     lanes.some((lane) => Math.abs(x - roadCenterX(seed, lane, y)) < gap);
@@ -271,6 +280,8 @@ export function generateMap(seed: number): MapDef {
   if (nodes.filter((n) => n.kind === "pine").length < 2) placeNode("pine-safe", "pine", "w");
   if (nodes.filter((n) => n.kind === "pine").length < 2) placeNode("pine-safe2", "pine", "e");
   if (!nodes.some((n) => n.kind === "copper")) placeNode("ore-safe", "copper", "e");
+
+  const tagline = describeGeneratedMap(seed, roads, pads, nodes);
 
   return {
     id: `seed-${seed}` as MapId,

@@ -183,7 +183,7 @@ export class GameRenderer {
   private camDist = 520;
   private camYaw = 0.12;
   private camPitch = 1.12; // ~64Â° from top â†’ proper RTS angle, not bird's-eye
-  private camLook = new THREE.Vector3(0, 14, 55);
+  private camLook = new THREE.Vector3(0, 14, 240);
   private homeSide: Team = "you";
   /** Battlefield width in sim units. 3-road maps are wider than the default 400. */
   private mapWidth = WORLD_W;

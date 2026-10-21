@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { isEnemyStructure } from "../game/ownership";
 import { buildingName } from "../game/sim";
-import type { TrainKind, UiSnapshot } from "../game/types";
+import type { BuildingKind, TrainKind, UiSnapshot } from "../game/types";
 
 interface DetailSheetProps {
   ui: UiSnapshot;
@@ -16,6 +16,13 @@ interface DetailSheetProps {
   onGarrison: () => void;
   onUngarrison: () => void;
 }
+
+const STRUCTURE_ROLE: Partial<Record<BuildingKind, string>> = {
+  watchtower: "Fast arrows. Best against light troops, and weak once they reach the keep.",
+  ballista: "Armor-piercing bolts. The answer to wards and riders, a poor bargain against a raider swarm.",
+  catapult: "Splash that stays strong at the gate and breaks barricades.",
+  barricade: "A peon blocks one road. Melee has to chop it. A ram smashes it.",
+};
 
 function costLabel(gold: number, wood: number) {
   const parts: string[] = [];
@@ -154,7 +161,12 @@ export function DetailSheet({
       {!collapsed && (
       <div className="detail-body">
       {isHouse && (
-        <p className="detail-note">Raises peon population by +3. Eco pad only.</p>
+        <p className="detail-note">
+          The only way past two peons. Each house adds +3 population. Eco pad only.
+        </p>
+      )}
+      {!isHouse && !isBarracks && STRUCTURE_ROLE[ui.selectedBuildingKind!] && (
+        <p className="detail-note">{STRUCTURE_ROLE[ui.selectedBuildingKind!]}</p>
       )}
 
       {!isBarracks && !isHouse && (
@@ -181,7 +193,7 @@ export function DetailSheet({
       {isBarracks && !isEnemy && (
         <>
           <p className="detail-note">
-            Runners, Archers &amp; Rammers need wood. Archers fire at range but cannot damage barricades.
+            Trains your army. Levies crack wards, rams break barricades, riders shrug arrows, and archers walk around road blocks.
           </p>
 
           <div className="train-options">
