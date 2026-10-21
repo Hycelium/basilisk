@@ -130,7 +130,7 @@ export class GameRenderer {
   private commandLineCol: Float32Array;
   private rallyLine: THREE.Line;
   private rallyLinePos: Float32Array;
-  private padMaterials = new Map<string, THREE.MeshStandardMaterial>();
+  private padMaterials = new Map<string, THREE.MeshBasicMaterial>();
   private rangeRingFor = "";
   // Quality
   private qualitySetting: QualitySetting = "auto";
@@ -1037,11 +1037,14 @@ export class GameRenderer {
     const id = `${zone}-${team}`;
     let mat = this.padMaterials.get(id);
     if (!mat) {
-      mat = new THREE.MeshStandardMaterial({
-        color: zone === "eco" ? 0xa8c86a : team === "you" ? 0x6eb4ff : 0xb44a55,
+      mat = new THREE.MeshBasicMaterial({
+        color: zone === "eco" ? 0xc6f06a : team === "you" ? 0x7fd4ff : 0xff6a78,
         transparent: true,
-        opacity: 0.55,
+        opacity: 0.95,
         side: THREE.DoubleSide,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
       });
       this.padMaterials.set(id, mat);
     }
@@ -1058,22 +1061,46 @@ export class GameRenderer {
       const key = `pad-${p.id}`;
       live.add(key);
       const obj = this.ensure(key, () => {
-        // Each pad owns a material instance so opacity can differ, but geometry/material are created once.
-        const ring = new THREE.Mesh(
-          new THREE.RingGeometry(p.zone === "eco" ? 9 : 10, p.zone === "eco" ? 13 : 14, 24),
-          this.padMaterial(p.zone, p.team).clone(),
-        );
+        const inner = p.zone === "eco" ? 8.5 : 9.5;
+        const outer = p.zone === "eco" ? 14.5 : 16;
+        const color = this.padMaterial(p.zone, p.team).color;
+        const ringMat = this.padMaterial(p.zone, p.team).clone();
+        const glowMat = new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.35,
+          side: THREE.DoubleSide,
+          depthTest: false,
+          depthWrite: false,
+          toneMapped: false,
+        });
+        const g = new THREE.Group();
+        g.renderOrder = 30;
+        const glow = new THREE.Mesh(new THREE.RingGeometry(inner - 2.2, outer + 3, 40), glowMat);
+        glow.rotation.x = -Math.PI / 2;
+        glow.name = "glow";
+        glow.renderOrder = 30;
+        const ring = new THREE.Mesh(new THREE.RingGeometry(inner, outer, 40), ringMat);
         ring.rotation.x = -Math.PI / 2;
-        return ring;
+        ring.name = "ring";
+        ring.renderOrder = 31;
+        g.add(glow, ring);
+        return g;
       });
-      setPos3(obj, p.pos.x, p.pos.y, 0.4);
-      const pulse = state.buildSelection && p.team === state.commandTeam ? 0.7 + Math.sin(state.time * 5) * 0.25 : 0.45;
+      setPos3(obj, p.pos.x, p.pos.y, 1.2);
+      const pulse = state.buildSelection && p.team === state.commandTeam ? 0.92 + Math.sin(state.time * 5) * 0.08 : 0.82;
       const ecoSel = state.buildSelection === "house";
       const match =
         p.zone === "eco"
           ? ecoSel || !state.buildSelection
           : state.buildSelection !== "house" || !state.buildSelection;
-      ((obj as THREE.Mesh).material as THREE.MeshStandardMaterial).opacity = match ? pulse : 0.22;
+      const ringOp = match ? pulse : 0.55;
+      obj.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        const mat = mesh.material as THREE.MeshBasicMaterial | undefined;
+        if (!mat || mat.opacity == null) return;
+        mat.opacity = mesh.name === "glow" ? ringOp * 0.42 : ringOp;
+      });
     }
     this.prune("pad-", live);
   }
