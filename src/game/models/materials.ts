@@ -4,15 +4,38 @@ import type { Team } from "../types";
 /** Procedural canvas textures + helpers shared by the hand-built structure models. */
 
 /**
- * Mobile GPUs often fail the lit color pass for MeshStandardMaterial when the
- * same CanvasTexture is bound as both `map` (sRGB) and `bumpMap` (must be
- * linear / NoColorSpace). Depth/shadow still works, so buildings cast correct
- * shadows but only untextured emissive windows remain visible (yellow stubs).
- * Configure before the first `materials.*()` call from the renderer.
+ * Mobile GPUs drop the lit color pass for MeshStandardMaterial when one canvas
+ * is the sRGB `map` and the linear `bumpMap`. Three.js clones share a
+ * TextureSource and upload that image once, so a cloned bump map still corrupts
+ * the albedo on Adreno/Mali. Shadows keep working; only untextured emissive
+ * windows stay visible. Bump stays off until the renderer configures the device.
  */
 let texAnisotropy = 8;
-let allowBump = true;
+let allowBump = false;
 let canvasSize = 512;
+
+const tracked = new Set<THREE.MeshStandardMaterial>();
+
+function applyBumpPolicy(mat: THREE.MeshStandardMaterial) {
+  let changed = false;
+  if (mat.map && mat.map.anisotropy !== texAnisotropy) {
+    mat.map.anisotropy = texAnisotropy;
+    mat.map.needsUpdate = true;
+    changed = true;
+  }
+  const want = (mat.userData.bumpScale as number) || 0;
+  const sharesSource = !!(mat.map && mat.bumpMap && mat.bumpMap.source === mat.map.source);
+  if (!allowBump && mat.bumpMap) {
+    mat.bumpMap = null;
+    mat.bumpScale = 0;
+    changed = true;
+  } else if (allowBump && mat.map && (!mat.bumpMap || sharesSource) && want > 0) {
+    mat.bumpMap = bumpFromAlbedo(mat.map);
+    mat.bumpScale = want;
+    changed = true;
+  }
+  if (changed) mat.needsUpdate = true;
+}
 
 export function configureStructureMaterials(opts: { anisotropy: number; bump: boolean; canvasSize?: number }) {
   texAnisotropy = Math.max(1, opts.anisotropy);
@@ -25,24 +48,15 @@ export function configureStructureMaterials(opts: { anisotropy: number; bump: bo
       tex.needsUpdate = true;
     }
   }
-  for (const mat of matCache.values()) {
-    let changed = false;
-    if (mat.map && mat.map.anisotropy !== texAnisotropy) {
-      mat.map.anisotropy = texAnisotropy;
-      mat.map.needsUpdate = true;
-      changed = true;
-    }
-    if (!allowBump && mat.bumpMap) {
-      mat.bumpMap = null;
-      mat.bumpScale = 0;
-      changed = true;
-    } else if (allowBump && mat.map && !mat.bumpMap && (mat.userData.bumpScale as number) > 0) {
-      mat.bumpMap = bumpFromAlbedo(mat.map);
-      mat.bumpScale = mat.userData.bumpScale as number;
-      changed = true;
-    }
-    if (changed) mat.needsUpdate = true;
-  }
+  for (const mat of matCache.values()) applyBumpPolicy(mat);
+  for (const mat of tracked) applyBumpPolicy(mat);
+}
+
+/** Clones are not in the material cache; tier changes still have to reach them. */
+export function trackStructureMaterial(mat: THREE.MeshStandardMaterial) {
+  tracked.add(mat);
+  applyBumpPolicy(mat);
+  return mat;
 }
 
 function rng(seed: number) {
@@ -62,9 +76,16 @@ function canvas(size: number, draw: (g: CanvasRenderingContext2D, r: () => numbe
   return t;
 }
 
-/** Bump sampling is non-color data — never share the sRGB albedo Texture object. */
+/** Own canvas so the bump map does not share the albedo TextureSource. */
 function bumpFromAlbedo(albedo: THREE.Texture) {
-  const bump = albedo.clone();
+  const image = albedo.image as CanvasImageSource & { width?: number; height?: number } | undefined;
+  const canvas = document.createElement("canvas");
+  const w = image?.width ?? 0;
+  const h = image?.height ?? 0;
+  canvas.width = w || 1;
+  canvas.height = h || 1;
+  if (image && w > 0 && h > 0) canvas.getContext("2d")!.drawImage(image, 0, 0);
+  const bump = new THREE.CanvasTexture(canvas);
   bump.colorSpace = THREE.NoColorSpace;
   bump.wrapS = albedo.wrapS;
   bump.wrapT = albedo.wrapT;

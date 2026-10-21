@@ -203,7 +203,7 @@ const DRAW: Record<UTex, Draw> = {
 };
 
 let texAnisotropy = 8;
-let allowBump = true;
+let allowBump = false;
 
 /** Match structure-material mobile rules: separate linear bump maps, optional disable. */
 export function configureUnitMaterials(opts: { anisotropy: number; bump: boolean }) {
@@ -223,11 +223,12 @@ export function configureUnitMaterials(opts: { anisotropy: number; bump: boolean
       changed = true;
     }
     const want = (mat.userData.bumpScale as number) || 0;
+    const sharesSource = !!(mat.map && mat.bumpMap && mat.bumpMap.source === mat.map.source);
     if (!allowBump && mat.bumpMap) {
       mat.bumpMap = null;
       mat.bumpScale = 0;
       changed = true;
-    } else if (allowBump && mat.map && !mat.bumpMap && want > 0) {
+    } else if (allowBump && mat.map && (!mat.bumpMap || sharesSource) && want > 0) {
       mat.bumpMap = bumpFromAlbedo(mat.map);
       mat.bumpScale = want;
       changed = true;
@@ -236,8 +237,16 @@ export function configureUnitMaterials(opts: { anisotropy: number; bump: boolean
   }
 }
 
+/** Own canvas so the bump map does not share the albedo TextureSource. */
 function bumpFromAlbedo(albedo: THREE.Texture) {
-  const bump = albedo.clone();
+  const image = albedo.image as CanvasImageSource & { width?: number; height?: number } | undefined;
+  const canvas = document.createElement("canvas");
+  const w = image?.width ?? 0;
+  const h = image?.height ?? 0;
+  canvas.width = w || 1;
+  canvas.height = h || 1;
+  if (image && w > 0 && h > 0) canvas.getContext("2d")!.drawImage(image, 0, 0);
+  const bump = new THREE.CanvasTexture(canvas);
   bump.colorSpace = THREE.NoColorSpace;
   bump.wrapS = albedo.wrapS;
   bump.wrapT = albedo.wrapT;

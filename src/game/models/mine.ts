@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { materials, tiledBox } from "./materials";
+import { materials, tiledBox, trackStructureMaterial } from "./materials";
 
 /** Gold mine (~13 tall, ~22 wide): granite mound with ore veins, timbered adit, rails, ore cart, props. */
 
@@ -62,6 +62,7 @@ function build() {
   const rockMat = materials.granite(4, 4).clone();
   rockMat.flatShading = true;
   rockMat.color.setHex(0xe8e0d4);
+  trackStructureMaterial(rockMat);
   const mound = new THREE.Mesh(geo, rockMat);
   mound.position.z = -2;
   g.add(mound);

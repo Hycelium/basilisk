@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { materials } from "./materials";
+import { materials, trackStructureMaterial } from "./materials";
 
 /** Hand-built trees and rock piles. Each variant is built once; instances are clones sharing geometry. */
 
@@ -173,12 +173,18 @@ export function buildTree(kind: TreeKind, variant: number, height?: number) {
   return t;
 }
 
-const rockMat = (() => {
-  const m = materials.granite(1, 1).clone();
-  m.color.setHex(0xd8d0c4);
-  m.flatShading = true;
-  return m;
-})();
+let rockMat: THREE.MeshStandardMaterial | null = null;
+function getRockMat() {
+  if (!rockMat) {
+    // After the renderer configures bump policy. An import-time clone kept a
+    // shared sRGB/bump canvas and made every granite mesh vanish on mobile.
+    rockMat = materials.granite(1, 1).clone();
+    rockMat.color.setHex(0xd8d0c4);
+    rockMat.flatShading = true;
+    trackStructureMaterial(rockMat);
+  }
+  return rockMat;
+}
 
 /** Natural pile of weathered boulders and scree (~3 tall, ~8 across at scale 1). */
 export function buildRockPile(variant: number, scale = 1) {
@@ -197,7 +203,7 @@ export function buildRockPile(variant: number, scale = 1) {
         p.setXYZ(j, p.getX(j) * k, p.getY(j) * k * 0.7, p.getZ(j) * k);
       }
       geo.computeVertexNormals();
-      const m = new THREE.Mesh(geo, rockMat);
+      const m = new THREE.Mesh(geo, getRockMat());
       const a = r() * Math.PI * 2;
       const d = big ? i * 2 : 2.5 + r() * 2.5;
       m.position.set(Math.cos(a) * d, big ? 1.2 : 0.4, Math.sin(a) * d);
