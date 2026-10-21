@@ -1129,6 +1129,7 @@ export default function App() {
               joinDraft={skirmish.lobby.joinDraft}
               onJoinDraft={skirmish.setJoinDraft}
               status={skirmish.lobby.status}
+              link={skirmish.lobby.link}
               copied={skirmish.lobby.copied}
               canStart={skirmish.lobby.role === "host" && skirmish.lobby.guestConnected}
               onHost={skirmish.hostMatch}

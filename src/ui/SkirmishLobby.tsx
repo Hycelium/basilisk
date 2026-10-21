@@ -10,6 +10,7 @@ interface SkirmishLobbyProps {
   joinDraft: string;
   onJoinDraft: (value: string) => void;
   status: string;
+  link: "off" | "connecting" | "open" | "failed" | "down";
   copied: boolean;
   canStart: boolean;
   onHost: () => void;
@@ -19,8 +20,10 @@ interface SkirmishLobbyProps {
   onLeave: () => void;
 }
 
-function slotStatus(connected: boolean) {
-  return connected ? "Connected" : "Waiting";
+function slotStatus(connected: boolean, connecting: boolean) {
+  if (connected) return "Connected";
+  if (connecting) return "Connecting";
+  return "Waiting";
 }
 
 export function SkirmishLobby({
@@ -35,6 +38,7 @@ export function SkirmishLobby({
   joinDraft,
   onJoinDraft,
   status,
+  link,
   copied,
   canStart,
   onHost,
@@ -86,11 +90,11 @@ export function SkirmishLobby({
         <div className="lobby-slots">
           <div className="slot-row">
             <span>{hostName || "Host"}</span>
-            <span>{slotStatus(hostConnected)}</span>
+            <span>{slotStatus(hostConnected, link === "connecting" && role === "host")}</span>
           </div>
           <div className="slot-row">
             <span>{guestName || "Guest"}</span>
-            <span>{slotStatus(guestConnected)}</span>
+            <span>{slotStatus(guestConnected, link === "connecting" && role === "guest")}</span>
           </div>
         </div>
       )}
@@ -107,7 +111,7 @@ export function SkirmishLobby({
         </>
       )}
 
-      {role === "guest" && <p>Waiting for host</p>}
+      {role === "guest" && link === "open" && <p>Waiting for host</p>}
 
       {status && <p className="lobby-status">{status}</p>}
 

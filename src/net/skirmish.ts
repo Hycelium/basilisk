@@ -1,16 +1,8 @@
 import Peer, { type DataConnection, type PeerError } from "peerjs";
 import { createRoomId, asNetMsg, splitWire, WireReassembly, type NetMsg } from "./protocol";
+import { ATTEMPT_MS, iceConfiguration, nextLinkStep } from "./ice";
 
-const ICE: RTCConfiguration = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-};
-
-const HOST_WAIT =
-  "No one has connected after 15 seconds. Check that your friend opened the invite link. A direct connection can also be blocked by the network.";
-const GUEST_WAIT =
-  "Could not connect after 15 seconds. Check the invite link. If it is right, this network is blocking a direct connection.";
-const DIRECT_FAIL =
-  "No direct path between these two networks. Roadkeep does not use a relay, so the match cannot connect.";
+const PATH_FAIL = "Could not open a path between the two networks. Try again.";
 
 export interface SkirmishEvents {
   onReady: (id: string) => void;
@@ -26,40 +18,37 @@ export class SkirmishLink {
   private peer: Peer | null = null;
   private conn: DataConnection | null = null;
   private role: "host" | "guest" = "host";
+  private roomId = "";
   private opened = false;
-  private iceOk = false;
   private closed = false;
+  private stopped = false;
+  private relayUsed = false;
   private retriedId = false;
+  private idRetries = 0;
+  private unavailableTries = 0;
+  private attemptStarted = 0;
+  private lostGen = -1;
   private waitTimer = 0;
   private pingTimer = 0;
+  private reopenTimer = 0;
   private pingN = 0;
   private partId = 1;
   private parts = new WireReassembly();
   private rejected = false;
+  private ignored = new Set<DataConnection>();
 
   constructor(private events: SkirmishEvents) {}
 
   host(roomId: string) {
     this.role = "host";
-    this.retriedId = false;
-    const peer = this.makePeer(roomId);
-    peer.on("open", (id) => {
-      if (this.closed) return;
-      this.events.onReady(id);
-      this.armTimeout(HOST_WAIT);
-    });
-    peer.on("connection", (conn) => this.accept(conn));
+    this.roomId = roomId;
+    this.begin();
   }
 
   join(roomId: string) {
     this.role = "guest";
-    const peer = this.makePeer();
-    peer.on("open", () => {
-      if (this.closed) return;
-      const conn = peer.connect(roomId, { reliable: true, serialization: "json" });
-      this.bind(conn);
-      this.armTimeout(GUEST_WAIT);
-    });
+    this.roomId = roomId;
+    this.begin();
   }
 
   send(msg: NetMsg) {
@@ -89,12 +78,9 @@ export class SkirmishLink {
 
   close() {
     this.closed = true;
+    this.stopped = true;
     this.clearTimers();
-    try {
-      this.conn?.close();
-    } catch {
-      /* already gone */
-    }
+    this.dropQuiet();
     try {
       this.peer?.destroy();
     } catch {
@@ -104,10 +90,49 @@ export class SkirmishLink {
     this.peer = null;
   }
 
-  private makePeer(id?: string) {
-    this.clearTimers();
+  private begin() {
+    this.opened = false;
+    this.closed = false;
+    this.stopped = false;
+    this.relayUsed = false;
+    this.retriedId = false;
+    this.idRetries = 0;
+    this.unavailableTries = 0;
+    this.lostGen = -1;
+    this.attemptStarted = Date.now();
+    this.events.onStatus("Connecting");
+    this.armDeadline();
+    this.spawn();
+  }
+
+  private elapsed() {
+    return Date.now() - this.attemptStarted;
+  }
+
+  private attemptIndex(): 0 | 1 {
+    return this.relayUsed ? 1 : 0;
+  }
+
+  private spawn() {
+    const relayOnly = this.relayUsed;
+    const id = this.role === "host" ? this.roomId : undefined;
+    const peer = this.makePeer(id, iceConfiguration(relayOnly));
+    peer.on("open", (readyId) => {
+      if (this.closed || this.stopped || this.peer !== peer) return;
+      this.idRetries = 0;
+      if (this.role === "host") this.events.onReady(readyId);
+      else this.connectGuest();
+    });
+    if (this.role === "host") peer.on("connection", (conn) => this.accept(conn));
+  }
+
+  private makePeer(id: string | undefined, config: RTCConfiguration) {
+    this.clearReconnectTimer();
+    this.dropQuiet();
+    const previous = this.peer;
+    this.peer = null;
     try {
-      this.peer?.destroy();
+      previous?.destroy();
     } catch {
       /* replacing a failed peer */
     }
@@ -118,7 +143,7 @@ export class SkirmishLink {
           path: "/",
           secure: true,
           debug: 0,
-          config: ICE,
+          config,
         })
       : new Peer({
           host: "0.peerjs.com",
@@ -126,16 +151,15 @@ export class SkirmishLink {
           path: "/",
           secure: true,
           debug: 0,
-          config: ICE,
+          config,
         });
     this.peer = peer;
-    this.closed = false;
     peer.on("error", (err) => this.onPeerError(err));
     return peer;
   }
 
   private accept(conn: DataConnection) {
-    if (this.conn && (this.conn.open || this.opened)) {
+    if (this.opened || this.conn?.open) {
       conn.on("open", () => {
         try {
           conn.send({ t: "full" });
@@ -146,18 +170,27 @@ export class SkirmishLink {
       });
       return;
     }
+    this.dropQuiet();
+    this.bind(conn);
+  }
+
+  private connectGuest() {
+    const peer = this.peer;
+    if (!peer || peer.destroyed || this.closed || this.stopped || this.opened || this.role !== "guest") return;
+    this.dropQuiet();
+    const conn = peer.connect(this.roomId, { reliable: true, serialization: "json" });
     this.bind(conn);
   }
 
   private bind(conn: DataConnection) {
+    const gen = this.lostGen + 1;
     this.conn = conn;
     this.opened = false;
-    this.iceOk = false;
     conn.on("open", () => {
       if (this.closed || this.conn !== conn) return;
       this.opened = true;
-      window.clearTimeout(this.waitTimer);
-      this.waitTimer = 0;
+      this.stopped = true;
+      this.clearTimers();
       this.events.onConnected();
       this.pingTimer = window.setInterval(() => this.ping(), 2000);
     });
@@ -177,23 +210,99 @@ export class SkirmishLink {
       this.dispatch(msg);
     });
     conn.on("iceStateChanged", (state) => {
-      if (state === "connected" || state === "completed") this.iceOk = true;
-      if (state === "failed" && !this.iceOk) this.events.onDirectFail(DIRECT_FAIL);
+      if (this.ignored.has(conn) || this.conn !== conn) return;
+      if (state === "failed") this.onTransportLost(gen);
     });
     conn.on("error", (err) => {
+      if (this.ignored.has(conn) || this.conn !== conn) return;
       const kind = (err as { type?: string } | undefined)?.type;
       if (kind === "message-too-big") {
         this.rejectOnce();
         return;
       }
-      if (!this.iceOk && !this.opened) this.events.onDirectFail(DIRECT_FAIL);
+      if (!this.opened) this.onTransportLost(gen);
     });
     conn.on("close", () => {
+      if (this.ignored.has(conn)) return;
       if (this.closed || this.conn !== conn) return;
+      if (!this.opened) {
+        this.onTransportLost(gen);
+        return;
+      }
       this.clearTimers();
-      if (!this.opened) return;
       this.events.onDown("Opponent disconnected.");
     });
+  }
+
+  private onTransportLost(gen: number) {
+    if (this.closed || this.stopped || this.opened || this.lostGen === gen) return;
+    this.lostGen = gen;
+    if (this.elapsed() + 50 >= ATTEMPT_MS) {
+      this.onDeadline();
+      return;
+    }
+    if (this.role !== "guest") return;
+    window.clearTimeout(this.reopenTimer);
+    this.reopenTimer = window.setTimeout(() => {
+      if (this.closed || this.stopped || this.opened) return;
+      if (this.elapsed() + 50 >= ATTEMPT_MS) this.onDeadline();
+      else this.connectGuest();
+    }, 700);
+  }
+
+  private onDeadline() {
+    if (this.closed || this.stopped || this.opened) return;
+    const step = nextLinkStep({
+      opened: this.opened,
+      attempt: this.attemptIndex(),
+      elapsedMs: this.elapsed(),
+    });
+    if (step === "relay") {
+      this.enterRelay();
+      return;
+    }
+    if (step === "fail") this.failPath();
+    else this.armDeadline();
+  }
+
+  /** Second attempt. nextLinkStep refuses this until the first window has elapsed. */
+  private enterRelay() {
+    if (this.closed || this.stopped || this.opened || this.relayUsed) return;
+    if (nextLinkStep({ opened: false, attempt: 0, elapsedMs: this.elapsed() }) !== "relay") return;
+    this.relayUsed = true;
+    this.unavailableTries = 0;
+    this.lostGen = -1;
+    this.attemptStarted = Date.now();
+    this.events.onStatus("Connecting through relay");
+    const peer = this.peer;
+    if (!peer || peer.destroyed) {
+      this.armDeadline();
+      this.spawn();
+      return;
+    }
+    peer.options.config = iceConfiguration(true);
+    this.dropQuiet();
+    this.armDeadline();
+    if (peer.open && this.role === "guest") this.connectGuest();
+  }
+
+  private failPath() {
+    if (this.closed || this.opened || this.stopped) return;
+    this.stopped = true;
+    this.clearTimers();
+    this.events.onDirectFail(PATH_FAIL);
+  }
+
+  private dropQuiet() {
+    const conn = this.conn;
+    if (!conn) return;
+    this.ignored.add(conn);
+    this.conn = null;
+    try {
+      conn.close();
+    } catch {
+      /* already gone */
+    }
   }
 
   private dispatch(msg: NetMsg) {
@@ -225,42 +334,81 @@ export class SkirmishLink {
   }
 
   private onPeerError(err: PeerError<string>) {
-    if (this.closed) return;
-    if (err.type === "unavailable-id" && this.role === "host" && !this.retriedId) {
-      this.retriedId = true;
-      this.host(createRoomId());
-      return;
+    if (this.closed || this.stopped) return;
+    if (err.type === "unavailable-id" && this.role === "host") {
+      if (!this.relayUsed && !this.retriedId) {
+        this.retriedId = true;
+        this.roomId = createRoomId();
+        this.attemptStarted = Date.now();
+        this.events.onStatus("Connecting");
+        this.armDeadline();
+        this.spawn();
+        return;
+      }
+      if (this.idRetries < 5) {
+        this.idRetries += 1;
+        const wait = 400 * this.idRetries;
+        window.clearTimeout(this.reopenTimer);
+        this.reopenTimer = window.setTimeout(() => {
+          if (!this.closed && !this.stopped && !this.opened) this.spawn();
+        }, wait);
+        return;
+      }
     }
     if (err.type === "peer-unavailable") {
-      this.events.onStatus("That match is not open. Ask the host for a new invite.");
+      this.noteUnavailable();
       return;
     }
     if (err.type === "network" || err.type === "server-error" || err.type === "socket-error" || err.type === "disconnected") {
       this.events.onStatus("The match broker did not answer. Try again in a moment.");
       return;
     }
-    if (err.type === "webrtc" || err.type === "browser-incompatible") {
-      this.events.onDirectFail(
-        err.type === "browser-incompatible"
-          ? "This browser cannot open a direct match."
-          : DIRECT_FAIL,
-      );
+    if (err.type === "browser-incompatible") {
+      this.stopped = true;
+      this.clearTimers();
+      this.events.onDirectFail("This browser cannot open a direct match.");
+      return;
+    }
+    if (err.type === "webrtc") {
+      if (!this.opened) this.onTransportLost(this.lostGen + 1);
       return;
     }
     this.events.onStatus("Could not open the match connection.");
   }
 
-  private armTimeout(message: string) {
+  private noteUnavailable() {
+    if (this.role !== "guest" || this.opened || this.stopped) return;
+    this.unavailableTries += 1;
+    const keepTrying = this.relayUsed || this.unavailableTries <= 4;
+    if (!keepTrying) {
+      this.clearTimers();
+      this.stopped = true;
+      this.events.onStatus("That match is not open. Ask the host for a new invite.");
+      return;
+    }
+    window.clearTimeout(this.reopenTimer);
+    this.reopenTimer = window.setTimeout(() => {
+      if (this.closed || this.stopped || this.opened) return;
+      if (this.elapsed() + 50 >= ATTEMPT_MS) this.onDeadline();
+      else this.connectGuest();
+    }, 500);
+  }
+
+  private armDeadline() {
     window.clearTimeout(this.waitTimer);
-    this.waitTimer = window.setTimeout(() => {
-      if (this.closed || this.opened) return;
-      this.events.onStatus(message);
-    }, 15000);
+    const remain = Math.max(0, ATTEMPT_MS - this.elapsed());
+    this.waitTimer = window.setTimeout(() => this.onDeadline(), remain);
+  }
+
+  private clearReconnectTimer() {
+    window.clearTimeout(this.reopenTimer);
+    this.reopenTimer = 0;
   }
 
   private clearTimers() {
     window.clearTimeout(this.waitTimer);
     window.clearInterval(this.pingTimer);
+    this.clearReconnectTimer();
     this.waitTimer = 0;
     this.pingTimer = 0;
   }

@@ -170,24 +170,18 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
             ...s,
             roomId: id,
             invite: inviteLink(id),
-            hostConnected: true,
-            status: "Send the invite link. Start stays locked until your friend connects.",
+            status: s.status === "Connecting through relay" ? s.status : "Connecting",
           }));
         },
         onConnected: () => {
           link.send({ t: "hello", name: nameRef.current.trim() || "Player" });
-          setLobby((s) => {
-            if (s.role === "host") {
-              return { ...s, guestConnected: true, link: "open", status: "Friend connected. Press Start when you are ready." };
-            }
-            return {
-              ...s,
-              hostConnected: true,
-              guestConnected: true,
-              link: "open",
-              status: "",
-            };
-          });
+          setLobby((s) => ({
+            ...s,
+            hostConnected: true,
+            guestConnected: true,
+            link: "open",
+            status: "Connected",
+          }));
         },
         onMessage,
         onStatus: (text) => setLobby((s) => ({ ...s, status: text })),
@@ -227,7 +221,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
       guestName: "",
       hostConnected: false,
       guestConnected: false,
-      status: "Opening a match…",
+      status: "Connecting",
       joinDraft: "",
       copied: false,
       pingMs: null,
@@ -256,7 +250,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
         guestName: self,
         hostConnected: false,
         guestConnected: false,
-        status: "Joining…",
+        status: "Connecting",
         joinDraft: roomId,
         copied: false,
         pingMs: null,
