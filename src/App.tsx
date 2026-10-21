@@ -763,8 +763,8 @@ export default function App() {
   };
 
   const sheetOpen = ui.selectedKeepTeam === ui.localTeam || Boolean(ui.selectedBuildingId && ui.selectedBuildingKind);
-  const compactHud = true;
-  const compactBuild = true;
+  const compactHud = layout.layout === "column" || layout.phone;
+  const compactBuild = layout.layout === "column" && layout.phone;
 
   const clusterActions: ClusterAction[] = [
     {
