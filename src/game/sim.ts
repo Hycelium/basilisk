@@ -53,9 +53,11 @@ import {
   buildPads,
   getOrCreateCampaignMap,
   keepPos,
+  laneName,
   lanePathX,
   laneStartY,
   laneYGate,
+  mapLanes,
   skirmishMap,
   startPadId,
   startPadPos,
@@ -77,6 +79,7 @@ import type {
   Building,
   BuildingKind,
   GameState,
+  Lane,
   MapDef,
   Pad,
   RectHit,
@@ -91,6 +94,11 @@ import type {
 
 function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+/** Lane with the highest score. Ties keep the earlier lane. */
+function topLane(lanes: Lane[], score: (lane: Lane) => number): Lane {
+  return lanes.reduce((best, lane) => (score(lane) > score(best) ? lane : best));
 }
 
 function moveTowards(p: { x: number; y: number }, target: { x: number; y: number }, speed: number, dt: number) {
@@ -898,7 +906,7 @@ export class GameSim {
       this.tell(team, "Barricades must be placed on the road between the keeps.");
       return;
     }
-    const roads = ([0, 1] as const).map((lane) => ({
+    const roads = mapLanes(this.activeMap.seed).map((lane) => ({
       lane,
       x:
         (lanePathX(this.activeMap.seed, "you", lane, world.y) +
@@ -1129,7 +1137,7 @@ export class GameSim {
     return team === "you" ? "foe" : "you";
   }
 
-  private spawnUnit(team: Team, kind: UnitKind, lane: 0 | 1, fromBarracks: boolean, barracks?: Building) {
+  private spawnUnit(team: Team, kind: UnitKind, lane: Lane, fromBarracks: boolean, barracks?: Building) {
     const def = UNIT_DEFS[kind];
     // Wave scalar first, then the barracks upgrade on top. Humans and PvP stay at 1×.
     const scale = this.combatScale(team);
@@ -1282,9 +1290,10 @@ export class GameSim {
       { kind: "runner", count: spec.runner },
       { kind: "ward", count: spec.ward },
     ];
+    // Every road gets the same share for both sides, so more roads means a larger wave.
     for (const p of pairs) {
       const perLane = this.splitWave(p.count);
-      for (const lane of [0, 1] as const) {
+      for (const lane of mapLanes(this.activeMap.seed)) {
         for (let i = 0; i < perLane; i++) {
           this.state.pendingWaveUnits.push({ team: "you", kind: p.kind, lane });
           this.state.pendingWaveUnits.push({ team: "foe", kind: p.kind, lane });
@@ -1678,12 +1687,12 @@ export class GameSim {
     }
   }
 
-  private pickLane(team: Team): 0 | 1 {
-    const laneCounts = [0, 0];
+  private pickLane(team: Team): Lane {
+    const laneCounts = [0, 0, 0];
     for (const u of this.state.units) {
       if (u.team !== team && u.pos.y > 100 && u.pos.y < 620) laneCounts[u.lane] += 1;
     }
-    return laneCounts[1] > laneCounts[0] ? 1 : 0;
+    return topLane(mapLanes(this.activeMap.seed), (lane) => laneCounts[lane]);
   }
 
   private doBarracks(dt: number, team: Team) {
@@ -2144,7 +2153,8 @@ export class GameSim {
     };
     const bestPriority = Math.max(...threats.map(priority));
     if (stillValid && priority(stillValid) >= bestPriority - 10) return stillValid;
-    const preferredLane = (peonIndex % 2) as 0 | 1;
+    const lanes = mapLanes(this.activeMap.seed);
+    const preferredLane = lanes[peonIndex % lanes.length];
     const onLane = threats
       .filter((t) => t.lane === preferredLane)
       .sort((a, b) => priority(b) - priority(a));
@@ -2587,6 +2597,22 @@ export class GameSim {
     return this.state.pads.filter((p) => p.team === team);
   }
 
+  /** Towers reaching each road, plus `barricadeWeight` per built barricade on it. Indexed by lane. */
+  private laneDefense(team: Team, barricadeWeight: number) {
+    const defense = [0, 0, 0];
+    const pads = this.getPads(team);
+    for (const building of this.getBuildings(team)) {
+      if (building.kind === "house" || building.kind === "barracks") continue;
+      const pad = pads.find((p) => p.id === building.padId);
+      if (!pad) continue;
+      for (const lane of pad.laneCoverage) defense[lane] += 1;
+    }
+    for (const barricade of this.state.barricades) {
+      if (barricade.team === team && barricade.built) defense[barricade.lane] += barricadeWeight;
+    }
+    return defense;
+  }
+
   placeAiBuilding(kind: BuildingKind, reserve = AI_RESERVE) {
     const team: Team = "foe";
     const cost = BUILD_COST[kind];
@@ -2595,31 +2621,15 @@ export class GameSim {
     const pads = this.getPads(team);
     const occ = new Set(this.getBuildings(team).map((b) => b.padId));
     const wantZone = kind === "house" ? "eco" : "combat";
-    const laneDefense = [0, 0];
-    for (const building of this.getBuildings(team)) {
-      if (building.kind === "house" || building.kind === "barracks") continue;
-      const pad = pads.find((p) => p.id === building.padId);
-      if (!pad) continue;
-      if (pad.laneCoverage === 2) {
-        laneDefense[0] += 1;
-        laneDefense[1] += 1;
-      } else {
-        laneDefense[pad.laneCoverage] += 1;
-      }
-    }
+    const laneDefense = this.laneDefense(team, 0);
+    // A pad is worth its weakest covered road; multi-road pads get a small nudge.
+    const padNeed = (pad: Pad) =>
+      Math.min(...pad.laneCoverage.map((lane) => laneDefense[lane])) - (pad.laneCoverage.length > 1 ? 0.25 : 0);
     const target = pads
       .filter((p) => !occ.has(p.id) && p.zone === wantZone)
       .sort((a, b) => {
         if (kind === "house") return a.pos.y - b.pos.y;
-        const aCoverage =
-          a.laneCoverage === 2
-            ? Math.min(laneDefense[0], laneDefense[1]) - 0.25
-            : laneDefense[a.laneCoverage];
-        const bCoverage =
-          b.laneCoverage === 2
-            ? Math.min(laneDefense[0], laneDefense[1]) - 0.25
-            : laneDefense[b.laneCoverage];
-        return aCoverage - bCoverage || a.pos.y - b.pos.y;
+        return padNeed(a) - padNeed(b) || a.pos.y - b.pos.y;
       })[0];
     if (!target) return false;
     this.spendRes(team, cost);
@@ -2655,15 +2665,13 @@ export class GameSim {
     if (this.aiObservedHumanUnits(205).length > 0) return false;
 
     const observed = this.aiObservedHumanUnits();
-    const lanePressure = [0, 0];
+    const lanePressure = [0, 0, 0];
     for (const unit of observed) lanePressure[unit.lane] += unit.kind === "rammer" ? 3 : 1;
-    for (const barricade of existing) lanePressure[barricade.lane] = -100;
-    let lane = (lanePressure[1] > lanePressure[0] ? 1 : 0) as 0 | 1;
-    if (lanePressure[0] === lanePressure[1]) {
-      lane = ((this.state.waveIndex + existing.length) % 2) as 0 | 1;
-    }
-    if (existing.some((b) => b.lane === lane)) lane = (lane === 0 ? 1 : 0);
-    if (existing.some((b) => b.lane === lane)) return false;
+    const open = mapLanes(this.activeMap.seed).filter((l) => !existing.some((b) => b.lane === l));
+    if (open.length === 0) return false;
+    // Busiest open road; on a tie, rotate so quiet games still spread walls out.
+    const rotation = open[(this.state.waveIndex + existing.length) % open.length];
+    const lane = open.reduce((best, l) => (lanePressure[l] > lanePressure[best] ? l : best), rotation);
 
     const y = 210 + existing.length * 38;
     const x =
@@ -2709,7 +2717,7 @@ export class GameSim {
     builder.targetEnemyId = undefined;
     builder.targetBarricadeId = barricade.id;
     builder.state = "toBarricade";
-    this.addToast(`Enemy peons fortify the ${lane === 0 ? "west" : "east"} road.`);
+    this.addToast(`Enemy peons fortify ${laneName(this.activeMap.seed, lane)} road.`);
     return true;
   }
 
@@ -2736,33 +2744,22 @@ export class GameSim {
       (timedOut && held.length >= 3);
     if (!release) return false;
 
-    const pads = this.getPads("you");
-    const laneDefense = [0, 0];
-    for (const building of this.getBuildings("you")) {
-      if (building.kind === "house" || building.kind === "barracks") continue;
-      const pad = pads.find((p) => p.id === building.padId);
-      if (!pad) continue;
-      if (pad.laneCoverage === 2) {
-        laneDefense[0] += 1;
-        laneDefense[1] += 1;
-      } else {
-        laneDefense[pad.laneCoverage] += 1;
-      }
-    }
-    for (const barricade of this.state.barricades.filter((b) => b.team === "you" && b.built)) {
-      laneDefense[barricade.lane] += 1.5;
-    }
-    const targetLane = (laneDefense[1] < laneDefense[0] ? 1 : 0) as 0 | 1;
+    const lanes = mapLanes(this.activeMap.seed);
+    const laneDefense = this.laneDefense("you", 1.5);
+    const weakest = [...lanes].sort((a, b) => laneDefense[a] - laneDefense[b] || a - b);
+    const targetLane = weakest[0];
+    // Every third unit feints down the next-weakest road, when there is one.
+    const feintLane = weakest[1] ?? targetLane;
     held.forEach((unit, index) => {
       unit.aiHeldForRush = false;
       unit.aiStagingPoint = undefined;
       unit.rallyPoint = undefined;
       unit.engageFrom = undefined;
       unit.targetUnitId = undefined;
-      unit.lane = index % 3 === 2 ? (targetLane === 0 ? 1 : 0) : targetLane;
+      unit.lane = index % 3 === 2 ? feintLane : targetLane;
     });
     this.aiRushDeadline = 0;
-    this.addToast(`Enemy warband rushes the ${targetLane === 0 ? "west" : "east"} road!`);
+    this.addToast(`Enemy warband rushes ${laneName(this.activeMap.seed, targetLane)} road!`);
     return true;
   }
 
@@ -2777,16 +2774,15 @@ export class GameSim {
       (u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer",
     ).length;
     const desired = preference === "adaptive" ? (fast > heavy ? "rate" : "damage") : preference;
-    const laneThreat = [0, 0];
+    const laneThreat = [0, 0, 0];
     for (const unit of observed) laneThreat[unit.lane] += unit.kind === "rammer" ? 2 : 1;
-    const threatenedLane = (laneThreat[1] > laneThreat[0] ? 1 : 0) as 0 | 1;
+    const threatenedLane = topLane(mapLanes(this.activeMap.seed), (lane) => laneThreat[lane]);
     const pads = this.getPads("foe");
 
     const ordered = [...towers].sort((a, b) => {
       const padA = pads.find((p) => p.id === a.padId);
       const padB = pads.find((p) => p.id === b.padId);
-      const covers = (pad: Pad | undefined) =>
-        pad && (pad.laneCoverage === 2 || pad.laneCoverage === threatenedLane) ? 1 : 0;
+      const covers = (pad: Pad | undefined) => (pad?.laneCoverage.includes(threatenedLane) ? 1 : 0);
       const aRank = desired === "damage" ? a.damageRank : a.rateRank;
       const bRank = desired === "damage" ? b.damageRank : b.rateRank;
       return covers(padB) - covers(padA) || aRank - bRank;

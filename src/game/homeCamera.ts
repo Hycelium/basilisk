@@ -13,7 +13,7 @@ export function homeCameraFrame(team: Team) {
     dist: 520,
     lookX: 0,
     lookY: 14,
-    lookZ: north ? -55 : 55,
+    lookZ: north ? -80 : 80,
   };
 }
 
