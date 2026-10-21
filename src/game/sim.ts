@@ -1,6 +1,9 @@
 import {
   AI_RESERVE,
   ARCHER_VS_SIEGE,
+  ARCHER_VS_WARD,
+  BARRICADE_HP,
+  barricadeStrike,
   BASE_PEON_CAP,
   BUILD_COOLDOWN,
   BUILD_COST,
@@ -8,6 +11,8 @@ import {
   BUILD_PAUSE,
   BUILD_RANGE,
   CATAPULT_SPLASH_RADIUS,
+  CATAPULT_VS_BARRICADE,
+  CATAPULT_VS_PEON,
   aiWaveStrength,
   combatWaveScale,
   DAMAGE_MULT,
@@ -34,6 +39,7 @@ import {
   RUSH_BONUS,
   openingStash,
   START_KEEP_HP,
+  towerDamageFactor,
   STARTER_GUARD_RANGE,
   TRAIN_ORDER,
   UNIT_DEFS,
@@ -955,8 +961,8 @@ export class GameSim {
       team,
       lane: road.lane,
       pos,
-      hp: 6,
-      maxHp: 6,
+      hp: BARRICADE_HP,
+      maxHp: BARRICADE_HP,
       buildProgress: 0,
       buildTime: 3,
       built: false,
@@ -1572,8 +1578,8 @@ export class GameSim {
     return BUILD_RANGE[b.kind];
   }
 
-  private applyTowerDamage(u: Unit, raw: number) {
-    const dmg = raw * (1 - u.towerResist);
+  private applyTowerDamage(u: Unit, raw: number, kind: BuildingKind) {
+    const dmg = raw * towerDamageFactor(kind, u.towerResist);
     u.hp -= dmg;
     return dmg;
   }
@@ -1601,7 +1607,7 @@ export class GameSim {
     // The base arrow plus additional fire from each peon makes a populated keep
     // meaningfully safer without replacing dedicated towers.
     const raw = 4 + occupants * 2.5;
-    const dealt = this.applyTowerDamage(target, raw);
+    const dealt = this.applyTowerDamage(target, raw, "watchtower");
     this.addFloat(`-${Math.round(dealt)}`, target.pos.x, target.pos.y - 8, "#f6dfa0");
     keep.attackTarget = { ...target.pos };
     keep.attackFlash = 0.18;
@@ -1620,45 +1626,58 @@ export class GameSim {
       if (t.attackTimer > 0) continue;
       const reach = this.towerReach(t);
 
-      // Watchtower arrows never target peons. Only heavy emplacements can
-      // punish an eco raid.
+      // Arrows never shoot peons. Bolts and rocks do, and only when the lane is clear
+      // of soldiers — a ward in range is a better target than a worker.
       const peons = this.state.villagers.filter((v) => {
         if (v.team !== enemyTeam) return false;
         if (v.state === "garrisoned") return false;
         return dist(v.pos, t.pos) <= reach;
       });
-      if ((t.kind === "ballista" || t.kind === "catapult") && peons.length > 0) {
-        peons.sort((a, b) => dist(a.pos, t.pos) - dist(b.pos, t.pos));
-        const peon = peons[0];
-        const raw = this.buildingDamage(t) * (t.kind === "catapult" ? 0.82 : 1);
-        peon.hp -= raw;
-        this.emitCombat(
-          t.kind === "catapult" ? "ramImpact" : "arrow",
-          t.pos,
-          peon.pos,
-          team,
-        );
-        this.addFloat(
-          `-${Math.round(raw)}`,
-          peon.pos.x,
-          peon.pos.y - 8,
-          t.kind === "catapult" ? "#f39c72" : "#ffe59d",
-        );
-        t.attackTimer = this.buildingCooldown(t);
-        t.animKick = 0.15;
-        continue;
-      }
 
       const inRange = this.state.units.filter((u) => {
         if (u.team !== enemyTeam) return false;
         if (!t.canRefund && dist(u.pos, keep.pos) <= KEEP_THREAT_RADIUS + 30) return true;
         return dist(u.pos, t.pos) <= reach;
       });
-      if (inRange.length === 0) continue;
-      inRange.sort((a, b) => (team === "you" ? b.pos.y - a.pos.y : a.pos.y - b.pos.y));
+      if (inRange.length === 0) {
+        if ((t.kind === "ballista" || t.kind === "catapult") && peons.length > 0) {
+          peons.sort((a, b) => dist(a.pos, t.pos) - dist(b.pos, t.pos));
+          const peon = peons[0];
+          const raw = this.buildingDamage(t) * (t.kind === "catapult" ? CATAPULT_VS_PEON : 1);
+          peon.hp -= raw;
+          this.emitCombat(
+            t.kind === "catapult" ? "ramImpact" : "arrow",
+            t.pos,
+            peon.pos,
+            team,
+          );
+          this.addFloat(
+            `-${Math.round(raw)}`,
+            peon.pos.x,
+            peon.pos.y - 8,
+            t.kind === "catapult" ? "#f39c72" : "#ffe59d",
+          );
+          t.attackTimer = this.buildingCooldown(t);
+          t.animKick = 0.15;
+        }
+        continue;
+      }
+      const towardKeep = (a: Unit, b: Unit) => (team === "you" ? b.pos.y - a.pos.y : a.pos.y - b.pos.y);
+      inRange.sort((a, b) => {
+        if (t.kind === "ballista" && Math.abs(b.towerResist - a.towerResist) > 0.2) {
+          return b.towerResist - a.towerResist;
+        }
+        if (t.kind === "catapult") {
+          const crowd = (u: Unit) =>
+            inRange.reduce((n, o) => n + (dist(o.pos, u.pos) <= CATAPULT_SPLASH_RADIUS ? 1 : 0), 0);
+          const packed = crowd(b) - crowd(a);
+          if (packed !== 0) return packed;
+        }
+        return towardKeep(a, b);
+      });
       const target = inRange[0];
       let raw = this.buildingDamage(t);
-      // Watchtowers are soft vs units chewing the keep
+      // Watchtowers are soft vs units chewing the keep. Rocks are not.
       if (t.kind === "watchtower" && this.unitSiegingKeep(target, team)) {
         raw *= ARCHER_VS_SIEGE;
       }
@@ -1666,14 +1685,29 @@ export class GameSim {
         this.emitCombat("ramImpact", t.pos, target.pos, team);
         for (const u of inRange) {
           if (dist(u.pos, target.pos) <= CATAPULT_SPLASH_RADIUS) {
-            let splash = raw;
-            if (this.unitSiegingKeep(u, team)) splash *= 0.85;
-            const dealt = this.applyTowerDamage(u, splash);
+            const dealt = this.applyTowerDamage(u, raw, t.kind);
             this.addFloat(`-${Math.round(dealt)}`, u.pos.x, u.pos.y - 8, "#f39c72");
           }
         }
+        const broken: number[] = [];
+        for (const bar of this.state.barricades) {
+          if (!bar.built || bar.team === team) continue;
+          if (dist(bar.pos, target.pos) > CATAPULT_SPLASH_RADIUS) continue;
+          bar.hp -= CATAPULT_VS_BARRICADE;
+          this.addFloat(
+            bar.hp > 0 ? `-${CATAPULT_VS_BARRICADE}` : "BREACH",
+            bar.pos.x,
+            bar.pos.y - 9,
+            "#e4bd77",
+          );
+          if (bar.hp <= 0) broken.push(bar.id);
+        }
+        if (broken.length > 0) {
+          this.state.shake = Math.max(this.state.shake, 0.08);
+          this.state.barricades = this.state.barricades.filter((b) => !broken.includes(b.id));
+        }
       } else {
-        const dealt = this.applyTowerDamage(target, raw);
+        const dealt = this.applyTowerDamage(target, raw, t.kind);
         this.emitCombat(
           t.kind === "watchtower" ? "arrow" : t.kind === "ballista" ? "ramImpact" : "meleeHit",
           t.pos,
@@ -1917,6 +1951,14 @@ export class GameSim {
     return dealt;
   }
 
+  /** Archer shots glance off wards. Melee keeps the levy bonus and the runner's charge. */
+  private strikeDamage(attacker: Unit, target: Unit | Villager) {
+    if (attacker.kind !== "archer") return this.meleeDamage(attacker, target);
+    let dealt = attacker.damage;
+    if ("kind" in target && target.kind === "ward") dealt *= ARCHER_VS_WARD;
+    return dealt;
+  }
+
   private fightMilitary(u: Unit, target: Unit | Villager, team: Team, dt: number) {
     const contact = u.kind === "archer" ? ARCHER_RANGE : 18;
     if (dist(u.pos, target.pos) > contact) {
@@ -1925,7 +1967,7 @@ export class GameSim {
     }
     if (u.attackTimer > 0) return;
     const ranged = u.kind === "archer";
-    const dealt = ranged ? u.damage : this.meleeDamage(u, target);
+    const dealt = this.strikeDamage(u, target);
     target.hp -= dealt;
     u.attackTimer = u.attackCooldown;
     this.emitCombat(ranged ? "arrow" : "meleeHit", u.pos, target.pos, team);
@@ -1983,10 +2025,11 @@ export class GameSim {
         const target = rangedUnits[0] ?? rangedPeons[0];
         if (target) {
           if (u.attackTimer <= 0) {
-            target.hp -= u.damage;
+            const dealt = this.strikeDamage(u, target);
+            target.hp -= dealt;
             u.attackTimer = u.attackCooldown;
             this.emitCombat("arrow", u.pos, target.pos, team);
-            this.addFloat(`-${Math.round(u.damage)}`, target.pos.x, target.pos.y - 7, "#e8d39a");
+            this.addFloat(`-${Math.round(dealt)}`, target.pos.x, target.pos.y - 7, "#e8d39a");
           }
           continue;
         }
@@ -2033,7 +2076,8 @@ export class GameSim {
           continue;
         } else {
           if (u.attackTimer <= 0) {
-            barricade.hp -= u.kind === "runner" ? 3 : 2;
+            const chip = barricadeStrike(u.kind);
+            barricade.hp -= chip;
             u.attackTimer = u.attackCooldown;
             this.emitCombat(
               barricade.hp > 0 ? "woodHit" : "woodBreak",
@@ -2042,7 +2086,7 @@ export class GameSim {
               team,
             );
             this.addFloat(
-              barricade.hp > 0 ? `-${u.kind === "runner" ? 3 : 2}` : "BREACH",
+              barricade.hp > 0 ? `-${chip}` : "BREACH",
               barricade.pos.x,
               barricade.pos.y - 9,
               "#e4bd77",
@@ -2705,8 +2749,8 @@ export class GameSim {
       team: "foe" as Team,
       lane,
       pos: { x, y },
-      hp: 6,
-      maxHp: 6,
+      hp: BARRICADE_HP,
+      maxHp: BARRICADE_HP,
       buildProgress: 0,
       buildTime: 3,
       built: false,

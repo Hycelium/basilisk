@@ -51,8 +51,8 @@ export const BUILD_COST: Record<BuildingKind, ResCost> = {
 
 export const BUILD_RANGE: Record<BuildingKind, number> = {
   watchtower: 125,
-  ballista: 162,
-  catapult: 126,
+  ballista: 178,
+  catapult: 150,
   barracks: 0,
   house: 0,
   barricade: 0,
@@ -93,16 +93,28 @@ export const LEVY_VS_WARD_DAMAGE = 1.25;
 export const RUNNER_CHARGE_DAMAGE = 2;
 
 /**
- * Watchtowers (archers) are weak vs units already on the keep and
- * cannot target peons. Only ballistae/catapults can hit peons.
+ * Watchtower arrows fall off once a unit is chewing the keep.
+ * Catapult rocks do not: the gate is where troops bunch up.
+ * Arrows never target peons. Bolts and rocks can, and only when no soldier is in range.
  */
 export const ARCHER_VS_SIEGE = 0.38;
+/** Trained archers barely scratch a shield. Levies and ballista bolts are the ward answers. */
+export const ARCHER_VS_WARD = 0.4;
+/**
+ * Share of tower armor a ballista bolt still respects.
+ * Arrows and catapult rocks keep the full resist, so a ward walks through them.
+ */
+export const BALLISTA_ARMOR_KEPT = 0.15;
+/** Catapult peon hits are a splash punishment, not a snipe. Bolts do full damage. */
+export const CATAPULT_VS_PEON = 0.65;
+export const CATAPULT_VS_BARRICADE = 12;
+export const BARRICADE_HP = 36;
 
-/** Tuned so 2–3 towers clear early waves but not late mixes alone. */
+/** Watchtowers clear light troops. Ballistae punch armor. Catapults punish clumps and road blocks. */
 export const BUILD_DAMAGE: Record<BuildingKind, number> = {
   watchtower: 6,
-  ballista: 16,
-  catapult: 11,
+  ballista: 22,
+  catapult: 13,
   barracks: 0,
   house: 0,
   barricade: 0,
@@ -110,14 +122,27 @@ export const BUILD_DAMAGE: Record<BuildingKind, number> = {
 
 export const BUILD_COOLDOWN: Record<BuildingKind, number> = {
   watchtower: 0.58,
-  ballista: 1.45,
-  catapult: 1.95,
+  ballista: 1.7,
+  catapult: 1.75,
   barracks: 1,
   house: 1,
   barricade: 1,
 };
 
-export const CATAPULT_SPLASH_RADIUS = 36;
+export const CATAPULT_SPLASH_RADIUS = 46;
+
+/** How much of a unit's tower armor this building ignores. */
+export function towerDamageFactor(kind: BuildingKind, towerResist: number) {
+  const kept = kind === "ballista" ? towerResist * BALLISTA_ARMOR_KEPT : towerResist;
+  return 1 - kept;
+}
+
+/** Melee chip against a barricade. Rams destroy one outright; archers walk around. */
+export function barricadeStrike(kind: UnitKind) {
+  if (kind === "brute") return 6;
+  if (kind === "soldier" || kind === "runner") return 3;
+  return 2;
+}
 export const MAX_TRAIN_QUEUE = 8;
 
 export const DAMAGE_MULT = [1, 1.28, 1.58];
@@ -161,31 +186,31 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
     hp: 58, speed: 34, damage: 8, cooldown: 0.65, bounty: 11,
     towerResist: 0.05, keepMult: 0.9, siegeGap: 0.25,
     cost: 26, woodCost: 0, trainTime: 3.8,
-    label: "Levy", blurb: "Cheap fighter · bonus vs wards",
+    label: "Levy", blurb: "Cheap line · bonus vs wards",
   },
   runner: {
     hp: 42, speed: 54, damage: 6, cooldown: 0.5, bounty: 13,
     towerResist: 0.72, keepMult: 0.7, siegeGap: 0.3,
     cost: 28, woodCost: 22, trainTime: 3.2,
-    label: "Runner", blurb: "Cavalry charge · near-hard vs towers",
+    label: "Runner", blurb: "Charge · shrugs arrows, fears bolts",
   },
   archer: {
     hp: 44, speed: 29, damage: 7, cooldown: 1.05, bounty: 14,
     towerResist: 0.04, keepMult: 0.42, siegeGap: 0.5,
     cost: 34, woodCost: 28, trainTime: 4.4,
-    label: "Archer", blurb: "Ranged support · cannot break barricades",
+    label: "Archer", blurb: "Ranged · walks around barricades, weak vs wards",
   },
   ward: {
     hp: 150, speed: 22, damage: 5, cooldown: 0.75, bounty: 15,
     towerResist: 0.88, keepMult: 0.55, siegeGap: 0.4,
     cost: 46, woodCost: 10, trainTime: 5.2,
-    label: "Ward", blurb: "Shield knight · near-hard vs arrows",
+    label: "Ward", blurb: "Shield · shrugs arrows, fears bolts and levies",
   },
   rammer: {
     hp: 95, speed: 27, damage: 7, cooldown: 0.8, bounty: 18,
     towerResist: 0.3, keepMult: 2.4, siegeGap: 0.15,
     cost: 40, woodCost: 45, trainTime: 5.8,
-    label: "Rammer", blurb: "Gate breaker · heavy wood",
+    label: "Rammer", blurb: "Breaks gates and barricades",
   },
 };
 

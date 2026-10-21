@@ -44,8 +44,10 @@ export function mapBounds(seed: number) {
   return { minX: MAP_CX - half, maxX: MAP_CX + half, width: half * 2 };
 }
 
-/** Outer roads close to this fraction of mid-map spacing at each keep (~14px, inside the wall). */
+/** 3-road outer lanes close to this fraction of mid-map spacing at each keep (~14px, on the gate). */
 const KEEP_FAN_IN = 0.08;
+/** 2-road lanes meet the keep on its side walls, one road to each flank. */
+const KEEP_FLANK = 30;
 /** Fraction of the march used to open/close the fan. */
 const FAN_ZONE = 0.26;
 
@@ -54,12 +56,16 @@ function smoothstep(lo: number, hi: number, x: number) {
   return k * k * (3 - 2 * k);
 }
 
-/** Road spine before bends. On 3-road maps the outer roads fan in to both keeps. */
+/** Road spine before bends. 2-road maps meet the keep flanks; 3-road maps tuck into the gate. */
 function roadBaseX(seed: number, lane: Lane, t: number) {
   const n = laneCount(seed);
   const offset = (lane - (n - 1) / 2) * LANE_SPACING;
-  if (n < 3) return MAP_CX + offset;
+  if (n < 2) return MAP_CX + offset;
   const fan = smoothstep(0, FAN_ZONE, t) * smoothstep(0, FAN_ZONE, 1 - t);
+  if (n === 2) {
+    const atKeep = Math.sign(offset) * KEEP_FLANK;
+    return MAP_CX + atKeep + (offset - atKeep) * fan;
+  }
   return MAP_CX + offset * (KEEP_FAN_IN + (1 - KEEP_FAN_IN) * fan);
 }
 
