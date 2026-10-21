@@ -73,6 +73,17 @@ export function isTouchDevice() {
   return coarse || navigator.maxTouchPoints > 0;
 }
 
+/** Phones and tablets. Their lit shader fails once too many lights are baked in. */
+export function isMobileGpu() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return (
+    isTouchDevice() ||
+    /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
+    (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
+  );
+}
+
 /** Static capability guess â€” refined by frame-time sampling once the game runs. */
 export function detectQualityTier(): QualityTier {
   const nav = navigator as Navigator & { deviceMemory?: number; userAgentData?: { mobile?: boolean } };
@@ -217,7 +228,9 @@ export class GameRenderer {
     });
     this.renderer.setClearColor(0x6a90b8, 1);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Soft shadows add a large chunk to every lit program. On mobile that program
+    // fails to link, so the color pass is skipped while the depth pass still draws.
+    this.renderer.shadowMap.type = isMobileGpu() ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.55;
@@ -245,12 +258,15 @@ export class GameRenderer {
     this.sun.shadow.camera.bottom = -620;
     this.scene.add(this.sun);
     this.scene.add(new THREE.AmbientLight(0xc8d8f0, 0.85));
-    const fill = new THREE.DirectionalLight(0xb0d0ff, 0.75);
-    fill.position.set(-140, 120, -40);
-    this.scene.add(fill);
-    const rim = new THREE.DirectionalLight(0xffe8c0, 0.45);
-    rim.position.set(40, 60, 300);
-    this.scene.add(rim);
+    // Two extra directional lights push the mobile lit shader over the link limit.
+    if (!isMobileGpu()) {
+      const fill = new THREE.DirectionalLight(0xb0d0ff, 0.75);
+      fill.position.set(-140, 120, -40);
+      this.scene.add(fill);
+      const rim = new THREE.DirectionalLight(0xffe8c0, 0.45);
+      rim.position.set(40, 60, 300);
+      this.scene.add(rim);
+    }
 
     this.scene.add(this.root);
     this.root.add(this.staticRoot);
@@ -297,29 +313,10 @@ export class GameRenderer {
     this.buildSky();
     this.fitCamera();
     this.applyTier(this.tier, false);
-  }
-
-  /**
-   * Build the battlefield and wait until its shaders are linked before the first
-   * presented frame. Mobile GPUs compile in parallel; drawing early drops the
-   * color pass while the cheaper shadow pass still lands.
-   */
-  async prepare(state: GameState): Promise<void> {
-    try {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      this.resize();
-      await ensureModelsLoaded();
+    void ensureModelsLoaded().then(() => {
+      // Force one remesh pass so trees and props pick up loaded models.
       this.lastMapId = "";
-      this.syncScene(state);
-      await Promise.race([
-        this.renderer.compileAsync(this.scene, this.camera),
-        new Promise<void>((resolve) => window.setTimeout(resolve, 12000)),
-      ]);
-      this.renderer.render(this.scene, this.camera);
-    } catch {
-      /* Still open the field if a compile rejects. */
-    }
-    this.wallClock = performance.now();
+    });
   }
 
   private rebuildBattlefield(state: GameState) {
@@ -623,10 +620,7 @@ export class GameRenderer {
 
   private configureProceduralMaterials() {
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
-    const ua = navigator.userAgent || "";
-    const mobileUa =
-      /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-    const mobile = isTouchDevice() || mobileUa;
+    const mobile = isMobileGpu();
     // Desktop keeps a separate linear bump map. Phones, tablets, and low tier
     // do not: a shared canvas as sRGB map + bump map drops the color pass.
     const bump = !mobile && this.tier !== "low";
@@ -644,16 +638,20 @@ export class GameRenderer {
     const profile = TIER_PROFILE[tier];
     const prev = this.tier;
     this.tier = tier;
-    this.renderer.shadowMap.enabled = profile.shadows;
+    // Shadow sampling bloats the lit program. Phones skip it so the color pass can link.
+    const shadows = profile.shadows && !isMobileGpu();
+    this.renderer.shadowMap.enabled = shadows;
     this.renderer.shadowMap.autoUpdate = profile.shadowEvery <= 1;
-    if (this.sun.castShadow !== profile.shadows) this.sun.castShadow = profile.shadows;
+    if (this.sun.castShadow !== shadows) this.sun.castShadow = shadows;
     if (this.sun.shadow.mapSize.x !== profile.shadowMap) {
       this.sun.shadow.mapSize.set(profile.shadowMap, profile.shadowMap);
       this.sun.shadow.map?.dispose();
       this.sun.shadow.map = null;
     }
     this.scene.fog = profile.fog ? new THREE.FogExp2(0x8eb4d0, 0.00055) : null;
-    for (const light of this.torchLights) light.visible = profile.pointLights;
+    // Point lights are folded into the lit program of every nearby mesh. On a phone
+    // that variant fails, which hides keeps, mines, and camps while the road stays up.
+    for (const light of this.torchLights) light.visible = profile.pointLights && !isMobileGpu();
     if (this.particles.length > profile.particles) this.particles.length = profile.particles;
     this.configureProceduralMaterials();
     if (prev !== tier) {
@@ -907,7 +905,7 @@ export class GameRenderer {
     this.syncScene(state, step);
 
     const profile = TIER_PROFILE[this.tier];
-    if (profile.shadows && profile.shadowEvery > 1) {
+    if (this.renderer.shadowMap.enabled && profile.shadowEvery > 1) {
       this.shadowFrame = (this.shadowFrame + 1) % profile.shadowEvery;
       if (this.shadowFrame === 0) this.renderer.shadowMap.needsUpdate = true;
     }
@@ -1030,7 +1028,7 @@ export class GameRenderer {
     g.add(keep);
     const light = new THREE.PointLight(0xffaa55, 1.6, 110, 2);
     light.position.set(-16, 28, 14);
-    light.visible = TIER_PROFILE[this.tier].pointLights;
+    light.visible = TIER_PROFILE[this.tier].pointLights && !isMobileGpu();
     g.add(light);
     this.torchLights.push(light);
     const light2 = light.clone();
