@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Roadkeep – Map Look Preview</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; font: 14px Georgia, serif; }
+      #ui { position: fixed; top: 10px; left: 10px; background: #1a1612e0; color: #f0dfb8; padding: 10px 14px; border-radius: 8px; display: grid; gap: 6px; }
+      #ui label { display: flex; justify-content: space-between; gap: 10px; }
+      select { font: inherit; }
+    </style>
+  </head>
+  <body>
+    <div id="ui">
+      <b>Map look preview</b>
+      <label>Preset <select id="preset"></select></label>
+      <label>Ground <select id="ground"></select></label>
+      <label>Golden tint <input type="checkbox" id="tint" checked /></label>
+      <label>Road <select id="road"></select></label>
+      <label>Cliff <select id="cliff"></select></label>
+      <label>Wheat patches <input type="checkbox" id="wheat" checked /></label>
+    </div>
+    <script type="module" src="./map.ts"></script>
+  </body>
+</html>
