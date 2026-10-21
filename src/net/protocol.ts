@@ -2,6 +2,7 @@ import { skirmishMap } from "../game/map";
 import type {
   BuildingKind,
   GamePhase,
+  Lane,
   MapDef,
   Team,
   TrainKind,
@@ -47,7 +48,7 @@ export interface SnapUnit {
   id: number;
   team: Team;
   kind: UnitKind;
-  lane: 0 | 1;
+  lane: Lane;
   x: number;
   y: number;
   hp: number;
@@ -107,7 +108,7 @@ export interface SnapNode {
 export interface SnapBarricade {
   id: number;
   team: Team;
-  lane: 0 | 1;
+  lane: Lane;
   x: number;
   y: number;
   hp: number;
@@ -123,7 +124,7 @@ export interface SnapPad {
   team: Team;
   x: number;
   y: number;
-  laneCoverage: 0 | 1 | 2;
+  laneCoverage: Lane[];
   zone: "combat" | "eco";
 }
 

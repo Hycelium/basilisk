@@ -8,6 +8,9 @@ export type PadZone = "combat" | "eco";
 export type GamePhase = "title" | "running" | "ended";
 /** Procedural map id, e.g. `seed-1842291`. Infinite campaign maps. */
 export type MapId = string;
+/** Road index, west to east. A map has 1–3 roads. */
+export type Lane = 0 | 1 | 2;
+export type LaneCount = 1 | 2 | 3;
 
 export interface Vec2 {
   x: number;
@@ -35,7 +38,7 @@ export interface Unit {
   id: number;
   team: Team;
   kind: UnitKind;
-  lane: 0 | 1;
+  lane: Lane;
   pos: Vec2;
   hp: number;
   maxHp: number;
@@ -90,7 +93,8 @@ export interface Pad {
   id: string;
   team: Team;
   pos: Vec2;
-  laneCoverage: 0 | 1 | 2;
+  /** Roads a tower on this pad can reach. Eco pads cover none. */
+  laneCoverage: Lane[];
   zone: PadZone;
 }
 
@@ -113,7 +117,7 @@ export interface ResourceNode {
 export interface Barricade {
   id: number;
   team: Team;
-  lane: 0 | 1;
+  lane: Lane;
   pos: Vec2;
   hp: number;
   maxHp: number;
@@ -194,7 +198,7 @@ export interface ToastItem {
 export interface WaveQueueItem {
   team: Team;
   kind: UnitKind;
-  lane: 0 | 1;
+  lane: Lane;
 }
 
 export interface WaveSpec {
@@ -215,7 +219,8 @@ export interface MapDef {
   seed: number;
   name: string;
   tagline: string;
-  pads: { id: string; x: number; y: number; laneCoverage: 0 | 1 | 2; zone?: PadZone }[];
+  lanes: LaneCount;
+  pads: { id: string; x: number; y: number; laneCoverage: Lane[]; zone?: PadZone }[];
   nodes: {
     id: string;
     kind: ResourceKind;

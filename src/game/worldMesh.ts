@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { ROAD_Y_MAX, ROAD_Y_MIN, WORLD_H, WORLD_W } from "./balance";
 import { groundLookForSeed, groundTexture, wheatTexture } from "./groundLooks";
 import { buildRockPile, buildTree, SCENERY_TREES } from "./models/nature";
-import { riverSpec, rngFromSeed, roadCenterX } from "./map";
+import { MAP_CX, mapBounds, mapLanes, riverSpec, rngFromSeed, roadCenterX } from "./map";
 import { buildBackdrop, buildCliffs, fbm } from "./landscape";
 import type { Team } from "./types";
 
@@ -50,26 +50,29 @@ function makeRibbon(points: THREE.Vector3[], width: number, material: THREE.Mate
   return mesh;
 }
 
+/** Distance from x to the nearest road centerline at y. */
+function roadGap(seed: number, x: number, y: number) {
+  return Math.min(...mapLanes(seed).map((lane) => Math.abs(x - roadCenterX(seed, lane, y))));
+}
+
 function sampleGround(simX: number, simY: number, seed: number, river: ReturnType<typeof riverSpec>) {
+  const { minX, maxX, width } = mapBounds(seed);
   let h = fbm(simX * 0.012, simY * 0.01, seed) * 9;
   h += fbm(simX * 0.05, simY * 0.05, seed + 3) * 2.4;
   h += fbm(simX * 0.2, simY * 0.2, seed + 5, 3) * 0.5;
 
   // Flatten playable strip + roads
-  const onRoad =
-    simY > ROAD_Y_MIN - 8 &&
-    simY < ROAD_Y_MAX + 8 &&
-    (Math.abs(simX - roadCenterX(seed, 0, simY)) < 22 || Math.abs(simX - roadCenterX(seed, 1, simY)) < 22);
+  const onRoad = simY > ROAD_Y_MIN - 8 && simY < ROAD_Y_MAX + 8 && roadGap(seed, simX, simY) < 22;
   const riverY = river.y + Math.sin((simX / WORLD_W) * Math.PI * 2 + river.phase) * river.amplitude;
   const onRiver = river.enabled && Math.abs(simY - riverY) < river.width * 0.62;
-  const inField = simX > 20 && simX < WORLD_W - 20 && simY > 60 && simY < WORLD_H - 40;
+  const inField = simX > minX + 20 && simX < maxX - 20 && simY > 60 && simY < WORLD_H - 40;
   if (onRiver) h = -2.2;
   else if (onRoad) h *= 0.05;
   else if (inField) h *= 0.35;
-  else h += Math.max(0, Math.abs(simX - WORLD_W / 2) / WORLD_W - 0.35) * 18;
+  else h += Math.max(0, Math.abs(simX - MAP_CX) / width - 0.35) * 18;
 
   // Edge cliffs
-  const sideEdge = Math.min(Math.max(0, 28 - simX, simX - (WORLD_W - 28)), 30);
+  const sideEdge = Math.min(Math.max(0, minX + 28 - simX, simX - (maxX - 28)), 30);
   const edge = Math.max(sideEdge * 0.6, 40 - simY, simY - (WORLD_H - 30));
   if (edge > 0) h += edge * 0.4 + fbm(simX * 0.06, simY * 0.06, seed + 11) * Math.min(edge, 20) * 0.25;
 
@@ -81,9 +84,10 @@ export function buildTerrain(seed: number) {
   const g = new THREE.Group();
   const river = riverSpec(seed);
   const look = groundLookForSeed(seed);
-  const segsX = 200;
+  const { minX, width } = mapBounds(seed);
+  const segsX = Math.round((200 * width) / WORLD_W);
   const segsZ = 330;
-  const sizeX = WORLD_W + 120;
+  const sizeX = width + 120;
   const sizeZ = WORLD_H + 100;
   const geo = new THREE.PlaneGeometry(sizeX, sizeZ, segsX, segsZ);
   geo.rotateX(-Math.PI / 2);
@@ -145,7 +149,7 @@ export function buildTerrain(seed: number) {
   if (river.enabled) {
     const waterPts: THREE.Vector3[] = [];
     for (let i = 0; i <= 64; i++) {
-      const simX = -30 + (i / 64) * (WORLD_W + 60);
+      const simX = minX - 30 + (i / 64) * (width + 60);
       const simY = river.y + Math.sin((simX / WORLD_W) * Math.PI * 2 + river.phase) * river.amplitude;
       waterPts.push(new THREE.Vector3(simX - WORLD_W / 2, -0.5, simY - WORLD_H / 2));
     }
@@ -166,12 +170,12 @@ export function buildTerrain(seed: number) {
   }
 
   // Raised curved cobble roads
-  for (let i = 0; i < 2; i++) {
+  for (const i of mapLanes(seed)) {
     const roadPts: THREE.Vector3[] = [];
     for (let s = 0; s <= 64; s++) {
       const simY = ROAD_Y_MIN - 10 + (s / 64) * (ROAD_Y_MAX - ROAD_Y_MIN + 20);
       roadPts.push(
-        new THREE.Vector3(roadCenterX(seed, i as 0 | 1, simY) - WORLD_W / 2, 0.6, simY - WORLD_H / 2),
+        new THREE.Vector3(roadCenterX(seed, i, simY) - WORLD_W / 2, 0.6, simY - WORLD_H / 2),
       );
     }
     const road = makeRibbon(
@@ -179,7 +183,7 @@ export function buildTerrain(seed: number) {
       29,
       new THREE.MeshStandardMaterial({
         map: groundTexture(look.road),
-        color: i === 0 ? 0xc4b49c : 0xb8a890,
+        color: i % 2 === 0 ? 0xc4b49c : 0xb8a890,
         roughness: 0.95,
         metalness: 0.05,
       }),
@@ -189,7 +193,7 @@ export function buildTerrain(seed: number) {
     // Path edge stones
     for (let s = 0; s < 18; s++) {
       const zy = ROAD_Y_MIN + (s / 17) * (ROAD_Y_MAX - ROAD_Y_MIN);
-      const cx = roadCenterX(seed, i as 0 | 1, zy);
+      const cx = roadCenterX(seed, i, zy);
       for (const side of [-1, 1]) {
         const pebble = new THREE.Mesh(
           new THREE.DodecahedronGeometry(1.4 + (s % 3) * 0.3, 1),
@@ -206,12 +210,12 @@ export function buildTerrain(seed: number) {
       // Solve crossing approximately; river meanders horizontally while road meanders vertically.
       let crossY = river.y;
       for (let pass = 0; pass < 3; pass++) {
-        const crossX = roadCenterX(seed, i as 0 | 1, crossY);
+        const crossX = roadCenterX(seed, i, crossY);
         crossY = river.y + Math.sin((crossX / WORLD_W) * Math.PI * 2 + river.phase) * river.amplitude;
       }
-      const crossX = roadCenterX(seed, i as 0 | 1, crossY);
-      const x0 = roadCenterX(seed, i as 0 | 1, crossY - 8);
-      const x1 = roadCenterX(seed, i as 0 | 1, crossY + 8);
+      const crossX = roadCenterX(seed, i, crossY);
+      const x0 = roadCenterX(seed, i, crossY - 8);
+      const x1 = roadCenterX(seed, i, crossY + 8);
       const bridge = new THREE.Mesh(
         new THREE.BoxGeometry(34, 1.8, river.width + 12, 6, 1, 5),
         new THREE.MeshStandardMaterial({ color: 0x80613b, roughness: 0.82, metalness: 0.04 }),
@@ -239,15 +243,16 @@ function buildWheatPatches(seed: number, river: ReturnType<typeof riverSpec>) {
     polygonOffset: true,
     polygonOffsetFactor: -1,
   });
-  for (let tries = 0, placed = 0; tries < 60 && placed < 14; tries++) {
-    const cx = 30 + rng() * (WORLD_W - 60);
+  const { minX, width } = mapBounds(seed);
+  const patches = Math.round((14 * width) / WORLD_W);
+  for (let tries = 0, placed = 0; tries < patches * 4 && placed < patches; tries++) {
+    const cx = minX + 30 + rng() * (width - 60);
     const cy = 70 + rng() * (WORLD_H - 120);
     const w = 30 + rng() * 30;
     const d = 22 + rng() * 22;
     const r = Math.hypot(w, d) / 2;
-    const roadGap = Math.min(Math.abs(cx - roadCenterX(seed, 0, cy)), Math.abs(cx - roadCenterX(seed, 1, cy)));
     const riverY = river.y + Math.sin((cx / WORLD_W) * Math.PI * 2 + river.phase) * river.amplitude;
-    if (roadGap < r + 18) continue;
+    if (roadGap(seed, cx, cy) < r + 18) continue;
     if (river.enabled && Math.abs(cy - riverY) < r + river.width) continue;
 
     const geo = new THREE.PlaneGeometry(w, d, 12, 12).rotateX(-Math.PI / 2).rotateY(rng() * Math.PI);
@@ -273,34 +278,34 @@ export function buildScenery(seed: number) {
   const rng = rngFromSeed(seed ^ 0xA5A5);
 
   g.add(buildBackdrop(seed), buildCliffs(seed));
+  const { minX, maxX, width } = mapBounds(seed);
+  const density = width / WORLD_W;
 
   // Forest belt
-  const treeCount = 52;
+  const treeCount = Math.round(52 * density);
+  const edgeTrees = Math.round(30 * density);
   for (let i = 0; i < treeCount; i++) {
-    let x = rng() * WORLD_W;
+    let x = minX + rng() * width;
     let y = rng() * WORLD_H;
     // Prefer edges / avoid roads & keep centers
-    if (i < 30) {
+    if (i < edgeTrees) {
       const edge = Math.floor(rng() * 4);
       if (edge === 0) {
-        x = 8 + rng() * 36;
+        x = minX + 8 + rng() * 36;
         y = 80 + rng() * (WORLD_H - 160);
       } else if (edge === 1) {
-        x = WORLD_W - 44 + rng() * 36;
+        x = maxX - 44 + rng() * 36;
         y = 80 + rng() * (WORLD_H - 160);
       } else if (edge === 2) {
-        x = 40 + rng() * (WORLD_W - 80);
+        x = minX + 40 + rng() * (width - 80);
         y = 30 + rng() * 50;
       } else {
-        x = 40 + rng() * (WORLD_W - 80);
+        x = minX + 40 + rng() * (width - 80);
         y = WORLD_H - 70 + rng() * 50;
       }
     }
-    if (
-      Math.abs(x - roadCenterX(seed, 0, y)) < 30 ||
-      Math.abs(x - roadCenterX(seed, 1, y)) < 30
-    ) continue;
-    if (Math.abs(x - 200) < 40 && (y < 140 || y > 500)) continue;
+    if (roadGap(seed, x, y) < 30) continue;
+    if (Math.abs(x - MAP_CX) < 40 && (y < 140 || y > 500)) continue;
 
     // Scenery never uses the oak, which marks wood nodes.
     const kind = SCENERY_TREES[Math.floor(rng() * SCENERY_TREES.length)];
@@ -311,13 +316,10 @@ export function buildScenery(seed: number) {
   }
 
   // Rock piles
-  for (let i = 0; i < 28; i++) {
-    const x = 30 + rng() * (WORLD_W - 60);
+  for (let i = 0; i < Math.round(28 * density); i++) {
+    const x = minX + 30 + rng() * (width - 60);
     const y = 70 + rng() * (WORLD_H - 140);
-    if (
-      Math.abs(x - roadCenterX(seed, 0, y)) < 26 ||
-      Math.abs(x - roadCenterX(seed, 1, y)) < 26
-    ) continue;
+    if (roadGap(seed, x, y) < 26) continue;
     const pile = buildRockPile(rng() * 3, 0.9 + rng() * 1.1);
     pile.position.set(x - WORLD_W / 2, 0, y - WORLD_H / 2);
     pile.rotation.y = rng() * Math.PI * 2;
@@ -327,16 +329,14 @@ export function buildScenery(seed: number) {
   // Grass tuft instances
   const tuftGeo = new THREE.ConeGeometry(0.7, 3.2, 5);
   const tuftMat = new THREE.MeshStandardMaterial({ color: 0x3a7a48, roughness: 0.8 });
-  const tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, 220);
+  const tuftCount = Math.round(220 * density);
+  const tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, tuftCount);
   const dummy = new THREE.Object3D();
   let ti = 0;
-  for (let i = 0; i < 220; i++) {
-    const x = 24 + rng() * (WORLD_W - 48);
+  for (let i = 0; i < tuftCount; i++) {
+    const x = minX + 24 + rng() * (width - 48);
     const y = 90 + rng() * (WORLD_H - 180);
-    if (
-      Math.abs(x - roadCenterX(seed, 0, y)) < 20 ||
-      Math.abs(x - roadCenterX(seed, 1, y)) < 20
-    ) continue;
+    if (roadGap(seed, x, y) < 20) continue;
     dummy.position.set(x - WORLD_W / 2, 1.4, y - WORLD_H / 2);
     dummy.rotation.y = rng() * Math.PI;
     dummy.scale.setScalar(0.7 + rng() * 1.1);

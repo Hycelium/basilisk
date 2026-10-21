@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { BUILD_RANGE, STARTER_GUARD_RANGE, WORLD_H, WORLD_W } from "./balance";
 import { homeCameraFrame } from "./homeCamera";
+import { mapBounds } from "./map";
 import { cloneModel, ensureModelsLoaded, setSharedAnisotropy } from "./assets3d";
 import type { Barricade, Building, GameState, Team, Unit } from "./types";
 import {
@@ -184,6 +185,8 @@ export class GameRenderer {
   private camPitch = 1.12; // ~64Â° from top â†’ proper RTS angle, not bird's-eye
   private camLook = new THREE.Vector3(0, 14, 55);
   private homeSide: Team = "you";
+  /** Battlefield width in sim units. 3-road maps are wider than the default 400. */
+  private mapWidth = WORLD_W;
   private readonly camDistMin = 280;
   private readonly camDistMax = 900;
   private readonly camPitchMin = 0.72;
@@ -351,7 +354,8 @@ export class GameRenderer {
   /** Best default RTS framing — oblique, on the local keep's side of the map. */
   resetCamera() {
     const frame = homeCameraFrame(this.homeSide);
-    this.camDist = frame.dist;
+    // Pull back a little on wide maps so the outer roads start in view.
+    this.camDist = frame.dist * Math.sqrt(Math.max(1, this.mapWidth / WORLD_W));
     this.camYaw = frame.yaw;
     this.camPitch = frame.pitch;
     this.camLook.set(frame.lookX, frame.lookY, frame.lookZ);
@@ -397,7 +401,8 @@ export class GameRenderer {
     const scale = this.camDist * 0.00145;
     this.camLook.addScaledVector(right, -dx * scale);
     this.camLook.addScaledVector(forward, -dy * scale);
-    this.camLook.x = THREE.MathUtils.clamp(this.camLook.x, -160, 160);
+    const panX = this.mapWidth / 2 - 40;
+    this.camLook.x = THREE.MathUtils.clamp(this.camLook.x, -panX, panX);
     this.camLook.z = THREE.MathUtils.clamp(this.camLook.z, -280, 280);
     this.applyCamera();
   }
@@ -916,6 +921,11 @@ export class GameRenderer {
     const seed = this.hashMapSeed(state.mapId);
     this.worldGroup.add(buildTerrain(seed));
     this.worldGroup.add(buildScenery(seed));
+    const width = mapBounds(seed).width;
+    if (width !== this.mapWidth) {
+      this.mapWidth = width;
+      this.resetCamera();
+    }
   }
 
   private hashMapSeed(mapId: string) {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { laneCount } from "../game/map";
 import type { UiSnapshot } from "../game/types";
 
 const ITCH_PAGE = "https://ka9krew.itch.io/roadkeep";
@@ -60,6 +61,7 @@ interface OverlaysProps {
 
 export function Overlays({ ui, hideTitle, skirmishLive, onStart, onSkirmish, onRestart, onRerollMap }: OverlaysProps) {
   const [shareNote, setShareNote] = useState("");
+  const roads = laneCount(ui.mapSeed);
 
   useEffect(() => {
     if (!shareNote) return;
@@ -94,7 +96,8 @@ export function Overlays({ ui, hideTitle, skirmishLive, onStart, onSkirmish, onR
             <span>{ui.mapTagline}</span>
             <span className="map-meta">
               Campaign Lv {ui.campaignLevel}
-              {ui.scoutSalt > 0 ? ` · Scout ${ui.scoutSalt}` : ""} · seed {ui.mapSeed}
+              {ui.scoutSalt > 0 ? ` · Scout ${ui.scoutSalt}` : ""} · {roads === 1 ? "1 road" : `${roads} roads`} · seed{" "}
+              {ui.mapSeed}
             </span>
           </div>
 

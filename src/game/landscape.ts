@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { WORLD_H, WORLD_W } from "./balance";
-import { rngFromSeed } from "./map";
+import { WORLD_H } from "./balance";
+import { mapBounds, rngFromSeed } from "./map";
 import { materials } from "./models/materials";
 import { buildTree } from "./models/nature";
 
@@ -124,7 +124,7 @@ export function buildCliffs(seed: number) {
     const nFalls = 1 + Math.floor(rng() * 2);
     const falls = Array.from({ length: nFalls }, (_, i) => -WORLD_H / 2 + 110 + ((i + 0.3 + rng() * 0.4) / nFalls) * (WORLD_H - 220));
     const gorge = (z: number) => falls.reduce((m, f) => Math.max(m, Math.exp(-(((z - f) / 13) ** 2))), 0);
-    const baseX = s * (WORLD_W / 2 + 24);
+    const baseX = s * (mapBounds(seed).width / 2 + 24);
     const faceX = (z: number, y: number) => {
       const v = y / WALL_H;
       const crag = fbm(z * 0.035, y * 0.05, sd) * 10 + ridged(z * 0.07, y * 0.09, sd + 9) * 5;
@@ -283,14 +283,15 @@ function waterfall(s: -1 | 1, z0: number, faceX: (z: number, y: number) => numbe
 
 /** Snow-capped ridged range behind the foe's end of the valley and wrapping round the flanks. */
 export function buildBackdrop(seed: number) {
-  const sizeX = WORLD_W + 900, sizeZ = 420;
+  const halfW = mapBounds(seed).width / 2;
+  const sizeX = halfW * 2 + 900, sizeZ = 420;
   const geo = new THREE.PlaneGeometry(sizeX, sizeZ, 260, 110).rotateX(-Math.PI / 2);
   const p = geo.attributes.position as THREE.BufferAttribute;
   const crevice = new Float32Array(p.count);
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), z = p.getZ(i);
     const back = (sizeZ / 2 - z) / sizeZ;
-    const side = Math.max(0, Math.abs(x) - (WORLD_W / 2 + 60)) / 300;
+    const side = Math.max(0, Math.abs(x) - (halfW + 60)) / 300;
     const rise = THREE.MathUtils.smoothstep(back, 0.05, 0.5) + side * 0.6;
     const r = ridged(x * 0.008, z * 0.008, seed + 33, 6);
     p.setY(i, 30 + rise * (40 + r * 150) + fbm(x * 0.03, z * 0.03, seed + 34) * 8);

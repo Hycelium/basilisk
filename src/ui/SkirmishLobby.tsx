@@ -1,13 +1,17 @@
 interface SkirmishEndProps {
   result: string;
   role: "host" | "guest" | "idle";
-  maps: { id: string; name: string; tagline: string }[];
+  maps: { id: string; name: string; tagline: string; lanes: number }[];
   mapId: string;
   linkDown: boolean;
   canRematch: boolean;
   onPick: (mapId: string) => void;
   onRematch: () => void;
   onLeave: () => void;
+}
+
+function roadsLabel(lanes: number) {
+  return lanes === 1 ? "1 road" : `${lanes} roads`;
 }
 
 export function SkirmishEnd({
@@ -35,7 +39,7 @@ export function SkirmishEnd({
               aria-selected={map.id === selected?.id}
               onClick={() => onPick(map.id)}
             >
-              {map.name}
+              {map.name} · {roadsLabel(map.lanes)}
             </button>
           ))}
         </div>
@@ -47,7 +51,7 @@ export function SkirmishEnd({
       {selected && role === "host" && <p className="skirmish-end-map">{selected.tagline}</p>}
       {selected && role !== "host" && (
         <p className="skirmish-end-map">
-          {selected.name}
+          {selected.name} · {roadsLabel(selected.lanes)}
           <span>{selected.tagline}</span>
         </p>
       )}
