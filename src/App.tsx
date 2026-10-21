@@ -8,6 +8,7 @@ import { Hud } from "./ui/Hud";
 import { BuildBar } from "./ui/BuildBar";
 import { DetailSheet } from "./ui/DetailSheet";
 import { Overlays } from "./ui/Overlays";
+import { CampaignMap } from "./ui/CampaignMap";
 import { ControlCluster, type ClusterAction } from "./ui/ControlCluster";
 import { RadialMenu, type RadialItem } from "./ui/RadialMenu";
 import { useHints } from "./ui/hints";
@@ -60,6 +61,7 @@ const defaultUi: UiSnapshot = {
   peonQueue: [],
   peonCount: 2,
   peonCap: 2,
+  idlePeonCount: 0,
   keepGarrisoned: 0,
   keepGarrisonMax: 5,
   canTrainPeon: false,
@@ -79,6 +81,10 @@ const defaultUi: UiSnapshot = {
   foeLastAction: "wait",
   localTeam: "you",
   pvp: false,
+  missionId: null,
+  missionName: "",
+  freshUnlock: "",
+  freshHold: false,
 };
 
 const LONG_PRESS_MS = 350;
@@ -134,6 +140,12 @@ export default function App() {
   const hpRef = useRef(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fsSupported] = useState(fullscreenSupported);
+  /** Fullscreen is the default. A browser only allows it from a click or key press, so the first one enters. Leaving fullscreen keeps the windowed view for the rest of the session. */
+  const fullscreenWantedRef = useRef(true);
+  const [campaignOpen, setCampaignOpen] = useState(false);
+  const [triumph, setTriumph] = useState<{ id: number; unlock: string } | null>(null);
+  const fullscreenRequestRef = useRef<Promise<void> | null>(null);
+  const fullscreenTriedRef = useRef(false);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const patrolModeRef = useRef(false);
   const selectionBoxRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
@@ -166,21 +178,41 @@ export default function App() {
 
   const refreshUi = useCallback(() => setUi(sim.getUiSnapshot()), [sim]);
 
-  const toggleFullscreen = useCallback(async () => {
-    const d = document as FsDocument;
+  const requestFullscreen = useCallback(async () => {
+    if (!fullscreenWantedRef.current || fullscreenElement() || fullscreenRequestRef.current) return;
     const el = pageRef.current as FsElement | null;
-    try {
-      if (fullscreenElement()) {
-        if (d.exitFullscreen) await d.exitFullscreen();
-        else await d.webkitExitFullscreen?.();
-      } else if (el) {
+    if (!el) return;
+    const task = (async () => {
+      try {
         if (el.requestFullscreen) await el.requestFullscreen();
         else await el.webkitRequestFullscreen?.();
+      } catch {
+        /* iOS Safari and some embedded browsers reject — the dvh layout already fills the screen */
+      }
+    })();
+    fullscreenRequestRef.current = task;
+    try {
+      await task;
+    } finally {
+      fullscreenRequestRef.current = null;
+    }
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    const d = document as FsDocument;
+    try {
+      if (fullscreenElement()) {
+        fullscreenWantedRef.current = false;
+        if (d.exitFullscreen) await d.exitFullscreen();
+        else await d.webkitExitFullscreen?.();
+      } else {
+        fullscreenWantedRef.current = true;
+        await requestFullscreen();
       }
     } catch {
       /* iOS Safari and some embedded browsers reject — the dvh layout already fills the screen */
     }
-  }, []);
+  }, [requestFullscreen]);
 
   function beep(freq: number, dur = 0.06) {
     if (!sim.getState().soundOn || !sim.getState().audioUnlocked) return;
@@ -576,16 +608,27 @@ export default function App() {
 
   useEffect(() => {
     const onFullscreenChange = () => {
-      setIsFullscreen(Boolean(fullscreenElement()));
+      const on = Boolean(fullscreenElement());
+      if (!on) fullscreenWantedRef.current = false;
+      setIsFullscreen(on);
       requestAnimationFrame(() => rendererRef.current?.resize());
+    };
+    const enter = () => {
+      if (fullscreenTriedRef.current) return;
+      fullscreenTriedRef.current = true;
+      void requestFullscreen();
     };
     document.addEventListener("fullscreenchange", onFullscreenChange);
     document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+    window.addEventListener("pointerdown", enter, true);
+    window.addEventListener("keydown", enter, true);
     return () => {
       document.removeEventListener("fullscreenchange", onFullscreenChange);
       document.removeEventListener("webkitfullscreenchange", onFullscreenChange);
+      window.removeEventListener("pointerdown", enter, true);
+      window.removeEventListener("keydown", enter, true);
     };
-  }, []);
+  }, [requestFullscreen]);
 
   useEffect(() => {
     const prev = phaseRef.current;
@@ -1028,24 +1071,46 @@ export default function App() {
               onDismiss={dismissRadial}
             />
           )}
-          <ControlCluster
-            expanded={clusterOpen}
-            onToggle={setClusterOpen}
-            actions={clusterActions}
-            touch={layout.touch}
-            flip={sheetOpen}
-            dragMode={touchDrag}
-            onDragMode={setTouchDrag}
-            zoom={zoomT}
-            onZoom={(t) => {
-              rendererRef.current?.setZoomT(t);
-              setZoomT(t);
-            }}
-          />
+          {ui.phase === "running" && (
+          <div className="banner-rail">
+            {ui.idlePeonCount > 0 && (
+              <button
+                type="button"
+                className="pennant work-pennant"
+                aria-label={`Send ${ui.idlePeonCount} idle peon${ui.idlePeonCount === 1 ? "" : "s"} back to work`}
+                title={`Send ${ui.idlePeonCount} idle peon${ui.idlePeonCount === 1 ? "" : "s"} back to work`}
+                onClick={() => {
+                  sim.sendPeonsToWork(sim.getLocalTeam());
+                  refreshUi();
+                  beep(340);
+                }}
+              >
+                To work
+                <span>{ui.idlePeonCount}</span>
+              </button>
+            )}
+            <ControlCluster
+              expanded={clusterOpen}
+              onToggle={setClusterOpen}
+              actions={clusterActions}
+              touch={layout.touch}
+              flip={sheetOpen}
+              dragMode={touchDrag}
+              onDragMode={setTouchDrag}
+              zoom={zoomT}
+              onZoom={(t) => {
+                rendererRef.current?.setZoomT(t);
+                setZoomT(t);
+              }}
+            />
+          </div>
+          )}
           {!layout.touch && (
             <p className="cam-hint">Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom</p>
           )}
-          <DetailSheet
+          <div className="sheet-dock">
+            <div className="sheet-slot">
+            <DetailSheet
             ui={ui}
             onClose={() => {
               sim.cancelSelection();
@@ -1093,9 +1158,11 @@ export default function App() {
               beep(260);
             }}
           />
+            </div>
+          </div>
           <Overlays
             ui={ui}
-            hideTitle={skirmish.lobby.open || skirmish.lobby.live}
+            hideTitle={skirmish.lobby.open || skirmish.lobby.live || campaignOpen}
             skirmishLive={skirmish.lobby.live}
             onRerollMap={() => {
               sim.rerollMap();
@@ -1103,8 +1170,13 @@ export default function App() {
               beep(440);
             }}
             onSkirmish={skirmish.openLobby}
+            onCampaign={() => {
+              setTriumph(null);
+              setCampaignOpen(true);
+            }}
             onStart={() => {
               if (skirmish.lobby.open || skirmish.lobby.live) return;
+              setCampaignOpen(false);
               afterPortalBreak(() => {
                 sim.setMatchMode("ai");
                 sim.setLocalTeam("you");
@@ -1120,7 +1192,46 @@ export default function App() {
               refreshUi();
               hpRef.current = 100;
             }}
+            onReturnToMap={() => {
+              if (ui.missionId != null && ui.freshHold) {
+                setTriumph({ id: ui.missionId, unlock: ui.freshUnlock });
+              } else {
+                setTriumph(null);
+              }
+              sim.reset();
+              setCampaignOpen(true);
+              refreshUi();
+              hpRef.current = 100;
+            }}
+            onMarchAgain={() => {
+              if (ui.missionId == null) return;
+              afterPortalBreak(() => {
+                sim.startCampaign(ui.missionId!);
+                setCampaignOpen(false);
+                refreshUi();
+                beep(520);
+              });
+            }}
           />
+          {campaignOpen && ui.phase === "title" && (
+            <CampaignMap
+              triumph={triumph}
+              onTriumphDone={() => setTriumph(null)}
+              onClose={() => {
+                setTriumph(null);
+                setCampaignOpen(false);
+              }}
+              onMarch={(id) => {
+                setTriumph(null);
+                afterPortalBreak(() => {
+                  sim.startCampaign(id);
+                  setCampaignOpen(false);
+                  refreshUi();
+                  beep(520);
+                });
+              }}
+            />
+          )}
           {skirmish.lobby.open && !skirmish.lobby.live && (
             <SkirmishLobby
               name={skirmish.name}

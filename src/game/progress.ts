@@ -1,3 +1,5 @@
+import { hasCampaignUnit, unlockLine } from "./campaign";
+
 export interface MetaProgress {
   xp: number;
   level: number;
@@ -79,19 +81,12 @@ export function gatherMult(level: number) {
   return 1 + Math.min(0.5, (level - 1) * 0.04);
 }
 
-export function unitUnlocked(kind: string, level: number) {
-  if (kind === "levy") return true;
-  if (kind === "runner") return level >= 2;
-  if (kind === "archer") return level >= 2;
-  if (kind === "ward") return level >= 3;
-  if (kind === "rammer") return level >= 4;
-  return false;
+/** Arcade and multiplayer leave every unit open. A march musters only what has been won. */
+export function unitUnlocked(kind: string, _level: number, open = false) {
+  if (open) return true;
+  return hasCampaignUnit(kind);
 }
 
 export function unlockHint(kind: string) {
-  if (kind === "runner") return "Unlocks at Keep Lv 2";
-  if (kind === "archer") return "Unlocks at Keep Lv 2";
-  if (kind === "ward") return "Unlocks at Keep Lv 3";
-  if (kind === "rammer") return "Unlocks at Keep Lv 4";
-  return "";
+  return unlockLine(kind);
 }

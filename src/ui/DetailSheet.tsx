@@ -91,7 +91,7 @@ export function DetailSheet({
         <div className="train-options">
           <button
             type="button"
-            className="train-opt"
+            className={`train-opt${ui.canTrainPeon && canPay ? " afford" : ""}`}
             disabled={!ui.canTrainPeon || !canPay}
             onClick={onEnqueuePeon}
           >
@@ -203,7 +203,7 @@ export function DetailSheet({
                 <button
                   key={opt.kind}
                   type="button"
-                  className={opt.unlocked ? "train-opt" : "train-opt locked"}
+                  className={`train-opt${opt.unlocked ? "" : " locked"}${opt.unlocked && afford ? " afford" : ""}`}
                   disabled={!opt.unlocked || !afford}
                   onClick={() => onEnqueue(opt.kind)}
                   title={opt.unlocked ? opt.blurb : opt.lockHint}
@@ -258,11 +258,25 @@ export function DetailSheet({
         <div className="detail-actions">
           {!isHouse && (
             <>
-              <button type="button" onClick={onUpgradeDamage} disabled={!ui.selectedCanUpgradeDamage}>
+              <button
+                type="button"
+                className={
+                  ui.selectedCanUpgradeDamage && ui.yourGold >= ui.selectedUpgradeCost.damage ? "afford" : undefined
+                }
+                onClick={onUpgradeDamage}
+                disabled={!ui.selectedCanUpgradeDamage}
+              >
                 {isBarracks ? "Power" : "Damage"}
                 <em>{ui.selectedCanUpgradeDamage ? `${ui.selectedUpgradeCost.damage}g` : "MAX"}</em>
               </button>
-              <button type="button" onClick={onUpgradeRate} disabled={!ui.selectedCanUpgradeRate}>
+              <button
+                type="button"
+                className={
+                  ui.selectedCanUpgradeRate && ui.yourGold >= ui.selectedUpgradeCost.rate ? "afford" : undefined
+                }
+                onClick={onUpgradeRate}
+                disabled={!ui.selectedCanUpgradeRate}
+              >
                 {isBarracks ? "Speed" : "Rate"}
                 <em>{ui.selectedCanUpgradeRate ? `${ui.selectedUpgradeCost.rate}g` : "MAX"}</em>
               </button>
