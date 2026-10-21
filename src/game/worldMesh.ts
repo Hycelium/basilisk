@@ -3,7 +3,7 @@ import { WORLD_H, WORLD_W } from "./balance";
 import { groundLookForSeed, groundTexture, wheatTexture } from "./groundLooks";
 import { buildRockPile, buildTree, SCENERY_TREES } from "./models/nature";
 import { BACK_FIELD, MAP_CX, mapBounds, mapLanes, riverSpec, rngFromSeed, roadCenterX } from "./map";
-import { buildBackdrop, buildCliffs, fbm } from "./landscape";
+import { buildBackdrop, buildCliffs, buildValleyLakes, canyonCenterX, fbm, valleyLakeT } from "./landscape";
 import type { Team } from "./types";
 
 function teamColor(team: Team, lite = false) {
@@ -76,17 +76,25 @@ function sampleGround(simX: number, simY: number, seed: number, river: ReturnTyp
   const northDrop = Math.max(0, -28 - simY);
   const along = Math.max(southDrop, northDrop);
   if (along > 0) {
-    const mid = Math.max(0, 1 - Math.abs(simX - MAP_CX) / (width * 0.42));
-    h -= Math.min(48, along * mid * mid * 0.35);
+    const mid = Math.max(0, 1 - Math.abs(simX - MAP_CX - canyonCenterX(simY - WORLD_H / 2)) / 34);
+    h -= Math.min(28, along * mid * mid * 0.22);
   }
 
   // Side and far-end cliffs — the far rise starts past the house yard, 30% lower than before.
   const sideEdge = Math.min(Math.max(0, minX + 28 - simX, simX - (maxX - 28)), 30);
   const endCliff = Math.max(0, -BACK_FIELD + 50 - simY, simY - (WORLD_H + BACK_FIELD - 50));
-  const edge = Math.max(sideEdge * 0.6, endCliff);
-  if (edge > 0) h += edge * 0.28 + fbm(simX * 0.06, simY * 0.06, seed + 11) * Math.min(edge, 20) * 0.18;
+  const edge = Math.max(sideEdge * 0.6, endCliff * 0.35);
+  if (edge > 0) h += edge * 0.16 + fbm(simX * 0.06, simY * 0.06, seed + 11) * Math.min(edge, 20) * 0.1;
 
-  return { h: Math.max(-48, h), onRoad, onRiver, inField, riverY };
+  // Basin under the lake, so the V in the mountains holds water instead of dirt.
+  const lake = valleyLakeT(simX, simY);
+  let underLake = false;
+  if (lake < 1) {
+    underLake = lake < 0.78;
+    h = Math.min(h, -26 + lake * 32);
+  }
+
+  return { h: Math.max(-48, h), onRoad, onRiver, inField, riverY, underLake };
 }
 
 /** High-poly displaced battlefield; ground look (painted / textured, wheat patches) rotates per seed. */
@@ -124,7 +132,8 @@ export function buildTerrain(seed: number) {
     col.lerp(cOlive, (fbm(simX * 0.02, simY * 0.02, seed + 21) * 0.5 + 0.5) * 0.6);
     col.lerp(cStraw, Math.max(0, fbm(simX * 0.008, simY * 0.008, seed + 22)) * 0.5);
     col.multiplyScalar(0.92 + fbm(simX * 0.15, simY * 0.15, seed + 23, 3) * 0.12);
-    if (s.onRiver) col.setHex(0x315f72);
+    if (s.underLake) col.setHex(0x1c4658);
+    else if (s.onRiver) col.setHex(0x315f72);
     else if (s.onRoad) col.lerp(cRoad, 0.35);
     colors[i * 3] = col.r;
     colors[i * 3 + 1] = col.g;
@@ -289,7 +298,7 @@ export function buildScenery(seed: number) {
   const g = new THREE.Group();
   const rng = rngFromSeed(seed ^ 0xA5A5);
 
-  g.add(buildBackdrop(seed), buildCliffs(seed));
+  g.add(buildBackdrop(seed), buildValleyLakes(), buildCliffs(seed));
   const { minX, maxX, width } = mapBounds(seed);
   const density = width / WORLD_W;
 
@@ -317,7 +326,8 @@ export function buildScenery(seed: number) {
       }
     }
     if (roadGap(seed, x, y) < 30) continue;
-    // Keep both yards and the valley floor clear.
+    // Keep both yards and the lake clear.
+    if (valleyLakeT(x, y) < 1.05) continue;
     if (Math.abs(x - MAP_CX) < 80 && (y < 140 || y > WORLD_H - 90)) continue;
 
     // Scenery never uses the oak, which marks wood nodes.
