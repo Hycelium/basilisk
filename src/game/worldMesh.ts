@@ -3,7 +3,7 @@ import { WORLD_H, WORLD_W } from "./balance";
 import { groundLookForSeed, groundTexture, wheatTexture } from "./groundLooks";
 import { buildRockPile, buildTree, SCENERY_TREES } from "./models/nature";
 import { BACK_FIELD, MAP_CX, mapBounds, mapLanes, riverSpec, rngFromSeed, roadCenterX } from "./map";
-import { FORD_X, isBasiliskSeed, RIDGE_HALF, SPINE_Y } from "./basiliskMap";
+import { deerSpots, FORD_X, isBasiliskSeed, SPINE_Y } from "./basiliskMap";
 import { buildBackdrop, buildCliffs, buildValleyLakes, canyonCenterX, fbm, valleyLakeT } from "./landscape";
 import type { Team } from "./types";
 
@@ -72,15 +72,11 @@ function sampleGround(simX: number, simY: number, seed: number, river: ReturnTyp
   else if (inField) h *= 0.35;
   else h += Math.max(0, Math.abs(simX - MAP_CX) / width - 0.35) * 12.6;
 
-  if (isBasiliskSeed(seed)) {
+  if (isBasiliskSeed(seed) && onRiver) {
     const alongSpine = Math.abs(simY - SPINE_Y);
     const nearFord = FORD_X.some((fx) => Math.abs(simX - fx) < 18 && alongSpine < 32);
-    if (!nearFord && alongSpine < RIDGE_HALF) {
-      const ridge = Math.max(0, 1 - alongSpine / RIDGE_HALF);
-      h = Math.max(h, ridge * ridge * 38 + fbm(simX * 0.04, simY * 0.04, seed + 41) * 5);
-    }
     if (nearFord) h = Math.min(h, 0.42);
-    if (onRiver && !nearFord) h = -2.6;
+    else h = -2.2;
   }
 
   // Deep valley in the center behind each keep, past the house yard.
@@ -291,6 +287,27 @@ function buildBasiliskFords(seed: number, river: ReturnType<typeof riverSpec>) {
     mesh.userData.scarPit = true;
     g.add(mesh);
   }
+  const hide = new THREE.MeshStandardMaterial({ color: 0x6b4a28, roughness: 0.9 });
+  const antler = new THREE.MeshStandardMaterial({ color: 0xd8c49a, roughness: 0.7 });
+  for (const team of ["you", "foe"] as const) {
+    for (const spot of deerSpots(team)) {
+      const deer = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.2, 5.4), hide);
+      body.position.y = 2.4;
+      const neck = new THREE.Mesh(new THREE.BoxGeometry(1.4, 2.2, 1.4), hide);
+      neck.position.set(0, 3.8, -2.2);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.3, 2.2), hide);
+      head.position.set(0, 5.1, -3.1);
+      const hornL = new THREE.Mesh(new THREE.BoxGeometry(0.35, 2.4, 0.35), antler);
+      hornL.position.set(-0.6, 6.4, -3.2);
+      const hornR = hornL.clone();
+      hornR.position.x = 0.6;
+      deer.add(body, neck, head, hornL, hornR);
+      deer.position.set(spot.x - WORLD_W / 2, 0, spot.y - WORLD_H / 2);
+      deer.rotation.y = team === "you" ? 0.4 : Math.PI - 0.4;
+      g.add(deer);
+    }
+  }
   return g;
 }
 
@@ -375,7 +392,6 @@ export function buildScenery(seed: number) {
 
     // Scenery never uses the oak, which marks wood nodes.
     const kind = SCENERY_TREES[Math.floor(rng() * SCENERY_TREES.length)];
-    if (isBasiliskSeed(seed) && Math.abs(y - SPINE_Y) < RIDGE_HALF - 8) continue;
     const tree = buildTree(kind, rng() * 3, 14 + rng() * 12);
     tree.position.set(x - WORLD_W / 2, 0, y - WORLD_H / 2);
     tree.rotation.y = rng() * Math.PI * 2;

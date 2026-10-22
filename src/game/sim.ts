@@ -125,7 +125,6 @@ import type {
   ResourceNode,
   Team,
   TrainKind,
-  Job,
   KingOrder,
   UiSnapshot,
   Unit,
@@ -134,24 +133,27 @@ import type {
   Villager,
 } from "./types";
 import {
-  applyPromotion,
+  applyPeonBody,
+  applyRank,
   BASILISK_HARD_CAP,
   BASILISK_JOIN_WAIT,
   BASILISK_SOFT_CAP,
   BASILISK_START_EACH,
   countClan,
   defaultKingOrder,
+  emptyCoffer,
   emptyScars,
-  grantMotionYield,
+  emptyTrips,
   hashId,
+  isMilitary,
   KING_TAX,
   orderTarget,
-  pickJob,
-  promoteThreshold,
+  pickWork,
   refreshKings,
-  visionFromXp,
+  stepHaul,
+  visionFromLife,
 } from "./basilisk";
-import { basiliskMap, JOB_LABEL, jobWaypoints } from "./basiliskMap";
+import { basiliskMap } from "./basiliskMap";
 
 function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -334,6 +336,7 @@ export class GameSim {
       kingId: { you: null, foe: null },
       kingOrder: defaultKingOrder(),
       kingTreasury: { you: 0, foe: 0 },
+      kingCoffer: { you: emptyCoffer(), foe: emptyCoffer() },
       scars: emptyScars(),
       units: [],
       buildings,
@@ -683,7 +686,7 @@ export class GameSim {
     this.addToast(`Foe intellect ${iq} — learning your patterns`);
   }
 
-  startBasilisk(clan: Team, job: Job) {
+  startBasilisk(clan: Team) {
     this.campaignMission = null;
     this.lastUnlock = "";
     this.freshHold = false;
@@ -706,51 +709,56 @@ export class GameSim {
     this.state.basilisk = true;
     this.state.buildings = [];
     this.state.villagers = [];
-    this.state.pads = [];
-    this.state.gold = { you: 6, foe: 6 };
-    this.state.wood = { you: 6, foe: 6 };
-    this.state.food = { you: 10, foe: 10 };
-    this.state.playerJob = job;
+    this.state.gold = { you: 0, foe: 0 };
+    this.state.wood = { you: 0, foe: 0 };
+    this.state.food = { you: 0, foe: 0 };
+    this.state.playerJob = null;
     this.state.kingOrder = { you: "gather", foe: "gather" };
     this.state.kingTreasury = { you: 0, foe: 0 };
+    this.state.kingCoffer = { you: emptyCoffer(), foe: emptyCoffer() };
     this.state.scars = emptyScars();
     this.state.phase = "running";
     this.state.wavePhase = "fighting";
     this.state.buildTimer = 9999;
     for (const team of ["you", "foe"] as Team[]) {
       for (let i = 0; i < BASILISK_START_EACH; i++) {
-        const soulJob = team === clan && i === 0 ? job : pickJob(this.nextId + i, undefined);
-        this.spawnBasiliskSoul(team, soulJob, team === clan && i === 0);
+        this.spawnBasiliskSoul(team, team === clan && i === 0);
       }
     }
     refreshKings(this.state);
     const you = clan === "you" ? "Blue" : "Red";
-    this.addToast(`${you} ${JOB_LABEL[job]} — walk the circuit. Esc leaves the body working.`);
+    this.addToast(`${you} peon — haul 10 home. Farm, hunt, mine, or chop.`);
   }
 
   setKingOrder(order: KingOrder) {
     const s = this.state;
     if (!s.basilisk) return;
-    if (s.kingId[this.localTeam] !== s.playerUnitId && s.kingId[this.localTeam] !== s.possessedId) return;
+    if (!this.isLocalKing()) return;
     s.kingOrder[this.localTeam] = order;
     this.addToast(`The crown bids: ${order}.`);
   }
 
-  private spawnBasiliskSoul(team: Team, job: Job, player = false) {
+  private isLocalKing() {
+    const s = this.state;
+    const id = s.possessedId ?? s.playerUnitId;
+    return s.kingId[this.localTeam] === id;
+  }
+
+  private spawnBasiliskSoul(team: Team, player = false) {
     this.spawnUnit(team, "levy", team === "you" ? 0 : 1, true);
     const u = this.state.units[this.state.units.length - 1];
     if (!u) return;
-    const loop = jobWaypoints(team, job);
-    u.job = job;
-    u.lifeStage = "gatherer";
-    u.xp = hashId(u.id) * 6;
-    u.homeLoop = loop;
-    u.loopIndex = Math.floor(hashId(u.id) * loop.length);
-    const start = loop[u.loopIndex] ?? loop[0]!;
-    u.pos = { x: start.x + (hashId(u.id + 3) - 0.5) * 10, y: start.y + (hashId(u.id + 7) - 0.5) * 8 };
+    applyPeonBody(u);
+    u.workKind = pickWork(u.id);
+    const keep = keepPos(team);
+    u.pos = {
+      x: keep.x + (hashId(u.id + 3) - 0.5) * 28,
+      y: keep.y + (team === "you" ? -18 : 18) + (hashId(u.id + 7) - 0.5) * 16,
+    };
     u.fromBarracks = true;
     u.ignoreEnemyCreeps = false;
     u.aiHeldForRush = false;
+    u.xp = 0;
     if (player) {
       this.state.playerUnitId = u.id;
       this.tryPossess(u.id);
@@ -847,8 +855,12 @@ export class GameSim {
     u.aiHeldForRush = undefined;
     this.possessKeys = { w: false, a: false, s: false, d: false };
     this.possessYaw = u.team === "you" ? 0 : Math.PI;
-    const label = s.basilisk && u.job ? JOB_LABEL[u.job] : UNIT_DEFS[u.kind].label;
-    this.addToast(s.basilisk ? `You walk as ${label}. Esc leaves them gathering.` : `Taking the field — ${label}. Esc returns.`);
+    const label = s.basilisk
+      ? u.lifeStage === "gatherer"
+        ? "Peon"
+        : UNIT_DEFS[u.kind].label
+      : UNIT_DEFS[u.kind].label;
+    this.addToast(s.basilisk ? `You walk as ${label}. Esc leaves them working.` : `Taking the field — ${label}. Esc returns.`);
     return true;
   }
 
@@ -920,6 +932,7 @@ export class GameSim {
     if (best) {
       const dealt = this.strikeDamage(u, best) * POSSESS_DAMAGE_MULT;
       best.hp -= dealt;
+      if ("kind" in best) best.lastHitBy = u.id;
       if (best.hp <= 0) this.notePossessVision(1);
       this.emitCombat(ranged ? "arrow" : "meleeHit", u.pos, best.pos, team);
       this.addFloat(`-${Math.round(dealt)}`, best.pos.x, best.pos.y - 7, ranged ? "#e8d39a" : "#ffd1cc");
@@ -1099,6 +1112,10 @@ export class GameSim {
   }
 
   selectBuild(kind: BuildingKind | null) {
+    if (this.state.basilisk && kind && !this.isLocalKing()) {
+      this.addToast("Only the king spends the coffer.");
+      return;
+    }
     this.state.buildSelection = kind;
     this.state.selectedBuildingId = null;
     this.state.selectedVillagerIds = [];
@@ -1501,10 +1518,19 @@ export class GameSim {
   }
 
   canAfford(team: Team, cost: ResCost) {
+    if (this.state.basilisk) {
+      const c = this.state.kingCoffer[team];
+      return c.gold >= cost.gold && c.wood >= cost.wood;
+    }
     return this.state.gold[team] >= cost.gold && this.state.wood[team] >= cost.wood;
   }
 
   private spendRes(team: Team, cost: ResCost) {
+    if (this.state.basilisk) {
+      this.state.kingCoffer[team].gold -= cost.gold;
+      this.state.kingCoffer[team].wood -= cost.wood;
+      return;
+    }
     this.state.gold[team] -= cost.gold;
     this.state.wood[team] -= cost.wood;
   }
@@ -1971,6 +1997,10 @@ export class GameSim {
   }
 
   private tryBuildOnPad(padId: string) {
+    if (this.state.basilisk && !this.isLocalKing()) {
+      this.addToast("Only the king spends the coffer.");
+      return;
+    }
     const kind = this.state.buildSelection;
     if (!kind) {
       this.addToast("Choose a building below, then tap an empty pad.");
@@ -2039,6 +2069,10 @@ export class GameSim {
   }
 
   buyUpgrade(kind: "damage" | "rate") {
+    if (this.state.basilisk && !this.isLocalKing()) {
+      this.addToast("Only the king spends the coffer.");
+      return;
+    }
     const id = this.state.selectedBuildingId;
     if (id == null) return;
     if (this.redirect({ t: "upgrade", team: this.localTeam, buildingId: id, kind })) return;
@@ -2052,11 +2086,19 @@ export class GameSim {
     const rank = kind === "damage" ? b.damageRank : b.rateRank;
     if (rank >= 2) return;
     const cost = UPGRADE_COST[rank];
-    if (s.gold[team] < cost) {
-      this.tell(team, `Need ${cost} gold.`);
-      return;
+    if (s.basilisk) {
+      if (s.kingCoffer[team].gold < cost) {
+        this.tell(team, `Need ${cost} gold in the coffer.`);
+        return;
+      }
+      s.kingCoffer[team].gold -= cost;
+    } else {
+      if (s.gold[team] < cost) {
+        this.tell(team, `Need ${cost} gold.`);
+        return;
+      }
+      s.gold[team] -= cost;
     }
-    s.gold[team] -= cost;
     b.spent += cost;
     if (kind === "damage") b.damageRank = (rank + 1) as 1 | 2;
     else b.rateRank = (rank + 1) as 1 | 2;
@@ -2874,6 +2916,7 @@ export class GameSim {
     const ranged = u.kind === "archer";
     const dealt = this.strikeDamage(u, target);
     target.hp -= dealt;
+    if ("kind" in target) target.lastHitBy = u.id;
     u.attackTimer = u.attackCooldown;
     this.emitCombat(ranged ? "arrow" : "meleeHit", u.pos, target.pos, team);
     this.addFloat(
@@ -2952,9 +2995,10 @@ export class GameSim {
     u.engageFrom = undefined;
     u.targetUnitId = undefined;
     if (this.state.basilisk) {
-      grantMotionYield(this.state, u, dt, mag > 0.001);
-      if (applyPromotion(u)) this.addToast(`${JOB_LABEL[u.job!]} promoted.`);
-      this.state.possessVisionScore = visionFromXp(u.xp);
+      const note = stepHaul(this.state, u, dt);
+      if (note) this.addToast(note);
+      refreshKings(this.state);
+      this.state.possessVisionScore = visionFromLife(u);
     }
   }
 
@@ -2972,25 +3016,15 @@ export class GameSim {
         nearest = e;
       }
     }
-    const hunting = u.lifeStage !== "gatherer" || s.kingOrder[u.team] === "hunt";
+    const hunting = isMilitary(u) && s.kingOrder[u.team] !== "gather";
     if (nearest && hunting) {
       this.fightMilitary(u, nearest, u.team, dt);
       return;
     }
-    const before = { x: u.pos.x, y: u.pos.y };
     const dest = orderTarget(s, u);
-    if (dest) {
-      moveTowards(u.pos, dest, u.speed, dt);
-      if (dist(u.pos, dest) < 8 && (u.lifeStage === "gatherer" || s.kingOrder[u.team] === "gather")) {
-        const loop = u.homeLoop;
-        if (loop && loop.length) u.loopIndex = ((u.loopIndex ?? 0) + 1) % loop.length;
-      }
-    }
-    const moved = dist(before, u.pos) > 0.2;
-    grantMotionYield(s, u, dt, moved);
-    if (applyPromotion(u) && u.team === this.localTeam) {
-      this.addToast(`A ${JOB_LABEL[u.job!]} takes up arms.`);
-    }
+    if (dest) moveTowards(u.pos, dest, u.speed, dt);
+    const note = stepHaul(s, u, dt);
+    if (note && u.team === this.localTeam) this.addToast(note);
   }
 
   private tickBasilisk(dt: number) {
@@ -2998,9 +3032,9 @@ export class GameSim {
     refreshKings(s);
     if (s.joinTimer > 0) {
       s.joinTimer -= dt;
-      if (s.joinTimer <= 0 && s.playerJob) {
-        this.spawnBasiliskSoul(this.localTeam, s.playerJob, true);
-        this.addToast("You rejoin the clan as a gatherer.");
+      if (s.joinTimer <= 0) {
+        this.spawnBasiliskSoul(this.localTeam, true);
+        this.addToast("You rejoin as a peon.");
       }
     }
     s.trickleTimer -= dt;
@@ -3009,13 +3043,24 @@ export class GameSim {
       for (const team of ["you", "foe"] as Team[]) {
         if (countClan(s, team) >= BASILISK_SOFT_CAP) continue;
         if (s.units.length >= BASILISK_HARD_CAP * 2) continue;
-        this.spawnBasiliskSoul(team, pickJob(this.nextId));
+        this.spawnBasiliskSoul(team);
       }
     }
-    if (Math.floor(s.time / 20) !== Math.floor((s.time - dt) / 20)) {
-      const foeHasArms = s.units.some((u) => u.team === "foe" && u.lifeStage !== "gatherer");
+    if (Math.floor(s.time / 22) !== Math.floor((s.time - dt) / 22)) {
+      const foeHasArms = s.units.some((u) => u.team === "foe" && isMilitary(u));
       s.kingOrder.foe = foeHasArms ? (s.time > 70 ? "hunt" : "hold") : "gather";
+      this.basiliskKingBuild(this.enemy(this.localTeam));
     }
+  }
+
+  private basiliskKingBuild(team: Team) {
+    const s = this.state;
+    if (!s.kingId[team]) return;
+    const cost = BUILD_COST.watchtower;
+    if (!this.canAfford(team, cost)) return;
+    const pad = s.pads.find((p) => p.team === team && p.zone === "combat" && !s.buildings.some((b) => b.padId === p.id));
+    if (!pad) return;
+    this.buildFor(team, "watchtower", pad.id);
   }
 
   private updateUnitMovementAndMelee(dt: number, team: Team) {
@@ -3026,7 +3071,7 @@ export class GameSim {
         this.stepPossessed(u, dt);
         continue;
       }
-      if (this.state.basilisk && u.job) {
+      if (this.state.basilisk) {
         this.stepBasiliskSoul(u, dt);
         continue;
       }
@@ -3192,7 +3237,14 @@ export class GameSim {
       const killer = this.enemy(u.team);
       if (this.state.basilisk) {
         this.state.gold[killer] += u.bounty * (1 - KING_TAX);
-        this.state.kingTreasury[killer] += u.bounty * KING_TAX;
+        this.state.kingCoffer[killer].gold += u.bounty * KING_TAX;
+        const slayer = this.state.units.find((x) => x.id === u.lastHitBy && x.team === killer && x.hp > 0);
+        if (slayer) {
+          slayer.kills = (slayer.kills ?? 0) + 1;
+          if (applyRank(slayer) && slayer.team === this.localTeam) {
+            this.addToast(`Kill rank: ${UNIT_DEFS[slayer.kind].label}.`);
+          }
+        }
         if (u.id === this.state.playerUnitId) this.state.joinTimer = BASILISK_JOIN_WAIT;
       } else {
         this.state.gold[killer] += u.bounty;
@@ -3637,6 +3689,10 @@ export class GameSim {
     if (s.basilisk) {
       this.updateUnitMovementAndMelee(dt, "you");
       this.updateUnitMovementAndMelee(dt, "foe");
+      this.doTowerCombat(dt, "you");
+      this.doTowerCombat(dt, "foe");
+      this.doBarracks(dt, "you");
+      this.doBarracks(dt, "foe");
       this.cleanupDeaths();
       this.tickBasilisk(dt);
       return;
@@ -4642,8 +4698,8 @@ export class GameSim {
       yourHp: Math.max(0, Math.ceil(s.keeps[view].hp)),
       foeHp: Math.max(0, Math.ceil(s.keeps[other].hp)),
       yourMaxHp: s.keeps[view].maxHp,
-      yourGold: Math.floor(s.gold[view]),
-      yourWood: Math.floor(s.wood[view]),
+      yourGold: Math.floor(s.basilisk ? s.kingCoffer[view].gold : s.gold[view]),
+      yourWood: Math.floor(s.basilisk ? s.kingCoffer[view].wood : s.wood[view]),
       foeGold: Math.floor(s.gold[other]),
       foeWood: Math.floor(s.wood[other]),
       waveLabel: `${Math.min(this.waveCap(), Math.max(1, s.waveIndex || 1))}/${this.waveCap()}`,
@@ -4712,7 +4768,7 @@ export class GameSim {
         ? {
             id: body.id,
             kind: body.kind,
-            label: s.basilisk && body.job ? JOB_LABEL[body.job] : UNIT_DEFS[body.kind].label,
+            label: s.basilisk && body.lifeStage === "gatherer" ? "Peon" : UNIT_DEFS[body.kind].label,
             hp: Math.max(0, Math.ceil(body.hp)),
             maxHp: body.maxHp,
             visionScore: s.possessVisionScore ?? 0,
@@ -4730,14 +4786,22 @@ export class GameSim {
             food: Math.floor(s.food[view]),
             clanGold: Math.floor(s.gold[view]),
             clanWood: Math.floor(s.wood[view]),
-            kingCut: Math.floor(s.kingTreasury[view]),
+            cofferGold: Math.floor(s.kingCoffer[view].gold),
+            cofferWood: Math.floor(s.kingCoffer[view].wood),
+            cofferFood: Math.floor(s.kingCoffer[view].food),
             kingOrder: s.kingOrder[view],
             youAreKing: s.kingId[view] === (s.possessedId ?? s.playerUnitId),
             joinTimer: Math.max(0, s.joinTimer),
-            job: body?.job ?? s.playerJob,
-            xp: body?.xp ?? 0,
-            promoteAt: body ? promoteThreshold(body.id) : 80,
             clanmates: countClan(s, view),
+            carry: body?.carry ?? 0,
+            carryKind: body?.carryKind ?? null,
+            trips: body?.trips ?? emptyTrips(),
+            kills: body?.kills ?? 0,
+            rankLabel: body
+              ? body.lifeStage === "gatherer"
+                ? "Peon"
+                : UNIT_DEFS[body.kind].label
+              : "Peon",
           }
         : null,
     };

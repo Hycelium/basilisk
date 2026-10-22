@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { GameRenderer, type QualityInfo, type QualitySetting, type TouchDragMode } from "./game/render3d";
 import { GameSim, hitTest } from "./game/sim";
-import type { BuildingKind, CombatEventKind, Job, KingOrder, RectHit, Team, TrainKind, UiSnapshot } from "./game/types";
+import type { BuildingKind, CombatEventKind, KingOrder, RectHit, Team, TrainKind, UiSnapshot } from "./game/types";
 import { BUILD_COST } from "./game/balance";
 import { Hud } from "./ui/Hud";
 import { BuildBar } from "./ui/BuildBar";
@@ -1118,7 +1118,7 @@ export default function App() {
                   {Math.min(ui.possessed.visionMax, Math.floor(ui.possessed.visionScore))}/{ui.possessed.visionMax}
                   {ui.basilisk
                     ? ui.possessed.visionScore < 1
-                      ? " · walk for XP to look out"
+                      ? " · haul to look out"
                       : " · wheel looks out"
                     : ui.possessed.visionScore <= 0
                       ? " · kill to scroll out"
@@ -1270,7 +1270,7 @@ export default function App() {
             <p className="cam-hint">Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom</p>
           )}
           {!layout.touch && ui.basilisk && ui.phase === "running" && (
-            <p className="cam-hint">WASD walk · click clanmates · Esc idle-gather · wheel looks out with XP</p>
+            <p className="cam-hint">WASD walk · stand on farm/deer/mine/trees to fill 10 · dump at keep</p>
           )}
           {ui.basilisk?.youAreKing && ui.phase === "running" && (
             <div className="king-orders" role="toolbar" aria-label="King orders">
@@ -1293,7 +1293,7 @@ export default function App() {
           )}
           <div className="sheet-dock">
             <div className="sheet-slot">
-            {!ui.basilisk && (
+            {(!ui.basilisk || ui.basilisk.youAreKing) && (
             <DetailSheet
             ui={ui}
             onClose={() => {
@@ -1359,13 +1359,13 @@ export default function App() {
               setTriumph(null);
               setCampaignOpen(true);
             }}
-            onStart={(clan: Team, job: Job) => {
+            onStart={(clan: Team) => {
               if (skirmish.lobby.open || skirmish.lobby.live) return;
               setCampaignOpen(false);
               afterPortalBreak(() => {
                 sim.setMatchMode("ai");
                 sim.setLocalTeam(clan);
-                sim.startBasilisk(clan, job);
+                sim.startBasilisk(clan);
                 const r = rendererRef.current;
                 r?.enterPossess(sim.getPossessYaw(), false);
                 canvasRef.current?.requestPointerLock();
@@ -1489,7 +1489,7 @@ export default function App() {
           )}
         </div>
 
-        {ui.phase === "running" && !ui.basilisk && (
+        {ui.phase === "running" && (!ui.basilisk || ui.basilisk.youAreKing) && (
         <BuildBar
           ui={ui}
           compact={compactBuild}

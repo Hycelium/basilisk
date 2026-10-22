@@ -1615,8 +1615,8 @@ export class GameRenderer {
     this.prune("bar-", live);
   }
 
-  private makeUnit(u: Unit) {
-    if (u.kind === "spy") return buildPeonModel(u.team === "you" ? "foe" : "you");
+  private makeUnit(u: Unit, peonLook = false) {
+    if (peonLook || u.kind === "spy") return buildPeonModel(u.team);
     return buildUnitModel(u.kind, u.team);
   }
 
@@ -1625,11 +1625,23 @@ export class GameRenderer {
     for (const u of state.units) {
       const key = `unit-${u.id}`;
       live.add(key);
-      const obj = this.ensure(key, () => {
-        const made = this.makeUnit(u);
-        made.userData.ramBody = made.children.find((child) => child.userData.movingRamBody) ?? null;
-        return made;
-      });
+      const peonLook = !!state.basilisk && u.lifeStage === "gatherer";
+      const sig = peonLook ? `peon-${u.team}` : `${u.kind}-${u.team}`;
+      let obj = this.entityMap.get(key);
+      if (obj && obj.userData.unitSig !== sig) {
+        this.dynamicRoot.remove(obj);
+        this.clearAnimation(key);
+        this.entityMap.delete(key);
+        obj = undefined;
+      }
+      if (!obj) {
+        obj = this.ensure(key, () => {
+          const made = this.makeUnit(u, peonLook);
+          made.userData.ramBody = made.children.find((child) => child.userData.movingRamBody) ?? null;
+          made.userData.unitSig = sig;
+          return made;
+        });
+      }
       setPos3(obj, u.pos.x, u.pos.y, 0);
       obj.visible = true;
       if (state.possessedId === u.id) {

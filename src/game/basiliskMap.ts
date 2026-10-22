@@ -1,12 +1,15 @@
 import { WORLD_H, WORLD_W } from "./balance";
-import type { Job, LaneCount, MapDef, MapId, Team, Vec2 } from "./types";
+import type { LaneCount, MapDef, MapId, Team, Vec2 } from "./types";
 
-/** Two-road seed so the valleys stay readable. Do not change without checking laneCount(). */
+function keepOf(team: Team) {
+  return team === "you" ? { x: 200, y: 664 } : { x: 200, y: 56 };
+}
+
 export const BASILISK_SEED = 884410;
-
 export const SPINE_Y = WORLD_H / 2;
 export const FORD_X = [118, 200, 282] as const;
-export const RIDGE_HALF = 68;
+
+export type WorkKind = "farm" | "hunt" | "gold" | "wood";
 
 export function isBasiliskSeed(seed: number) {
   return seed === BASILISK_SEED;
@@ -15,7 +18,8 @@ export function isBasiliskSeed(seed: number) {
 export function basiliskMap(): MapDef {
   const pads: MapDef["pads"] = [
     { id: "keep-guard", x: WORLD_W / 2, y: 640, laneCoverage: [0, 1], zone: "combat" },
-    { id: "foe-guard", x: WORLD_W / 2, y: 80, laneCoverage: [0, 1], zone: "combat" },
+    { id: "mid-w", x: 118, y: 520, laneCoverage: [0], zone: "combat" },
+    { id: "mid-e", x: 282, y: 520, laneCoverage: [1], zone: "combat" },
   ];
   const nodes: MapDef["nodes"] = [
     { id: "pine-sw", kind: "pine", x: 78, yourY: 520, loads: 14, gold: 0, wood: 10, gather: 1.1, regen: 2.4 },
@@ -29,7 +33,7 @@ export function basiliskMap(): MapDef {
     id: `seed-${BASILISK_SEED}` as MapId,
     seed: BASILISK_SEED,
     name: "Twin Valleys",
-    tagline: "Blue south, red north. Three fords through the ridge.",
+    tagline: "Blue south, red north. Haul home. The king spends the coffer.",
     lanes: 2 as LaneCount,
     pads,
     nodes,
@@ -41,54 +45,52 @@ export function chokePoints(): Vec2[] {
   return FORD_X.map((x) => ({ x, y: SPINE_Y }));
 }
 
-function oval(cx: number, cy: number, rx: number, ry: number, n = 6): Vec2[] {
-  const pts: Vec2[] = [];
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2;
-    pts.push({ x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * ry });
-  }
-  return pts;
+export function deerSpots(team: Team): Vec2[] {
+  const keep = keepOf(team);
+  const behind = team === "you" ? 52 : -52;
+  return [-36, 0, 36].map((dx) => ({ x: keep.x + dx, y: keep.y + behind }));
 }
 
-/** Walking circuits. Resources tick only while a body is moving along these. */
-export function jobWaypoints(team: Team, job: Job): Vec2[] {
+export function workSites(team: Team, kind: WorkKind): Vec2[] {
   const south = team === "you";
-  const cy = south ? 560 : 160;
-  const huntY = south ? 430 : 290;
-  if (job === "farmer") return oval(south ? 150 : 250, cy, 42, 28, 7);
-  if (job === "lumber") {
+  if (kind === "farm") {
     return south
       ? [
-          { x: 78, y: 520 },
-          { x: 96, y: 560 },
-          { x: 322, y: 540 },
-          { x: 300, y: 500 },
+          { x: 132, y: 548 },
+          { x: 168, y: 572 },
+          { x: 108, y: 590 },
         ]
       : [
-          { x: 78, y: 180 },
-          { x: 96, y: 140 },
-          { x: 322, y: 160 },
-          { x: 300, y: 200 },
+          { x: 268, y: 172 },
+          { x: 232, y: 148 },
+          { x: 292, y: 130 },
         ];
   }
-  if (job === "smith") {
-    const ore = south ? { x: 268, y: 600 } : { x: 132, y: 118 };
-    const anvil = south ? { x: 210, y: 655 } : { x: 190, y: 70 };
-    return [ore, anvil, { x: ore.x + 18, y: ore.y - 12 }, anvil];
-  }
-  return oval(south ? 240 : 160, huntY, 36, 22, 6);
+  if (kind === "hunt") return deerSpots(team);
+  if (kind === "gold") return [south ? { x: 268, y: 600 } : { x: 132, y: 118 }];
+  return south
+    ? [
+        { x: 78, y: 520 },
+        { x: 322, y: 540 },
+      ]
+    : [
+        { x: 78, y: 180 },
+        { x: 322, y: 160 },
+      ];
 }
 
-export const JOB_LABEL: Record<Job, string> = {
-  farmer: "Farmer",
-  hunter: "Hunter",
-  smith: "Blacksmith",
-  lumber: "Lumberjack",
-};
+export function allWorkSites(team: Team): { kind: WorkKind; pos: Vec2 }[] {
+  const kinds: WorkKind[] = ["farm", "hunt", "gold", "wood"];
+  const out: { kind: WorkKind; pos: Vec2 }[] = [];
+  for (const kind of kinds) {
+    for (const pos of workSites(team, kind)) out.push({ kind, pos });
+  }
+  return out;
+}
 
-export const JOB_PROMOTE = {
-  farmer: "runner",
-  hunter: "archer",
-  smith: "ward",
-  lumber: "rammer",
-} as const;
+export const WORK_LABEL: Record<WorkKind, string> = {
+  farm: "Farm",
+  hunt: "Hunt",
+  gold: "Gold",
+  wood: "Wood",
+};

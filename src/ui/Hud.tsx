@@ -1,10 +1,10 @@
 import type { QualityInfo, QualitySetting } from "../game/render3d";
-import { JOB_LABEL } from "../game/basiliskMap";
+import { LOAD_SIZE } from "../game/basilisk";
+import { WORK_LABEL } from "../game/basiliskMap";
 import type { UiSnapshot } from "../game/types";
 
 interface HudProps {
   ui: UiSnapshot;
-  /** Phone top-bar density: icon controls, single stat row. */
   compact: boolean;
   quality: QualityInfo;
   onQuality: (setting: QualitySetting) => void;
@@ -17,7 +17,6 @@ interface HudProps {
 export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound, onRush }: HudProps) {
   const realm = ui.basilisk;
   const hpPct = Math.max(0, Math.min(1, ui.yourHp / ui.yourMaxHp));
-  const xpPct = realm ? Math.max(0, Math.min(1, realm.xp / Math.max(1, realm.promoteAt))) : ui.keepXpPct;
   const phaseLabel =
     ui.wavePhase === "build"
       ? `Build ${Math.ceil(ui.buildTimer)}s`
@@ -27,6 +26,10 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
   const explorePct = Math.round(ui.foeExplore * 100);
   const qualityLabel =
     quality.setting === "auto" ? `Auto · ${quality.tier}` : quality.setting[0].toUpperCase() + quality.setting.slice(1);
+  const farmPct = realm ? realm.trips.farm / 5 : 0;
+  const huntPct = realm ? realm.trips.hunt / 5 : 0;
+  const goldPct = realm ? realm.trips.gold / 5 : 0;
+  const woodPct = realm ? realm.trips.wood / 10 : 0;
 
   return (
     <div className={compact ? "hud compact" : "hud"}>
@@ -34,8 +37,15 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
         {realm ? (
           <>
             <div className="stat">
-              <span className="label">JOB</span>
-              <span className="value">{realm.job ? JOB_LABEL[realm.job] : "—"}</span>
+              <span className="label">RANK</span>
+              <span className="value">{realm.rankLabel}</span>
+            </div>
+            <div className="stat">
+              <span className="label">CARRY</span>
+              <span className="value">
+                {Math.floor(realm.carry)}/{LOAD_SIZE}
+                {realm.carryKind ? ` ${WORK_LABEL[realm.carryKind]}` : ""}
+              </span>
             </div>
             <div className="stat">
               <span className="label">FOOD</span>
@@ -50,12 +60,14 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
               <span className="value wood">{realm.clanWood}</span>
             </div>
             <div className="stat">
-              <span className="label">KING CUT</span>
-              <span className="value">{realm.kingCut}</span>
+              <span className="label">COFFER</span>
+              <span className="value">
+                {realm.cofferGold}g {realm.cofferWood}w
+              </span>
             </div>
             <div className="stat">
-              <span className="label">CLAN</span>
-              <span className="value">{realm.clanmates}</span>
+              <span className="label">KILLS</span>
+              <span className="value">{realm.kills}</span>
             </div>
             {realm.joinTimer > 0 && (
               <div className="stat">
@@ -66,56 +78,85 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
           </>
         ) : (
           <>
-        <div className="stat lives">
-          <span className="label">LIVES</span>
-          <span className={ui.yourHp <= 80 ? "value danger" : "value"}>{ui.yourHp}</span>
-          <div className="bar">
-            <div className="fill" style={{ width: `${hpPct * 100}%` }} />
-          </div>
-        </div>
-        <div className="stat">
-          <span className="label">GOLD</span>
-          <span className="value">{ui.yourGold}</span>
-        </div>
-        <div className="stat">
-          <span className="label">WOOD</span>
-          <span className="value wood">{ui.yourWood}</span>
-        </div>
-        <div className="stat">
-          <span className="label">POP</span>
-          <span className="value">
-            {ui.peonCount}/{ui.peonCap}
-          </span>
-        </div>
-        <div className="stat">
-          <span className="label">WAVE</span>
-          <span className="value">{ui.waveLabel}</span>
-          <span className="phase-tag">{phaseLabel}</span>
-        </div>
-        <div className="stat">
-          <span className="label">FOE HP</span>
-          <span className="value">{ui.foeHp}</span>
-        </div>
-        {!ui.pvp && (
-          <div className="stat intellect">
-            <span className="label">FOE IQ</span>
-            <span className="value">{ui.foeIntellect}</span>
-            <span className="phase-tag muted">
-              {ui.foeWins}W/{ui.foeGames}G · ε{explorePct}%
-            </span>
-          </div>
-        )}
+            <div className="stat lives">
+              <span className="label">LIVES</span>
+              <span className={ui.yourHp <= 80 ? "value danger" : "value"}>{ui.yourHp}</span>
+              <div className="bar">
+                <div className="fill" style={{ width: `${hpPct * 100}%` }} />
+              </div>
+            </div>
+            <div className="stat">
+              <span className="label">GOLD</span>
+              <span className="value">{ui.yourGold}</span>
+            </div>
+            <div className="stat">
+              <span className="label">WOOD</span>
+              <span className="value wood">{ui.yourWood}</span>
+            </div>
+            <div className="stat">
+              <span className="label">POP</span>
+              <span className="value">
+                {ui.peonCount}/{ui.peonCap}
+              </span>
+            </div>
+            <div className="stat">
+              <span className="label">WAVE</span>
+              <span className="value">{ui.waveLabel}</span>
+              <span className="phase-tag">{phaseLabel}</span>
+            </div>
+            <div className="stat">
+              <span className="label">FOE HP</span>
+              <span className="value">{ui.foeHp}</span>
+            </div>
+            {!ui.pvp && (
+              <div className="stat intellect">
+                <span className="label">FOE IQ</span>
+                <span className="value">{ui.foeIntellect}</span>
+                <span className="phase-tag muted">
+                  {ui.foeWins}W/{ui.foeGames}G · ε{explorePct}%
+                </span>
+              </div>
+            )}
           </>
         )}
       </div>
-      <div className="hud-xp-row">
-        <div className="stat keep-xp-stat">
-          <span className="label">{realm ? `XP ${Math.floor(realm.xp)}` : `KEEP LV ${ui.keepLevel}`}</span>
-          <div className="bar xp">
-            <div className="fill" style={{ width: `${xpPct * 100}%` }} />
+      {realm ? (
+        <div className="hud-xp-row trip-row">
+          <div className="stat keep-xp-stat">
+            <span className="label">FARM {realm.trips.farm}/5</span>
+            <div className="bar xp">
+              <div className="fill" style={{ width: `${Math.min(1, farmPct) * 100}%` }} />
+            </div>
+          </div>
+          <div className="stat keep-xp-stat">
+            <span className="label">HUNT {realm.trips.hunt}/5</span>
+            <div className="bar xp">
+              <div className="fill" style={{ width: `${Math.min(1, huntPct) * 100}%` }} />
+            </div>
+          </div>
+          <div className="stat keep-xp-stat">
+            <span className="label">GOLD {realm.trips.gold}/5</span>
+            <div className="bar xp">
+              <div className="fill" style={{ width: `${Math.min(1, goldPct) * 100}%` }} />
+            </div>
+          </div>
+          <div className="stat keep-xp-stat">
+            <span className="label">WOOD {realm.trips.wood}/10</span>
+            <div className="bar xp">
+              <div className="fill" style={{ width: `${Math.min(1, woodPct) * 100}%` }} />
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="hud-xp-row">
+          <div className="stat keep-xp-stat">
+            <span className="label">KEEP LV {ui.keepLevel}</span>
+            <div className="bar xp">
+              <div className="fill" style={{ width: `${ui.keepXpPct * 100}%` }} />
+            </div>
+          </div>
+        </div>
+      )}
       <div className="hud-controls">
         <button type="button" onClick={onPause} aria-label={ui.paused ? "Resume" : "Pause"} title="Space">
           <span className="full">{ui.paused ? "Resume" : "Pause"}</span>
@@ -138,7 +179,7 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
             {ui.soundOn ? "🔊" : "🔇"}
           </span>
         </button>
-        <label className="quality-pick" title={`Graphics quality · ${quality.fps} fps`}>
+        <label className="quality-pick" title={`Graphics quality · ${quality.tier} fps`}>
           <span className="full">Quality</span>
           <span className="short" aria-hidden>
             ✦

@@ -1889,6 +1889,17 @@ button:disabled {
   }
 }
 
+.trip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trip-row .keep-xp-stat {
+  flex: 1 1 90px;
+  min-width: 80px;
+}
+
 .clan-pick,
 .job-pick {
   display: flex;

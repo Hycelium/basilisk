@@ -6,6 +6,9 @@ export type UnitKind = WaveUnitKind | TrainKind;
 export type Job = "farmer" | "hunter" | "smith" | "lumber";
 export type LifeStage = "gatherer" | "warrior" | "king";
 export type KingOrder = "gather" | "hold" | "hunt";
+export type WorkKind = "farm" | "hunt" | "gold" | "wood";
+export type Coffer = { gold: number; wood: number; food: number };
+export type TripCounts = { farm: number; hunt: number; gold: number; wood: number };
 export type BuildingKind = "watchtower" | "ballista" | "catapult" | "barracks" | "house" | "barricade";
 export type ResourceKind = "pine" | "copper";
 export type PadZone = "combat" | "eco";
@@ -73,6 +76,13 @@ export interface Unit {
   xp: number;
   homeLoop?: Vec2[];
   loopIndex?: number;
+  workKind?: WorkKind;
+  carryKind?: WorkKind | null;
+  carry?: number;
+  trips?: TripCounts;
+  kills?: number;
+  deposited?: number;
+  lastHitBy?: number;
 }
 
 /** First-person body the local player is driving, or none. */
@@ -99,14 +109,18 @@ export interface BasiliskUi {
   food: number;
   clanGold: number;
   clanWood: number;
-  kingCut: number;
+  cofferGold: number;
+  cofferWood: number;
+  cofferFood: number;
   kingOrder: KingOrder;
   youAreKing: boolean;
   joinTimer: number;
-  job: Job | null;
-  xp: number;
-  promoteAt: number;
   clanmates: number;
+  carry: number;
+  carryKind: WorkKind | null;
+  trips: TripCounts;
+  kills: number;
+  rankLabel: string;
 }
 
 export type WavePhase = "build" | "spawning" | "fighting";
@@ -307,6 +321,7 @@ export interface GameState {
   kingId: Record<Team, number | null>;
   kingOrder: Record<Team, KingOrder>;
   kingTreasury: Record<Team, number>;
+  kingCoffer: Record<Team, Coffer>;
   scars: { trees: number; fields: number; pit: number; trails: number };
   units: Unit[];
   buildings: Building[];

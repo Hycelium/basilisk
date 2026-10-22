@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { JOB_LABEL } from "../game/basiliskMap";
-import type { Job, Team, UiSnapshot } from "../game/types";
+import type { Team, UiSnapshot } from "../game/types";
 
 const ITCH_PAGE = "https://ka9krew.itch.io/roadkeep";
 const DISCORD_INVITE = "https://discord.gg/FGbUfaxy8v";
@@ -53,7 +52,7 @@ interface OverlaysProps {
   ui: UiSnapshot;
   hideTitle?: boolean;
   skirmishLive?: boolean;
-  onStart: (clan: Team, job: Job) => void;
+  onStart: (clan: Team) => void;
   onSkirmish: () => void;
   onCampaign: () => void;
   onRestart: () => void;
@@ -73,7 +72,6 @@ export function Overlays({
 }: OverlaysProps) {
   const [shareNote, setShareNote] = useState("");
   const [clan, setClan] = useState<Team>("you");
-  const [job, setJob] = useState<Job>("farmer");
 
   useEffect(() => {
     if (!shareNote) return;
@@ -100,7 +98,7 @@ export function Overlays({
           <img className="menu-logo" src={`${import.meta.env.BASE_URL}icons/icon-512.png`} alt="" />
           <h1>Basilisk</h1>
           <p className="keep-lvl">Twin valleys · one life at a time</p>
-          <p>Walk your job. Promote on the fat tail. The highest XP wears the crown.</p>
+          <p>Spawn a peon. Haul ten home. The king spends the coffer.</p>
 
           <div className="clan-pick" role="group" aria-label="Clan">
             <button type="button" className={clan === "you" ? "cta" : "ghost"} onClick={() => setClan("you")}>
@@ -110,26 +108,14 @@ export function Overlays({
               Red north
             </button>
           </div>
-          <div className="job-pick" role="group" aria-label="Job">
-            {(Object.keys(JOB_LABEL) as Job[]).map((id) => (
-              <button
-                key={id}
-                type="button"
-                className={job === id ? "cta" : "ghost"}
-                onClick={() => setJob(id)}
-              >
-                {JOB_LABEL[id]}
-              </button>
-            ))}
-          </div>
 
           <ul className="tips">
-            <li>Farmer → Runner · Hunter → Archer · Blacksmith → Ward · Lumberjack → Ram</li>
-            <li>Esc leaves the body gathering. Click it to take first person again.</li>
+            <li>Farm 5 → Levy · Deer 5 → Archer · Gold 5 → Ward · Wood 5 → Ram · Wood 10 → Treb · Farm+Gold 5 → Runner</li>
+            <li>Kills promote gun-game: Levy, Archer, Ward, Runner. First military is king.</li>
           </ul>
 
           <div className="title-actions">
-            <button type="button" className="cta" onClick={() => onStart(clan, job)}>
+            <button type="button" className="cta" onClick={() => onStart(clan)}>
               Enter the valley
             </button>
           </div>
