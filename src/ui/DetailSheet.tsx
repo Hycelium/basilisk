@@ -86,7 +86,9 @@ export function DetailSheet({
         {!collapsed && (
         <div className="detail-body">
         <p className="detail-note">
-          Queue peons here. Cap starts at 2 — build Houses on green pads behind the keep.
+          {ui.basilisk
+            ? "Queue peons from the coffer. Each House raises the cap by 3."
+            : "Queue peons here. Cap starts at 2 — build Houses on green pads behind the keep."}
         </p>
         <div className="train-options">
           <button

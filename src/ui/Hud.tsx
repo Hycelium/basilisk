@@ -66,6 +66,12 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
               </span>
             </div>
             <div className="stat">
+              <span className="label">POP</span>
+              <span className="value">
+                {ui.peonCount}/{ui.peonCap}
+              </span>
+            </div>
+            <div className="stat">
               <span className="label">KILLS</span>
               <span className="value">{realm.kills}</span>
             </div>

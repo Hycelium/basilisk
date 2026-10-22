@@ -137,18 +137,14 @@ import {
   applyPeonBody,
   applyRank,
   BASILISK_BUILD_PAUSE,
-  BASILISK_CHOSEN_CAP,
   BASILISK_CHOSEN_START,
   BASILISK_FIRST_BUILD,
-  BASILISK_HARD_CAP,
   BASILISK_JOIN_WAIT,
   BASILISK_KEEP_HP,
   BASILISK_KING_HP,
-  BASILISK_SOFT_CAP,
   BASILISK_START_COFFER,
   BASILISK_START_EACH,
   BASILISK_WAVES,
-  countChosen,
   countClan,
   defaultKingController,
   defaultKingOrder,
@@ -808,15 +804,21 @@ export class GameSim {
     if (s.kingController[team] !== "ai") return;
     const gatherers = this.basiliskGatherers(team);
     if (gatherers.length === 0) return;
-    if (s.kingCoffer[team].wood >= 90) return;
-    const need = Math.max(2, Math.ceil(gatherers.length * 0.45));
-    let have = gatherers.filter((u) => u.workKind === "wood").length;
-    for (const u of gatherers) {
-      if (have >= need) break;
-      if (u.workKind === "wood") continue;
-      this.setPeonJob(u, "wood");
-      have += 1;
+    const coffer = s.kingCoffer[team];
+    const assign = (kind: WorkKind, want: number) => {
+      let have = gatherers.filter((u) => u.workKind === kind).length;
+      for (const u of gatherers) {
+        if (have >= want) break;
+        if (u.workKind === kind) continue;
+        this.setPeonJob(u, kind);
+        have += 1;
+      }
+    };
+    if (coffer.wood < 90) {
+      assign("wood", Math.max(2, Math.ceil(gatherers.length * 0.45)));
+      return;
     }
+    if (coffer.gold < 80) assign("gold", Math.max(2, Math.ceil(gatherers.length * 0.35)));
   }
 
   isLocalKing() {
@@ -1688,12 +1690,14 @@ export class GameSim {
 
   peonCap(team: Team) {
     const houses = this.state.buildings.filter((b) => b.team === team && b.kind === "house").length;
+    if (this.state.basilisk) return BASILISK_START_EACH + houses * HOUSE_POP;
     return BASE_PEON_CAP + houses * HOUSE_POP;
   }
 
   peonSlotsUsed(team: Team) {
-    const alive = this.state.villagers.filter((v) => v.team === team).length;
     const queued = this.state.keeps[team].peonQueue.length;
+    if (this.state.basilisk) return this.basiliskGatherers(team).length + queued;
+    const alive = this.state.villagers.filter((v) => v.team === team).length;
     return alive + queued;
   }
 
@@ -1808,6 +1812,12 @@ export class GameSim {
       job.timeLeft -= dt;
       if (job.timeLeft > 0) continue;
       keep.peonQueue.shift();
+      if (this.state.basilisk) {
+        if (this.basiliskGatherers(team).length >= this.peonCap(team)) continue;
+        this.spawnBasiliskSoul(team);
+        this.tell(team, "Peon ready.");
+        continue;
+      }
       if (this.state.villagers.filter((v) => v.team === team).length >= this.peonCap(team)) continue;
       const idx = this.state.villagers.filter((v) => v.team === team).length;
       const scale = this.combatScale(team);
@@ -3308,71 +3318,93 @@ export class GameSim {
         this.addToast("Enter when you are ready. You can switch sides.");
       }
     }
-    s.trickleTimer -= dt;
-    if (s.trickleTimer <= 0) {
-      s.trickleTimer = 16 + hashId(Math.floor(s.time)) * 10;
-      const clanTotal = countClan(s, "you") + countClan(s, "foe");
-      for (const team of ["you", "foe"] as Team[]) {
-        if (countClan(s, team) >= BASILISK_SOFT_CAP) continue;
-        if (clanTotal >= BASILISK_HARD_CAP * 2) continue;
-        const promote =
-          countChosen(s, team) < BASILISK_CHOSEN_CAP &&
-          hashId(Math.floor(s.time) + (team === "you" ? 3 : 11)) < 0.14;
-        this.spawnBasiliskSoul(team, false, promote);
-      }
-    }
-    if (Math.floor(s.time / 14) !== Math.floor((s.time - dt) / 14)) {
+    this.aiTimer -= dt;
+    if (this.aiTimer <= 0) {
+      this.aiTimer = 1.15;
       for (const team of ["you", "foe"] as Team[]) {
         if (s.kingController[team] !== "ai") continue;
-        const hasBarracks = s.buildings.some((b) => b.team === team && b.kind === "barracks");
-        if (team !== this.localTeam) {
-          s.kingOrder[team] = !hasBarracks ? "gather" : s.waveIndex >= 4 ? "hunt" : "hold";
-        } else {
-          s.kingOrder[team] = "gather";
-        }
-        this.basiliskKingBuild(team);
-        this.steerAiLabor(team);
+        this.basiliskKingPlay(team);
       }
     }
   }
 
-  private basiliskKingBuild(team: Team) {
+  /** Same opening book as Roadkeep's foe: houses, peons, towers, barracks, then troops. */
+  private basiliskKingPlay(team: Team) {
     const s = this.state;
     if (s.kingController[team] !== "ai") return;
-    const occupied = (padId: string) => s.buildings.some((b) => b.padId === padId);
-    const keep = keepPos(team);
-    const emptyCombat = s.pads
-      .filter((p) => p.team === team && p.zone === "combat" && !occupied(p.id))
-      .sort((a, b) => dist(a.pos, keep) - dist(b.pos, keep));
-    const emptyEco = s.pads.filter((p) => p.team === team && p.zone === "eco" && !occupied(p.id));
-    const hasTower = s.buildings.some((b) => b.team === team && (b.kind === "watchtower" || b.kind === "ballista"));
-    const hasHouse = s.buildings.some((b) => b.team === team && b.kind === "house");
-    const barracks = s.buildings.filter((b) => b.team === team && b.kind === "barracks");
-    if (!hasTower && emptyCombat[0] && this.canAfford(team, BUILD_COST.watchtower)) {
-      this.buildFor(team, "watchtower", emptyCombat[0].id);
-      return;
+    this.steerAiLabor(team);
+
+    const buildings = s.buildings.filter((b) => b.team === team);
+    const houses = buildings.filter((b) => b.kind === "house").length;
+    const desiredHouses = s.waveIndex >= 4 ? 3 : s.waveIndex >= 2 ? 2 : 1;
+    if (houses < desiredHouses) this.placeAiBuilding("house", 0, team);
+
+    const peonCost: ResCost = { gold: PEON_TRAIN_GOLD, wood: PEON_TRAIN_WOOD };
+    if (this.peonSlotsUsed(team) < this.peonCap(team) && this.canAfford(team, peonCost)) {
+      this.enqueuePeon(team);
     }
-    if (barracks.length === 0 && emptyCombat[0] && this.canAfford(team, BUILD_COST.barracks)) {
-      this.buildFor(team, "barracks", emptyCombat[0].id);
-      return;
+
+    const defenses = buildings.filter(
+      (b) => b.kind === "watchtower" || b.kind === "ballista" || b.kind === "catapult",
+    );
+    const desiredDefenses = s.waveIndex < 2 ? 2 : s.waveIndex < 5 ? 3 : 4;
+    if (defenses.length < desiredDefenses) {
+      const watches = defenses.filter((b) => b.kind === "watchtower").length;
+      const ballistas = defenses.filter((b) => b.kind === "ballista").length;
+      const catapults = defenses.filter((b) => b.kind === "catapult").length;
+      const next =
+        watches < 2 ? "watchtower" : ballistas < 1 ? "ballista" : catapults < 1 ? "catapult" : "ballista";
+      this.placeAiBuilding(next, 10, team);
     }
-    if (!hasHouse && emptyEco[0] && this.canAfford(team, BUILD_COST.house)) {
-      this.buildFor(team, "house", emptyEco[0].id);
-      return;
+
+    const barracks = buildings.filter((b) => b.kind === "barracks");
+    if (barracks.length === 0 && s.waveIndex >= 1 && defenses.length >= 2) {
+      this.placeAiBuilding("barracks", 10, team);
+    } else if (barracks.length > 0) {
+      this.basiliskTrainUnits(team);
     }
-    if (hasTower && emptyCombat[0] && this.canAfford(team, BUILD_COST.ballista)) {
-      this.buildFor(team, "ballista", emptyCombat[0].id);
-      return;
+
+    if (s.kingCoffer[team].gold > 120) {
+      if (!this.placeAiBuilding("watchtower", 20, team)) this.basiliskTrainUnits(team);
     }
-    const hall = barracks[0];
-    if (!hall || hall.queue.length > 0) return;
-    const levyCost = { gold: UNIT_DEFS.levy.cost ?? 26, wood: UNIT_DEFS.levy.woodCost ?? 0 };
-    const archerCost = { gold: UNIT_DEFS.archer.cost ?? 34, wood: UNIT_DEFS.archer.woodCost ?? 0 };
-    if (this.canAfford(team, archerCost) && s.waveIndex >= 2) {
-      this.enqueueTrainAt(team, "archer", hall.id);
-      return;
+
+    s.kingOrder[team] = barracks.length === 0 ? "gather" : s.waveIndex >= 4 ? "hunt" : "hold";
+  }
+
+  private basiliskTrainUnits(team: Team) {
+    const bars = this.state.buildings.filter((b) => b.team === team && b.kind === "barracks");
+    if (bars.length === 0 || bars.every((b) => b.queue.length >= 3)) return false;
+    const coffer = this.state.kingCoffer[team];
+    if (coffer.gold < 28) return false;
+    const enemy = this.enemy(team);
+    const observed = this.state.units.filter((u) => u.team === enemy && u.hp > 0 && !isClanSoul(u));
+    const enemyTowers = this.state.buildings.filter(
+      (b) => b.team === enemy && b.kind !== "barracks" && b.kind !== "house",
+    ).length;
+    const force = this.state.units.filter((u) => u.team === team && u.fromBarracks && u.hp > 0);
+    const queuedKinds = bars.flatMap((b) => b.queue.map((job) => job.kind));
+    const count = (kind: TrainKind) =>
+      force.filter((u) => u.kind === kind).length + queuedKinds.filter((k) => k === kind).length;
+    const ranged = observed.filter((u) => u.kind === "archer").length;
+    const fast = observed.filter((u) => u.kind === "runner" || u.kind === "raider").length;
+    const heavy = observed.filter(
+      (u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer" || u.kind === "trebuchet",
+    ).length;
+    let candidates: TrainKind[];
+    if (enemyTowers >= 2 && count("spy") === 0) candidates = ["spy", "levy", "runner", "ward"];
+    else if (this.state.waveIndex >= 5 && count("rammer") === 0) candidates = ["rammer", "ward", "archer", "levy"];
+    else if (ranged >= Math.max(2, observed.length * 0.4)) candidates = ["ward", "runner", "archer", "levy"];
+    else if (fast >= Math.max(2, observed.length * 0.4)) candidates = ["archer", "levy", "ward", "runner"];
+    else if (heavy >= 2) candidates = ["levy", "archer", "rammer", "ward"];
+    else candidates = ["levy", "levy", "archer", "ward"];
+    const hall = [...bars].sort((a, b) => a.queue.length - b.queue.length)[0];
+    if (!hall) return false;
+    for (const kind of candidates) {
+      const def = UNIT_DEFS[kind];
+      const cost: ResCost = { gold: def.cost ?? 30, wood: def.woodCost ?? 0 };
+      if (this.canAfford(team, cost)) return this.enqueueTrainAt(team, kind, hall.id);
     }
-    if (this.canAfford(team, levyCost)) this.enqueueTrainAt(team, "levy", hall.id);
+    return false;
   }
 
   private updateUnitMovementAndMelee(dt: number, team: Team) {
@@ -4020,6 +4052,7 @@ export class GameSim {
       this.doBarracks(dt, "foe");
       this.cleanupDeaths();
       this.tickBasilisk(dt);
+      this.tickPeonQueues(dt);
       const livingPeons = new Set(this.basiliskGatherers(this.localTeam).map((u) => u.id));
       s.selectedVillagerIds = s.selectedVillagerIds.filter((id) => livingPeons.has(id));
       if (s.keeps.you.hp <= 0 && s.keeps.foe.hp <= 0) {
@@ -4125,11 +4158,15 @@ export class GameSim {
     return defense;
   }
 
-  placeAiBuilding(kind: BuildingKind, reserve = AI_RESERVE) {
-    const team: Team = "foe";
+  placeAiBuilding(kind: BuildingKind, reserve = AI_RESERVE, team: Team = "foe") {
     const cost = BUILD_COST[kind];
-    if (this.state.gold[team] < cost.gold + reserve) return false;
-    if (this.state.wood[team] < cost.wood) return false;
+    if (this.state.basilisk) {
+      const coffer = this.state.kingCoffer[team];
+      if (coffer.gold < cost.gold + reserve || coffer.wood < cost.wood) return false;
+    } else {
+      if (this.state.gold[team] < cost.gold + reserve) return false;
+      if (this.state.wood[team] < cost.wood) return false;
+    }
     const pads = this.getPads(team);
     const occ = new Set(this.getBuildings(team).map((b) => b.padId));
     const wantZone = kind === "house" ? "eco" : "combat";
@@ -4137,11 +4174,12 @@ export class GameSim {
     // A pad is worth its weakest covered road; multi-road pads get a small nudge.
     const padNeed = (pad: Pad) =>
       Math.min(...pad.laneCoverage.map((lane) => laneDefense[lane])) - (pad.laneCoverage.length > 1 ? 0.25 : 0);
+    const behind = (a: Pad, b: Pad) => (team === "you" ? b.pos.y - a.pos.y : a.pos.y - b.pos.y);
     const target = pads
       .filter((p) => !occ.has(p.id) && p.zone === wantZone)
       .sort((a, b) => {
-        if (kind === "house") return a.pos.y - b.pos.y;
-        return padNeed(a) - padNeed(b) || a.pos.y - b.pos.y;
+        if (kind === "house") return behind(a, b);
+        return padNeed(a) - padNeed(b) || behind(a, b);
       })[0];
     if (!target) return false;
     this.spendRes(team, cost);
@@ -5048,7 +5086,9 @@ export class GameSim {
       trainQueue,
       trainOptions,
       peonQueue,
-      peonCount: s.villagers.filter((v) => v.team === view).length,
+      peonCount: s.basilisk
+        ? this.basiliskGatherers(view).length
+        : s.villagers.filter((v) => v.team === view).length,
       peonCap: this.peonCap(view),
       idlePeonCount: s.villagers.filter(
         (v) => v.team === view && v.hp > 0 && (v.state === "idle" || v.state === "home"),
