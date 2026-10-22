@@ -71,6 +71,10 @@ export const KEEP_THREAT_RADIUS = 140;
 export const PEON_MELEE_RANGE = 18;
 export const PEON_DAMAGE = 6;
 export const PEON_ATTACK_CD = 0.5;
+/** Soldiers, waves, and the king cut workers down in a couple of swings. */
+export const MILITARY_VS_PEON = 2.5;
+/** A peon's stick barely chips a trained body. */
+export const PEON_VS_MILITARY = 0.2;
 export const PEON_FIGHT_SPEED = 54;
 /** Patrol and guard notice a fight a short walk past melee, then leash back. */
 export const PEON_AGGRO_RANGE = 40;

@@ -28,11 +28,13 @@ import {
   MAX_TRAIN_QUEUE,
   AGGRO_LEASH_MULT,
   MELEE_AGGRO_RANGE,
+  MILITARY_VS_PEON,
   PEON_AGGRO_RANGE,
   PEON_ATTACK_CD,
   PEON_DAMAGE,
   PEON_FIGHT_SPEED,
   PEON_MELEE_RANGE,
+  PEON_VS_MILITARY,
   PEON_TRAIN_GOLD,
   PEON_TRAIN_TIME,
   PEON_TRAIN_WOOD,
@@ -154,6 +156,7 @@ import {
   hashId,
   isClanSoul,
   isMilitary,
+  isPeonBody,
   isWaveCreep,
   KING_KILL_NEED,
   KING_TAX,
@@ -3127,17 +3130,21 @@ export class GameSim {
     if (dist(v.pos, target.pos) > PEON_MELEE_RANGE) {
       moveTowards(v.pos, target.pos, PEON_FIGHT_SPEED, dt);
     } else if (v.attackTimer <= 0) {
-      target.hp -= v.damage;
+      const dealt = this.peonStrike(v.damage, target);
+      target.hp -= dealt;
       v.attackTimer = PEON_ATTACK_CD;
       this.emitCombat("meleeHit", v.pos, target.pos, team);
-      this.addFloat(`-${this.strikeText(v.damage)}`, target.pos.x, target.pos.y - 8, "#c8e090");
+      this.addFloat(`-${this.strikeText(dealt)}`, target.pos.x, target.pos.y - 8, "#c8e090");
     }
     return true;
   }
 
   private militaryAccepts(u: Unit, ent: Unit | Villager, enemyTeam: Team) {
     if (ent.hp <= 0 || ent.team !== enemyTeam) return false;
-    if ("fromBarracks" in ent) return !u.ignoreEnemyCreeps || ent.fromBarracks;
+    if ("fromBarracks" in ent) {
+      if (!u.ignoreEnemyCreeps || ent.fromBarracks) return true;
+      return this.state.basilisk && ent.lifeStage === "gatherer";
+    }
     return (u.fromBarracks || u.kind === "archer") && ent.state !== "garrisoned";
   }
 
@@ -3212,6 +3219,16 @@ export class GameSim {
    * first connected strike after closing in is a charge; the cooldown stays
    * the unit's normal attack rate.
    */
+  private peonStrike(damage: number, target: Unit | Villager) {
+    return isPeonBody(target) ? damage : damage * PEON_VS_MILITARY;
+  }
+
+  private vsPeon(attacker: Unit, target: Unit | Villager, dealt: number) {
+    if (isPeonBody(target) && attacker.lifeStage !== "gatherer") return dealt * MILITARY_VS_PEON;
+    if (attacker.lifeStage === "gatherer" && !isPeonBody(target)) return dealt * PEON_VS_MILITARY;
+    return dealt;
+  }
+
   private meleeDamage(attacker: Unit, target: Unit | Villager) {
     let dealt = attacker.damage;
     if ("kind" in target && target.kind === "trebuchet") dealt *= MELEE_VS_TREBUCHET;
@@ -3222,7 +3239,7 @@ export class GameSim {
       dealt *= RUNNER_CHARGE_DAMAGE;
       attacker.chargeReady = false;
     }
-    return dealt;
+    return this.vsPeon(attacker, target, dealt);
   }
 
   /** Archer shots glance off wards. Melee keeps the levy bonus and the runner's charge. */
@@ -3231,7 +3248,7 @@ export class GameSim {
     let dealt = attacker.damage;
     if ("kind" in target && target.kind === "ward") dealt *= ARCHER_VS_WARD;
     if ("kind" in target && target.kind === "trebuchet") dealt *= ARCHER_VS_TREBUCHET;
-    return dealt;
+    return this.vsPeon(attacker, target, dealt);
   }
 
   private fightMilitary(u: Unit, target: Unit | Villager, team: Team, dt: number) {

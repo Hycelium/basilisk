@@ -1,7 +1,7 @@
 import { UNIT_DEFS, VILLAGER_HP, VILLAGER_SPEED, PEON_DAMAGE } from "./balance";
 import { allWorkSites, chokePoints, type WorkKind } from "./basiliskMap";
 import { keepPos } from "./map";
-import type { GameState, KingController, KingOrder, Team, Unit, UnitKind, Vec2, WaveSpec } from "./types";
+import type { GameState, KingController, KingOrder, Team, Unit, UnitKind, Vec2, Villager, WaveSpec } from "./types";
 
 export const BASILISK_START_EACH = 8;
 export const BASILISK_SOFT_CAP = 15;
@@ -63,6 +63,11 @@ export function defaultKingController(): Record<Team, KingController> {
 
 export function isClanSoul(u: Unit) {
   return !!u.lifeStage;
+}
+
+/** Basilisk gatherer souls and Roadkeep villagers. */
+export function isPeonBody(t: Unit | Villager): boolean {
+  return !("kind" in t) || t.lifeStage === "gatherer";
 }
 
 export function isWaveCreep(u: Unit) {
