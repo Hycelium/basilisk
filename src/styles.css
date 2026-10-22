@@ -314,6 +314,39 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+.fps-charge {
+  position: absolute;
+  left: 50%;
+  top: 48px;
+  transform: translateX(-50%);
+  width: min(280px, 56%);
+  height: 14px;
+  border-radius: 999px;
+  background: rgba(18, 12, 8, 0.7);
+  border: 1px solid rgba(201, 164, 90, 0.7);
+  overflow: hidden;
+}
+
+.fps-charge i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #8a5a28, #e8c46a);
+  transition: width 80ms linear;
+}
+
+.fps-charge span {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #f8ecd0;
+  font: 700 10px/1 "Trebuchet MS", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
 .selection-box {
   position: absolute;
   z-index: 8;

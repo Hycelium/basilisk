@@ -92,6 +92,14 @@ export const POSSESS_VISION_SCORE = 8;
 export const POSSESS_PULL_MAX = 56;
 export const POSSESS_FOV_TIGHT = 70;
 export const POSSESS_FOV_WIDE = 86;
+/** Trebuchet possess sits above the engine instead of in the head. */
+export const TREB_POSSESS_BACK = 96;
+export const TREB_POSSESS_HEIGHT = 62;
+export const TREB_POSSESS_AHEAD = 118;
+export const TREB_POSSESS_FOV = 52;
+/** Clicks wind the arm. Four pumps loose a shot. Charge bleeds if you wait. */
+export const TREB_CHARGE_CLICK = 0.27;
+export const TREB_CHARGE_DECAY = 0.16;
 
 /**
  * Levy melee versus a ward only. 1.25 is +25% of that levy's current attack.
@@ -121,8 +129,69 @@ export const ARCHER_VS_WARD = 0.4;
 export const BALLISTA_ARMOR_KEPT = 0.15;
 /** Catapult peon hits are a splash punishment, not a snipe. Bolts do full damage. */
 export const CATAPULT_VS_PEON = 0.65;
+/** Rocks ignore trebuchet timber and hit harder. Only matters if the engine is inside catapult range. */
+export const CATAPULT_VS_TREBUCHET = 1.65;
 export const CATAPULT_VS_BARRICADE = 12;
+/** Soldier arrows glance off the frame. */
+export const ARCHER_VS_TREBUCHET = 0.28;
+/** Crew and frame die to a charge. The engine cannot fight back. */
+export const MELEE_VS_TREBUCHET = 1.55;
 export const BARRICADE_HP = 36;
+
+/** Hit points so a trebuchet wrecks a structure in two shots. Houses are listed but not legal targets. */
+export const BUILD_HP: Record<BuildingKind, number> = {
+  watchtower: 40,
+  ballista: 48,
+  catapult: 44,
+  barracks: 52,
+  house: 36,
+  barricade: BARRICADE_HP,
+};
+
+/** Beats every player-built tower (ballista 178 is the longest). The starter watchtower's 220 still reaches it. */
+export const TREBUCHET_RANGE = 190;
+export const TREBUCHET_UNPACK = 2.55;
+export const TREBUCHET_PACK = 1.55;
+
+export function trebuchetShot(maxHp: number) {
+  return Math.max(1, Math.ceil(maxHp / 2));
+}
+
+/** Towers and halls only. Keeps and houses are off-limits. */
+export function isTrebuchetBuilding(kind: BuildingKind) {
+  return kind === "watchtower" || kind === "ballista" || kind === "catapult" || kind === "barracks";
+}
+
+export const SPY_DISABLE = 10;
+export const SPY_SABOTAGE_RANGE = 22;
+export const SPY_KEEP_RANGE = 30;
+export const SPY_KEEP_MIN = 50;
+export const SPY_KEEP_MAX = 75;
+
+export function isSpyGun(kind: BuildingKind) {
+  return kind === "watchtower" || kind === "ballista" || kind === "catapult";
+}
+
+/** Ballista rate ranks are guard dogs, not fire speed. Rank 1+ kills spies in a pad-wide radius. */
+export function ballistaHasDogs(b: { kind: BuildingKind; rateRank: number }) {
+  return b.kind === "ballista" && b.rateRank >= 1;
+}
+
+export const DOG_RANGE = 46;
+export const DOG_RANGE_RANK2 = 58;
+
+export function dogRange(b: { kind: BuildingKind; rateRank: number }) {
+  if (!ballistaHasDogs(b)) return 0;
+  return b.rateRank >= 2 ? DOG_RANGE_RANK2 : DOG_RANGE;
+}
+
+export function spyKeepDamage() {
+  return SPY_KEEP_MIN + Math.floor(Math.random() * (SPY_KEEP_MAX - SPY_KEEP_MIN + 1));
+}
+
+export function disguiseTeam(team: Team): Team {
+  return team === "you" ? "foe" : "you";
+}
 
 /** Watchtowers clear light troops. Ballistae punch armor. Catapults punish clumps and road blocks. */
 export const BUILD_DAMAGE: Record<BuildingKind, number> = {
@@ -146,7 +215,11 @@ export const BUILD_COOLDOWN: Record<BuildingKind, number> = {
 export const CATAPULT_SPLASH_RADIUS = 46;
 
 /** How much of a unit's tower armor this building ignores. */
-export function towerDamageFactor(kind: BuildingKind, towerResist: number) {
+export function towerDamageFactor(kind: BuildingKind, towerResist: number, unitKind?: UnitKind) {
+  if (unitKind === "trebuchet") {
+    if (kind === "catapult") return CATAPULT_VS_TREBUCHET;
+    return 1 - towerResist;
+  }
   const kept = kind === "ballista" ? towerResist * BALLISTA_ARMOR_KEPT : towerResist;
   return 1 - kept;
 }
@@ -226,10 +299,22 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
     cost: 40, woodCost: 45, trainTime: 5.8,
     label: "Rammer", blurb: "Breaks gates and barricades",
   },
+  trebuchet: {
+    hp: 42, speed: 9, damage: 0, cooldown: 5.8, bounty: 16,
+    towerResist: 0.88, keepMult: 0, siegeGap: 1.2,
+    cost: 62, woodCost: 118, trainTime: 9.6,
+    label: "Trebuchet", blurb: "Costly timber · crawls · two shots wreck a tower",
+  },
+  spy: {
+    hp: 28, speed: 46, damage: 0, cooldown: 1.6, bounty: 18,
+    towerResist: 0.04, keepMult: 0, siegeGap: 5.5,
+    cost: 90, woodCost: 0, trainTime: 5.0,
+    label: "Spy", blurb: "Gold sink · one job, then dies. Sneak around dogged ballistae.",
+  },
 };
 
 export const UNIT_STATS = UNIT_DEFS;
-export const TRAIN_ORDER: TrainKind[] = ["levy", "runner", "archer", "ward", "rammer"];
+export const TRAIN_ORDER: TrainKind[] = ["levy", "runner", "archer", "ward", "rammer", "trebuchet", "spy"];
 
 /**
  * 16 waves, ~10–15 min. Breathing curve (research: pressure → relief → peaked finale).

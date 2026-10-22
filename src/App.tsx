@@ -269,7 +269,10 @@ export default function App() {
     } else if (kind === "meleeHit") {
       noise(0.11, 0.035, 1700);
       tone(190, 75, 0.12, 0.035, "square");
-    } else if (kind === "ramImpact" || kind === "keepImpact") {
+    } else if (kind === "sabotage") {
+      noise(0.18, 0.04, 2400);
+      tone(520, 180, 0.22, 0.04, "sine");
+    } else if (kind === "ramImpact" || kind === "keepImpact" || kind === "trebuchet") {
       noise(0.26, 0.07, 650);
       tone(95, 34, 0.3, 0.09, "sine");
     } else if (kind === "woodHit") {
@@ -547,7 +550,8 @@ export default function App() {
 
       if (!touch && ev.button === 0 && hit?.kind === "unit" && sim.getMatchMode() !== "pvp") {
         if (sim.tryPossess(Number(hit.id))) {
-          r.enterPossess(sim.getPossessYaw());
+          const body = sim.getState().units.find((u) => u.id === Number(hit.id));
+          r.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
           canvas.requestPointerLock();
           refreshUi();
           beep(360, 0.08);
@@ -1064,13 +1068,26 @@ export default function App() {
         <div className={sheetOpen ? "stage sheet-open" : "stage"} ref={stageRef}>
           <canvas ref={canvasRef} className={ui.possessed ? "battlefield possessed" : "battlefield"} />
           {ui.possessed && (
-            <div className="fps-hud" aria-hidden>
+            <div className={`fps-hud${ui.possessed.kind === "trebuchet" ? " treb-hud" : ""}`} aria-hidden>
               <span className="fps-crosshair" />
-              <p className="fps-banner">
-                {ui.possessed.label} · {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)} · vision{" "}
-                {Math.min(ui.possessed.visionMax, Math.floor(ui.possessed.visionScore))}/{ui.possessed.visionMax}
-                {ui.possessed.visionScore <= 0 ? " · kill to scroll out" : " · wheel looks out"}
-              </p>
+              {ui.possessed.kind === "trebuchet" ? (
+                <>
+                  <p className="fps-banner">
+                    {ui.possessed.label} · {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)}
+                    {ui.possessed.aimLabel ? ` · ${ui.possessed.aimLabel}` : " · look at a tower, then click to wind"}
+                  </p>
+                  <div className="fps-charge">
+                    <i style={{ width: `${Math.round(Math.min(1, ui.possessed.charge) * 100)}%` }} />
+                    <span>{ui.possessed.charge >= 1 ? "Loose!" : "Click to wind"}</span>
+                  </div>
+                </>
+              ) : (
+                <p className="fps-banner">
+                  {ui.possessed.label} · {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)} · vision{" "}
+                  {Math.min(ui.possessed.visionMax, Math.floor(ui.possessed.visionScore))}/{ui.possessed.visionMax}
+                  {ui.possessed.visionScore <= 0 ? " · kill to scroll out" : " · wheel looks out"}
+                </p>
+              )}
             </div>
           )}
           {selectionBox && (

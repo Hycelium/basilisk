@@ -5,6 +5,7 @@ import type {
   Lane,
   MapDef,
   Team,
+  SiegePhase,
   TrainKind,
   UnitKind,
   Villager,
@@ -58,6 +59,8 @@ export interface SnapUnit {
   attackTimer: number;
   rallyX?: number;
   rallyY?: number;
+  siegePhase?: SiegePhase;
+  siegeTimer?: number;
 }
 
 export interface SnapVillager {
@@ -95,9 +98,12 @@ export interface SnapBuilding {
   damageRank: 0 | 1 | 2;
   rateRank: 0 | 1 | 2;
   animKick: number;
+  hp?: number;
+  maxHp?: number;
   queue: { kind: TrainKind; timeLeft: number; totalTime: number }[];
   rallyX?: number;
   rallyY?: number;
+  disableTimer?: number;
 }
 
 export interface SnapNode {

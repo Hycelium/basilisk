@@ -102,7 +102,40 @@ export function buildBallistaModel(team: Team) {
   const flag = banner(team, 3);
   flag.position.set(-8, 6, -8);
   g.add(flag);
+  for (const [i, x] of [-11.8, 11.8].entries()) {
+    const dog = guardDog();
+    dog.name = `guardDog${i}`;
+    dog.position.set(x, 0, 10.4);
+    dog.rotation.y = x > 0 ? -0.35 : 0.35;
+    dog.visible = false;
+    g.add(dog);
+  }
   return finish(g);
+}
+
+function guardDog() {
+  const g = new THREE.Group();
+  const hide = materials.wood;
+  const body = tiledBox(1.6, 1.15, 3.4, hide, 4);
+  body.position.set(0, 1.35, 0);
+  const head = tiledBox(1.25, 1.15, 1.35, hide, 3);
+  head.position.set(0, 2.05, 1.85);
+  const snout = tiledBox(0.7, 0.55, 0.95, hide, 3);
+  snout.position.set(0, 1.75, 2.7);
+  const earL = tiledBox(0.28, 0.7, 0.4, hide, 3);
+  earL.position.set(-0.45, 2.7, 1.7);
+  const earR = tiledBox(0.28, 0.7, 0.4, hide, 3);
+  earR.position.set(0.45, 2.7, 1.7);
+  const tail = tiledBox(0.28, 0.28, 1.4, hide, 3);
+  tail.position.set(0, 1.9, -2.0);
+  tail.rotation.x = 0.55;
+  g.add(body, head, snout, earL, earR, tail);
+  for (const [sx, sz] of [[-0.55, 1.1], [0.55, 1.1], [-0.55, -1.15], [0.55, -1.15]] as const) {
+    const leg = tiledBox(0.38, 1.05, 0.42, hide, 3);
+    leg.position.set(sx, 0.52, sz);
+    g.add(leg);
+  }
+  return g;
 }
 
 /** ~18 tall: wheeled timber mangonel; child "arm" swings on its z axle when firing. */
@@ -167,6 +200,114 @@ export function buildCatapultModel(team: Team) {
   const flag = banner(team, 3);
   flag.position.set(8, 0, -8);
   g.add(flag);
+  return finish(g);
+}
+
+/**
+ * Wheeled traction trebuchet in the catapult's timber style.
+ * Child "arm" swings on X when firing; "shot" hides at release; "head" is the possess eye.
+ */
+export function buildTrebuchetModel(team: Team) {
+  const g = new THREE.Group();
+  const iron = materials.iron();
+
+  const deck = tiledBox(6.4, 1.9, 22, materials.wood, 6);
+  deck.position.y = 3.6;
+  g.add(deck);
+  for (const s of [-1, 1]) {
+    const rail = tiledBox(1.5, 1.7, 22, materials.wood, 6);
+    rail.position.set(s * 3.7, 3.7, 0);
+    g.add(rail);
+  }
+  for (const z of [-8.5, 0, 8.5]) {
+    const cross = tiledBox(8.6, 1.3, 1.5, materials.wood, 4);
+    cross.position.set(0, 3.5, z);
+    g.add(cross);
+  }
+
+  for (const s of [-1, 1]) {
+    for (const z of [-7.6, 7.6]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 3.5, 1.15, 16), materials.wood(1, 1));
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(s * 4.7, 3.5, z);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 1.45, 8), iron);
+      hub.rotation.z = Math.PI / 2;
+      hub.position.copy(wheel.position);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(3.15, 0.22, 6, 16), iron);
+      rim.rotation.y = Math.PI / 2;
+      rim.position.copy(wheel.position);
+      g.add(wheel, hub, rim);
+    }
+  }
+
+  const pivotY = 16.4;
+  for (const s of [-1, 1]) {
+    const post = tiledBox(1.45, 18.4, 1.6, materials.wood, 6);
+    post.position.set(s * 3.5, 10.4, 0);
+    post.rotation.z = s * 0.22;
+    g.add(post);
+    const brace = tiledBox(1.1, 12, 1.1, materials.wood, 4);
+    brace.position.set(s * 2.4, 8.2, s * 3.4);
+    brace.rotation.set(s * 0.42, 0, s * 0.12);
+    g.add(brace);
+  }
+  const cap = tiledBox(8.6, 1.5, 1.9, materials.wood, 4);
+  cap.position.set(0, pivotY, 0);
+  const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.58, 9.4, 8), iron);
+  axle.rotation.z = Math.PI / 2;
+  axle.position.y = pivotY;
+  g.add(cap, axle);
+
+  const arm = new THREE.Group();
+  arm.name = "arm";
+  arm.position.y = pivotY;
+  const beam = tiledBox(1.45, 28, 1.45, materials.wood, 6);
+  beam.position.y = 6;
+  for (const y of [-6, 2, 12]) {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 0.35, 8), iron);
+    band.position.y = y;
+    arm.add(band);
+  }
+  const weight = tiledBox(4.8, 4.2, 4.8, materials.stone, 6);
+  weight.position.y = -8.2;
+  const cradle = tiledBox(5.3, 0.7, 5.3, materials.wood, 4);
+  cradle.position.y = -6.15;
+  const hook = tiledBox(0.7, 2.2, 0.7, materials.wood, 3);
+  hook.position.y = -4.4;
+  arm.add(beam, weight, cradle, hook);
+
+  const sling = new THREE.Group();
+  sling.position.y = 19.6;
+  const ropeMat = new THREE.MeshStandardMaterial({ color: 0x3a2814, roughness: 0.92 });
+  for (const s of [-1, 1]) {
+    const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 7.4, 4), ropeMat);
+    rope.position.set(s * 0.48, -3.3, 0.45);
+    rope.rotation.x = 0.2;
+    sling.add(rope);
+  }
+  const pouch = tiledBox(1.9, 0.45, 1.5, materials.wood, 3);
+  pouch.position.set(0, -6.7, 1.0);
+  const shot = new THREE.Mesh(new THREE.DodecahedronGeometry(1.15, 0), materials.granite(1, 1));
+  shot.name = "shot";
+  shot.position.set(0, -6.45, 1.0);
+  sling.add(pouch, shot);
+  arm.add(sling);
+  arm.rotation.x = 1.28;
+  g.add(arm);
+
+  for (const s of [-1, 1]) {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 5.6, 5), materials.wood(1, 1));
+    pole.position.set(s * 2.15, pivotY + 3.5, -0.35);
+    const flag = banner(team, 2.7);
+    flag.position.set(s * 2.15, pivotY + 1.15, -0.35);
+    g.add(pole, flag);
+  }
+
+  const head = new THREE.Object3D();
+  head.name = "head";
+  head.position.set(0, 12.6, 3.4);
+  g.add(head);
+
   return finish(g);
 }
 

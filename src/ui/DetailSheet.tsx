@@ -19,7 +19,7 @@ interface DetailSheetProps {
 
 const STRUCTURE_ROLE: Partial<Record<BuildingKind, string>> = {
   watchtower: "Fast arrows. Best against light troops, and weak once they reach the keep.",
-  ballista: "Armor-piercing bolts. The answer to wards and riders, a poor bargain against a raider swarm.",
+  ballista: "Armor-piercing bolts at a fixed rate. Upgrade posts guard dogs that kill spies on the pad.",
   catapult: "Splash that stays strong at the gate and breaks barricades.",
   barricade: "A peon blocks one road. Melee has to chop it. A ram smashes it.",
 };
@@ -146,6 +146,7 @@ export function DetailSheet({
   const isEnemy = isEnemyStructure(ui.localTeam, ui.selectedBuildingTeam);
   const isBarracks = ui.selectedBuildingKind === "barracks";
   const isHouse = ui.selectedBuildingKind === "house";
+  const isBallista = ui.selectedBuildingKind === "ballista";
   const structureName = buildingName(ui.selectedBuildingKind!);
 
   return (
@@ -180,10 +181,21 @@ export function DetailSheet({
             </div>
           </div>
           <div className="rank-row">
-            <span>Fire rate</span>
+            <span>{isBallista ? "Guard dogs" : "Fire rate"}</span>
             <div className="pips">
-              {[1, 2, 3].map((n) => (
-                <i key={n} className={(ui.selectedRanks?.rate ?? 1) >= n ? "on" : ""} />
+              {(isBallista ? [1, 2] : [1, 2, 3]).map((n) => (
+                <i
+                  key={n}
+                  className={
+                    isBallista
+                      ? (ui.selectedRanks?.rate ?? 1) > n
+                        ? "on"
+                        : ""
+                      : (ui.selectedRanks?.rate ?? 1) >= n
+                        ? "on"
+                        : ""
+                  }
+                />
               ))}
             </div>
           </div>
@@ -193,7 +205,7 @@ export function DetailSheet({
       {isBarracks && !isEnemy && (
         <>
           <p className="detail-note">
-            Trains your army. Levies crack wards, rams break barricades, riders shrug arrows, and archers walk around road blocks.
+            Trains your army. Levies crack wards, rams break barricades, trebuchets wreck towers, spies wear the foe's peon cloth then die on the job, riders shrug arrows, and archers walk around road blocks.
           </p>
 
           <div className="train-options">
@@ -277,7 +289,7 @@ export function DetailSheet({
                 onClick={onUpgradeRate}
                 disabled={!ui.selectedCanUpgradeRate}
               >
-                {isBarracks ? "Speed" : "Rate"}
+                {isBarracks ? "Speed" : isBallista ? "Dogs" : "Rate"}
                 <em>{ui.selectedCanUpgradeRate ? `${ui.selectedUpgradeCost.rate}g` : "MAX"}</em>
               </button>
             </>

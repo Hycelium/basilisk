@@ -12,7 +12,7 @@ interface BuildBarProps {
 
 const builds: { kind: BuildingKind; label: string; blurb: string }[] = [
   { kind: "watchtower", label: "Watch", blurb: "Fast arrows · best vs light troops" },
-  { kind: "ballista", label: "Ballista", blurb: "Armor-piercing · wards and riders" },
+  { kind: "ballista", label: "Ballista", blurb: "Armor-piercing · upgrade dogs vs spies" },
   { kind: "catapult", label: "Catapult", blurb: "Splash at the gate · breaks barricades" },
   { kind: "barracks", label: "Barracks", blurb: "Trains the counter army" },
   { kind: "house", label: "House", blurb: "+3 peon pop · eco pad" },

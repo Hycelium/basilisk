@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { buildKeepModel } from "../src/game/models/keep";
 import { buildGoldMine } from "../src/game/models/mine";
-import { animateUnit, buildPeonModel, buildUnitModel } from "../src/game/models/units";
+import { animateTrebuchet, animateUnit, buildPeonModel, buildUnitModel } from "../src/game/models/units";
 import { buildRockPile, buildTree, type TreeKind } from "../src/game/models/nature";
 import {
   buildBallistaModel,
@@ -40,7 +40,7 @@ const nature: Build = (team) => {
   return g;
 };
 const animated: THREE.Object3D[] = [];
-const UNIT_KINDS = ["peon", "levy", "raider", "soldier", "brute", "archer", "ward", "runner", "rammer"] as const;
+const UNIT_KINDS = ["peon", "levy", "raider", "soldier", "brute", "archer", "ward", "runner", "rammer", "trebuchet", "spy"] as const;
 const unitModel = (k: (typeof UNIT_KINDS)[number], team: "you" | "foe") => {
   const m = k === "peon" ? buildPeonModel(team) : buildUnitModel(k, team);
   animated.push(m);
@@ -50,7 +50,7 @@ const units: Build = (team) => {
   const g = new THREE.Group();
   UNIT_KINDS.forEach((k, i) => {
     const m = unitModel(k, team);
-    m.position.x = (i - 4) * 14 + (k === "rammer" ? 4 : 0);
+    m.position.x = (i - 4.5) * 16 + (k === "rammer" || k === "trebuchet" ? 4 : 0);
     g.add(m);
   });
   g.scale.setScalar(1.5);
@@ -65,7 +65,7 @@ const MODELS: Record<string, { build: Build; current?: () => THREE.Object3D | nu
         build: (team: "you" | "foe") => {
           const g = new THREE.Group();
           g.add(unitModel(k, team));
-          g.scale.setScalar(k === "rammer" || k === "runner" ? 2.2 : 3.2);
+          g.scale.setScalar(k === "rammer" || k === "runner" || k === "trebuchet" ? 2.2 : 3.2);
           return g;
         },
       },
@@ -161,6 +161,14 @@ renderer.setAnimationLoop(() => {
     const walking = mode === "walk" || (mode === "cycle" && local % 8 < 3);
     const fighting = mode === "attack" || (mode === "cycle" && !walking);
     const cd = 1.3;
+    if (m.getObjectByName("arm") && m.getObjectByName("shot")) {
+      animateTrebuchet(m, {
+        phase: walking ? "packed" : "ready",
+        attackTimer: fighting ? 3.2 - (local % 3.2) : 0,
+        attackCooldown: 3.2,
+      });
+      return;
+    }
     animateUnit(m, local, {
       x: walking ? local * 10 : 0,
       y: 0,

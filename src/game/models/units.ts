@@ -1,5 +1,7 @@
 import * as THREE from "three";
-import type { Team, UnitKind } from "../types";
+import { disguiseTeam, TREBUCHET_PACK, TREBUCHET_UNPACK } from "../balance";
+import type { SiegePhase, Team, UnitKind } from "../types";
+import { buildTrebuchetModel } from "./buildings";
 import { TEAM_CLOTH } from "./materials";
 import { G, M, aim, bake, box, cyl, dag, folds, joint, lathe, put, rodZ, solveArm, sphere, torus, type ArmChain, type UTex } from "./unitKit";
 
@@ -973,6 +975,8 @@ const BUILDERS: Record<string, (t: Team) => THREE.Group> = {
   ward,
   runner,
   rammer: buildRamModel,
+  trebuchet: buildTrebuchetModel,
+  spy: (t) => peon(disguiseTeam(t)),
   peon,
 };
 
@@ -1250,4 +1254,49 @@ function animateHorse(c: Ctl, now: number, moving: boolean, act: number) {
     kn.rotation.x = k;
     fet.rotation.x = f;
   }
+}
+
+const TREB_PACKED = 1.28;
+const TREB_COCKED = -0.95;
+const TREB_FIRE = 0.88;
+
+/** Fold, cock, and fling the throwing arm. Safe on any mesh; no-ops without an "arm". */
+export function animateTrebuchet(
+  root: THREE.Object3D,
+  opts: {
+    phase?: SiegePhase;
+    siegeTimer?: number;
+    attackTimer: number;
+    attackCooldown: number;
+    charge?: number;
+  },
+) {
+  const arm = root.getObjectByName("arm");
+  if (!arm) return;
+  const phase = opts.phase ?? "packed";
+  const packT = TREBUCHET_PACK;
+  const unpackT = TREBUCHET_UNPACK;
+  const wind = -1.38;
+  let rx = TREB_COCKED;
+  if (phase === "packed") {
+    rx = TREB_PACKED;
+  } else if (phase === "packing") {
+    const t = 1 - (opts.siegeTimer ?? 0) / packT;
+    rx = TREB_COCKED + Math.max(0, Math.min(1, t)) * (TREB_PACKED - TREB_COCKED);
+  } else if (phase === "unpacking") {
+    const t = 1 - (opts.siegeTimer ?? 0) / unpackT;
+    rx = TREB_PACKED + Math.max(0, Math.min(1, t)) * (TREB_COCKED - TREB_PACKED);
+  } else {
+    const charge = Math.max(0, Math.min(1, opts.charge ?? 0));
+    const cd = Math.max(0.2, opts.attackCooldown);
+    const kick = opts.attackTimer > cd * 0.68 ? (opts.attackTimer / cd - 0.68) / 0.32 : 0;
+    if (kick > 0) {
+      rx = TREB_COCKED + Math.max(0, Math.min(1, kick)) * (TREB_FIRE - TREB_COCKED);
+    } else {
+      rx = TREB_COCKED + charge * (wind - TREB_COCKED);
+    }
+    const shot = root.getObjectByName("shot");
+    if (shot) shot.visible = kick < 0.42;
+  }
+  arm.rotation.x = rx;
 }

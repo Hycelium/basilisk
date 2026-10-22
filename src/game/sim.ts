@@ -8,11 +8,14 @@ import {
   BUILD_COOLDOWN,
   BUILD_COST,
   BUILD_DAMAGE,
+  BUILD_HP,
   BUILD_PAUSE,
   BUILD_RANGE,
   CATAPULT_SPLASH_RADIUS,
   CATAPULT_VS_BARRICADE,
   CATAPULT_VS_PEON,
+  ARCHER_VS_TREBUCHET,
+  MELEE_VS_TREBUCHET,
   aiWaveStrength,
   combatWaveScale,
   DAMAGE_MULT,
@@ -45,8 +48,22 @@ import {
   START_KEEP_HP,
   towerDamageFactor,
   STARTER_GUARD_RANGE,
+  TREBUCHET_PACK,
+  TREBUCHET_RANGE,
+  TREBUCHET_UNPACK,
   TRAIN_ORDER,
   UNIT_DEFS,
+  ballistaHasDogs,
+  dogRange,
+  isSpyGun,
+  isTrebuchetBuilding,
+  spyKeepDamage,
+  SPY_DISABLE,
+  SPY_KEEP_RANGE,
+  SPY_SABOTAGE_RANGE,
+  TREB_CHARGE_CLICK,
+  TREB_CHARGE_DECAY,
+  trebuchetShot,
   WORLD_H,
   UPGRADE_COST,
   VILLAGER_HP,
@@ -97,6 +114,7 @@ import {
 } from "./campaign";
 import { snapshotUsable, type MatchSnapshot, type RemoteOrder } from "../net/protocol";
 import type {
+  Barricade,
   Building,
   BuildingKind,
   GameState,
@@ -110,6 +128,7 @@ import type {
   UiSnapshot,
   Unit,
   UnitKind,
+  Vec2,
   Villager,
 } from "./types";
 
@@ -203,6 +222,9 @@ export class GameSim {
         attackTimer: 0,
         trainTimer: 0,
         animKick: 0,
+        hp: BUILD_HP.watchtower,
+        maxHp: BUILD_HP.watchtower,
+        disableTimer: 0,
         queue: [],
       },
       {
@@ -219,6 +241,9 @@ export class GameSim {
         attackTimer: 0,
         trainTimer: 0,
         animKick: 0,
+        hp: BUILD_HP.watchtower,
+        maxHp: BUILD_HP.watchtower,
+        disableTimer: 0,
         queue: [],
       },
     ];
@@ -246,6 +271,9 @@ export class GameSim {
       commandTeam: "you",
       possessedId: null,
       possessVisionScore: 0,
+      possessCharge: 0,
+      possessAimBuildingId: null,
+      possessAimBarricadeId: null,
       mapId: map.id,
       time: 0,
       paused: false,
@@ -704,6 +732,9 @@ export class GameSim {
     if (!u || u.hp <= 0 || u.team !== this.localTeam || !u.fromBarracks) return false;
     s.possessedId = u.id;
     s.speed = 1;
+    s.possessCharge = 0;
+    s.possessAimBuildingId = null;
+    s.possessAimBarricadeId = null;
     u.rallyPoint = undefined;
     u.engageFrom = undefined;
     u.targetUnitId = undefined;
@@ -718,6 +749,9 @@ export class GameSim {
     const s = this.state;
     if (s.possessedId == null) return;
     s.possessedId = null;
+    s.possessCharge = 0;
+    s.possessAimBuildingId = null;
+    s.possessAimBarricadeId = null;
     this.possessKeys = { w: false, a: false, s: false, d: false };
     if (reason === "death") this.addToast("Fallen. Click another soldier to take the field.");
   }
@@ -737,6 +771,8 @@ export class GameSim {
     if (s.phase !== "running" || s.paused) return false;
     const u = s.units.find((x) => x.id === s.possessedId);
     if (!u || u.hp <= 0) return false;
+    if (u.kind === "trebuchet") return this.possessTrebuchetFire(u);
+    if (u.kind === "spy") return this.possessSpyAct(u);
     if (u.attackTimer > 0) return false;
     const team = u.team;
     const enemyTeam = this.enemy(team);
@@ -830,6 +866,125 @@ export class GameSim {
     }
     this.emitCombat("meleeHit", u.pos, lookHit, team);
     return true;
+  }
+
+  private possessTrebuchetFire(u: Unit) {
+    if (u.siegePhase === "unpacking" || u.siegePhase === "packing") return false;
+    if (u.siegePhase !== "ready") {
+      this.driveSiegeStance(u, 0, false);
+      return true;
+    }
+    if (u.attackTimer > 0) return false;
+    this.refreshPossessTrebAim(u);
+    const s = this.state;
+    s.possessCharge = Math.min(1, (s.possessCharge ?? 0) + TREB_CHARGE_CLICK);
+    if (s.possessCharge < 1) return true;
+    const shot = this.possessTrebShot(u);
+    if (!shot) {
+      s.possessCharge = 0.82;
+      this.addToast("No tower in the sights.");
+      return false;
+    }
+    s.possessCharge = 0;
+    this.fireTrebuchet(u, shot);
+    return true;
+  }
+
+  private possessTrebAimScore(u: Unit, pos: Vec2) {
+    const fx = Math.sin(this.possessYaw);
+    const fy = -Math.cos(this.possessYaw);
+    const dx = pos.x - u.pos.x;
+    const dy = pos.y - u.pos.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 0.4 || d > TREBUCHET_RANGE) return { d, ok: false, score: -1 };
+    const dot = (dx * fx + dy * fy) / d;
+    return { d, ok: dot >= 0.42, score: dot };
+  }
+
+  private refreshPossessTrebAim(u: Unit) {
+    const s = this.state;
+    s.possessAimBuildingId = null;
+    s.possessAimBarricadeId = null;
+    if (u.siegePhase !== "ready") return;
+    let bestB: Building | undefined;
+    let bestBar: Barricade | undefined;
+    let best = -1;
+    for (const b of s.buildings) {
+      if (b.team === u.team || b.hp <= 0 || !isTrebuchetBuilding(b.kind)) continue;
+      const a = this.possessTrebAimScore(u, b.pos);
+      if (!a.ok || a.score < best) continue;
+      best = a.score;
+      bestB = b;
+      bestBar = undefined;
+    }
+    for (const b of s.barricades) {
+      if (!b.built || b.team === u.team || b.hp <= 0) continue;
+      const a = this.possessTrebAimScore(u, b.pos);
+      if (!a.ok || a.score < best) continue;
+      best = a.score;
+      bestBar = b;
+      bestB = undefined;
+    }
+    if (bestB) s.possessAimBuildingId = bestB.id;
+    else if (bestBar) s.possessAimBarricadeId = bestBar.id;
+  }
+
+  private possessAimLabel(s: GameState) {
+    if (s.possessAimBuildingId != null) {
+      const b = s.buildings.find((x) => x.id === s.possessAimBuildingId);
+      if (b) return buildingName(b.kind);
+    }
+    if (s.possessAimBarricadeId != null) {
+      const wall = s.barricades.find((x) => x.id === s.possessAimBarricadeId);
+      if (wall) return "Barricade";
+    }
+    return "";
+  }
+
+  private possessTrebShot(u: Unit): { fire: () => void } | null {
+    const s = this.state;
+    if (s.possessAimBuildingId != null) {
+      const target = s.buildings.find((b) => b.id === s.possessAimBuildingId);
+      if (target && target.hp > 0) return { fire: () => this.trebuchetHitBuilding(u, target) };
+    }
+    if (s.possessAimBarricadeId != null) {
+      const wall = s.barricades.find((b) => b.id === s.possessAimBarricadeId);
+      if (wall && wall.hp > 0) return { fire: () => this.trebuchetHitBarricade(u, wall) };
+    }
+    return null;
+  }
+
+  private possessSpyAct(u: Unit) {
+    if (u.attackTimer > 0) return false;
+    const fx = Math.sin(this.possessYaw);
+    const fy = -Math.cos(this.possessYaw);
+    const aimAt = (pos: { x: number; y: number }, reach: number) => {
+      const dx = pos.x - u.pos.x;
+      const dy = pos.y - u.pos.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 0.4 || d > reach) return { d, ok: false };
+      const dot = (dx * fx + dy * fy) / d;
+      return { d, ok: dot >= 0.28 };
+    };
+    let best: Building | undefined;
+    let bestD = Infinity;
+    for (const b of this.state.buildings) {
+      if (b.team === u.team || b.hp <= 0 || !isSpyGun(b.kind)) continue;
+      const a = aimAt(b.pos, SPY_SABOTAGE_RANGE + 8);
+      if (!a.ok || a.d >= bestD) continue;
+      best = b;
+      bestD = a.d;
+    }
+    if (best) {
+      this.spySabotage(u, best);
+      return true;
+    }
+    const keep = this.teamKeep(this.enemy(u.team));
+    if (aimAt(keep.pos, SPY_KEEP_RANGE + 6).ok) {
+      this.spySapKeep(u);
+      return true;
+    }
+    return false;
   }
 
   selectBuild(kind: BuildingKind | null) {
@@ -1434,6 +1589,8 @@ export class GameSim {
             y: stagingY,
           }
         : undefined,
+      siegePhase: kind === "trebuchet" ? "packed" : undefined,
+      siegeTimer: 0,
     };
     this.state.units.push(u);
   }
@@ -1757,6 +1914,9 @@ export class GameSim {
       attackTimer: 0,
       trainTimer: 0,
       animKick: 0,
+      hp: BUILD_HP[kind],
+      maxHp: BUILD_HP[kind],
+      disableTimer: 0,
       queue: [],
     });
     if (team === this.localTeam) {
@@ -1788,7 +1948,8 @@ export class GameSim {
     b.spent += cost;
     if (kind === "damage") b.damageRank = (rank + 1) as 1 | 2;
     else b.rateRank = (rank + 1) as 1 | 2;
-    this.tell(team, `${kind} rank ${rank + 2} bought.`);
+    if (b.kind === "ballista" && kind === "rate") this.tell(team, `Guard dogs rank ${rank + 2} posted.`);
+    else this.tell(team, `${kind} rank ${rank + 2} bought.`);
   }
 
   razeSelected() {
@@ -1810,6 +1971,311 @@ export class GameSim {
     if (s.selectedBuildingId === b.id) s.selectedBuildingId = null;
     if (refundG > 0 || refundW > 0) this.tell(team, `Razed for +${refundG}g +${refundW}w.`);
     else this.tell(team, "Razed. The first tower returns no resources.");
+  }
+
+  private wreckBuilding(b: Building, from: Unit) {
+    const s = this.state;
+    s.buildings = s.buildings.filter((x) => x.id !== b.id);
+    if (s.selectedBuildingId === b.id) s.selectedBuildingId = null;
+    s.shake = Math.max(s.shake, 0.14);
+    this.addFloat("WRECK", b.pos.x, b.pos.y - 10, "#e4bd77");
+    this.tell(from.team, `Trebuchet wrecked the ${buildingName(b.kind)}.`);
+    this.tell(b.team, `A trebuchet wrecked your ${buildingName(b.kind)}.`);
+    if (from.id === s.possessedId) this.notePossessVision(1);
+  }
+
+  private driveSiegeStance(u: Unit, dt: number, packUp: boolean) {
+    if (!u.siegePhase) u.siegePhase = "packed";
+    if (packUp) {
+      if (u.siegePhase === "packed") return;
+      if (u.siegePhase === "ready") {
+        u.siegePhase = "packing";
+        u.siegeTimer = TREBUCHET_PACK;
+      } else if (u.siegePhase === "unpacking") {
+        const done = 1 - (u.siegeTimer ?? TREBUCHET_UNPACK) / TREBUCHET_UNPACK;
+        u.siegePhase = "packing";
+        u.siegeTimer = TREBUCHET_PACK * Math.max(0, Math.min(1, done));
+      }
+      if (u.siegePhase === "packing") {
+        u.siegeTimer = (u.siegeTimer ?? 0) - dt;
+        if ((u.siegeTimer ?? 0) <= 0) {
+          u.siegePhase = "packed";
+          u.siegeTimer = 0;
+        }
+      }
+      return;
+    }
+    if (u.siegePhase === "ready") return;
+    if (u.siegePhase === "packed") {
+      u.siegePhase = "unpacking";
+      u.siegeTimer = TREBUCHET_UNPACK;
+    } else if (u.siegePhase === "packing") {
+      const done = 1 - (u.siegeTimer ?? TREBUCHET_PACK) / TREBUCHET_PACK;
+      u.siegePhase = "unpacking";
+      u.siegeTimer = TREBUCHET_UNPACK * Math.max(0, Math.min(1, done));
+    }
+    if (u.siegePhase === "unpacking") {
+      u.siegeTimer = (u.siegeTimer ?? 0) - dt;
+      if ((u.siegeTimer ?? 0) <= 0) {
+        u.siegePhase = "ready";
+        u.siegeTimer = 0;
+      }
+    }
+  }
+
+  private trebuchetHitBuilding(u: Unit, b: Building) {
+    const dmg = trebuchetShot(b.maxHp);
+    b.hp -= dmg;
+    this.emitCombat("trebuchet", u.pos, b.pos, u.team);
+    this.addFloat(`-${dmg}`, b.pos.x, b.pos.y - 8, "#e8d39a");
+    if (b.hp <= 0) this.wreckBuilding(b, u);
+    else if (u.id === this.state.possessedId) this.notePossessVision(0.25);
+  }
+
+  private trebuchetHitBarricade(u: Unit, wall: Barricade) {
+    const dmg = trebuchetShot(wall.maxHp);
+    wall.hp -= dmg;
+    this.emitCombat("trebuchet", u.pos, wall.pos, u.team);
+    this.addFloat(wall.hp > 0 ? `-${dmg}` : "BREACH", wall.pos.x, wall.pos.y - 9, "#e4bd77");
+    if (wall.hp <= 0) {
+      this.state.barricades = this.state.barricades.filter((b) => b.id !== wall.id);
+      this.state.shake = Math.max(this.state.shake, 0.08);
+      if (u.id === this.state.possessedId) this.notePossessVision(1);
+    } else if (u.id === this.state.possessedId) {
+      this.notePossessVision(0.25);
+    }
+  }
+
+  private pickTrebuchetAim(u: Unit): { pos: Vec2; inRange: boolean; fire: () => void } | null {
+    let bestB: Building | undefined;
+    let bestBd = Infinity;
+    for (const b of this.state.buildings) {
+      if (b.team === u.team || b.hp <= 0 || !isTrebuchetBuilding(b.kind)) continue;
+      const d = dist(u.pos, b.pos);
+      if (d < bestBd) {
+        bestBd = d;
+        bestB = b;
+      }
+    }
+    let bestBar: Barricade | undefined;
+    let bestBard = Infinity;
+    for (const b of this.state.barricades) {
+      if (!b.built || b.team === u.team || b.hp <= 0) continue;
+      const d = dist(u.pos, b.pos);
+      if (d < bestBard) {
+        bestBard = d;
+        bestBar = b;
+      }
+    }
+    if (bestB && bestBd <= TREBUCHET_RANGE) {
+      const target = bestB;
+      return { pos: target.pos, inRange: true, fire: () => this.trebuchetHitBuilding(u, target) };
+    }
+    if (bestBar && bestBard <= TREBUCHET_RANGE) {
+      const wall = bestBar;
+      return { pos: wall.pos, inRange: true, fire: () => this.trebuchetHitBarricade(u, wall) };
+    }
+    if (bestB) return { pos: bestB.pos, inRange: false, fire: () => {} };
+    if (bestBar) return { pos: bestBar.pos, inRange: false, fire: () => {} };
+    return null;
+  }
+
+  private fireTrebuchet(u: Unit, aim: { fire: () => void }) {
+    u.attackTimer = u.attackCooldown;
+    aim.fire();
+  }
+
+  private stepTrebuchet(u: Unit, team: Team, dt: number) {
+    if (u.aiHeldForRush && u.aiStagingPoint) {
+      this.driveSiegeStance(u, dt, true);
+      if (u.siegePhase === "packed" && dist(u.pos, u.aiStagingPoint) > 4) {
+        moveTowards(u.pos, u.aiStagingPoint, u.speed, dt);
+      }
+      return;
+    }
+    if (u.rallyPoint) {
+      this.driveSiegeStance(u, dt, true);
+      if (u.siegePhase === "packed") {
+        moveTowards(u.pos, u.rallyPoint, u.speed, dt);
+        if (dist(u.pos, u.rallyPoint) < 5) u.rallyPoint = undefined;
+      }
+      return;
+    }
+    const aim = this.pickTrebuchetAim(u);
+    if (!aim) {
+      this.driveSiegeStance(u, dt, true);
+      if (u.siegePhase !== "packed") return;
+      const keep = this.teamKeep(this.enemy(team));
+      if (dist(u.pos, keep.pos) > STARTER_GUARD_RANGE + 30) {
+        moveTowards(u.pos, keep.pos, u.speed, dt);
+        const roadX = lanePathX(this.activeMap.seed, team, u.lane, u.pos.y);
+        const lateral = Math.min(Math.abs(roadX - u.pos.x), u.speed * 0.55 * dt);
+        u.pos.x += Math.sign(roadX - u.pos.x) * lateral;
+      }
+      return;
+    }
+    if (!aim.inRange) {
+      this.driveSiegeStance(u, dt, true);
+      if (u.siegePhase === "packed") moveTowards(u.pos, aim.pos, u.speed, dt);
+      return;
+    }
+    this.driveSiegeStance(u, dt, false);
+    if (u.siegePhase === "ready" && u.attackTimer <= 0) this.fireTrebuchet(u, aim);
+  }
+
+  private pickSpyGun(u: Unit): Building | undefined {
+    let best: Building | undefined;
+    let bestD = Infinity;
+    for (const b of this.state.buildings) {
+      if (b.team === u.team || b.hp <= 0 || !isSpyGun(b.kind)) continue;
+      if ((b.disableTimer ?? 0) > 0.4) continue;
+      if (this.dogKillRange(b.pos, u.team)) continue;
+      const d = dist(u.pos, b.pos);
+      if (d < bestD) {
+        bestD = d;
+        best = b;
+      }
+    }
+    return best;
+  }
+
+  private dogKennels(spyTeam: Team) {
+    return this.state.buildings.filter((b) => b.team !== spyTeam && b.hp > 0 && dogRange(b) > 0);
+  }
+
+  private dogKillRange(pos: Vec2, spyTeam: Team) {
+    for (const k of this.dogKennels(spyTeam)) {
+      if (dist(pos, k.pos) <= dogRange(k)) return true;
+    }
+    return false;
+  }
+
+  private tryDogKill(u: Unit) {
+    if (!this.dogKillRange(u.pos, u.team)) return false;
+    this.spyBurn(u, "dogs");
+    return true;
+  }
+
+  private segHitsCircle(a: Vec2, b: Vec2, c: Vec2, r: number) {
+    const abx = b.x - a.x;
+    const aby = b.y - a.y;
+    const acx = c.x - a.x;
+    const acy = c.y - a.y;
+    const ab2 = abx * abx + aby * aby || 1;
+    const t = Math.max(0, Math.min(1, (acx * abx + acy * aby) / ab2));
+    return Math.hypot(a.x + abx * t - c.x, a.y + aby * t - c.y) < r;
+  }
+
+  private spyGoalAroundDogs(u: Unit, dest: Vec2): Vec2 {
+    let goal = dest;
+    for (const k of this.dogKennels(u.team)) {
+      const r = dogRange(k) + 10;
+      const hits = this.segHitsCircle(u.pos, goal, k.pos, r);
+      if (dist(u.pos, k.pos) < r + 6 || hits) {
+        const dx = u.pos.x - k.pos.x;
+        const dy = u.pos.y - k.pos.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = dx / len;
+        const ny = dy / len;
+        const tx = -ny;
+        const ty = nx;
+        const side = Math.sign(tx * (goal.x - k.pos.x) + ty * (goal.y - k.pos.y)) || 1;
+        goal = {
+          x: k.pos.x + nx * r + tx * side * 14,
+          y: k.pos.y + ny * r + ty * side * 14,
+        };
+      }
+    }
+    return goal;
+  }
+
+  private spyBurn(u: Unit, why: "dogs" | "blown") {
+    u.hp = 0;
+    if (why === "dogs") {
+      this.emitCombat("meleeHit", u.pos, u.pos, this.enemy(u.team));
+      this.addFloat("DOGS", u.pos.x, u.pos.y - 9, "#e4bd77");
+      this.tell(u.team, "Guard dogs tore the spy apart.");
+    } else {
+      this.addFloat("BLOWN", u.pos.x, u.pos.y - 9, "#c8b8ff");
+    }
+    if (u.id === this.state.possessedId) this.notePossessVision(0.5);
+  }
+
+  private spySabotage(u: Unit, b: Building) {
+    if (ballistaHasDogs(b)) {
+      this.spyBurn(u, "dogs");
+      return;
+    }
+    b.disableTimer = SPY_DISABLE;
+    u.attackTimer = u.attackCooldown;
+    this.emitCombat("sabotage", u.pos, b.pos, u.team);
+    this.addFloat("SILENCE", b.pos.x, b.pos.y - 10, "#c8b8ff");
+    this.tell(u.team, `Spy silenced the ${buildingName(b.kind)}.`);
+    this.spyBurn(u, "blown");
+  }
+
+  private spySapKeep(u: Unit) {
+    const keep = this.teamKeep(this.enemy(u.team));
+    const dmg = spyKeepDamage();
+    keep.hp -= dmg;
+    keep.hitFlash = 0.22;
+    u.attackTimer = u.attackCooldown + u.siegeGap;
+    this.emitCombat("sabotage", u.pos, keep.pos, u.team);
+    if (keep.team === "you") {
+      this.state.redFlash = 0.2;
+      this.state.shake = 0.16;
+    }
+    this.addFloat(`-${dmg}`, keep.pos.x, keep.pos.y - 18, "#e8c8ff");
+    this.spyBurn(u, "blown");
+  }
+
+  private flankSpyBarricade(u: Unit, dt: number) {
+    const dir = u.team === "you" ? -1 : 1;
+    const flankSide = u.lane === 0 ? -1 : 1;
+    const wall = this.state.barricades
+      .filter(
+        (b) =>
+          b.built &&
+          b.team !== u.team &&
+          b.lane === u.lane &&
+          Math.abs(b.pos.y - u.pos.y) <= 18,
+      )
+      .sort((a, b) => Math.abs(a.pos.y - u.pos.y) - Math.abs(b.pos.y - u.pos.y))[0];
+    if (!wall) return false;
+    const bypassX = wall.pos.x + flankSide * 32;
+    const lateral = Math.min(Math.abs(bypassX - u.pos.x), u.speed * 0.58 * dt);
+    u.pos.x += Math.sign(bypassX - u.pos.x) * lateral;
+    u.pos.y += dir * u.speed * 0.44 * dt;
+    return true;
+  }
+
+  private stepSpy(u: Unit, team: Team, dt: number) {
+    if (this.tryDogKill(u)) return;
+    if (u.aiHeldForRush && u.aiStagingPoint) {
+      if (dist(u.pos, u.aiStagingPoint) > 4) moveTowards(u.pos, u.aiStagingPoint, u.speed, dt);
+      return;
+    }
+    if (u.rallyPoint) {
+      moveTowards(u.pos, this.spyGoalAroundDogs(u, u.rallyPoint), u.speed, dt);
+      if (dist(u.pos, u.rallyPoint) < 5) u.rallyPoint = undefined;
+      return;
+    }
+    if (this.flankSpyBarricade(u, dt)) return;
+    const gun = this.pickSpyGun(u);
+    if (gun) {
+      if (dist(u.pos, gun.pos) <= SPY_SABOTAGE_RANGE) {
+        if (u.attackTimer <= 0) this.spySabotage(u, gun);
+        return;
+      }
+      moveTowards(u.pos, this.spyGoalAroundDogs(u, gun.pos), u.speed, dt);
+      return;
+    }
+    const keep = this.teamKeep(this.enemy(team));
+    if (dist(u.pos, keep.pos) <= SPY_KEEP_RANGE) {
+      if (u.attackTimer <= 0) this.spySapKeep(u);
+      return;
+    }
+    moveTowards(u.pos, this.spyGoalAroundDogs(u, keep.pos), u.speed, dt);
   }
 
   enqueueTrain(kind: TrainKind, team: Team = "you") {
@@ -1890,6 +2356,7 @@ export class GameSim {
   }
 
   private buildingCooldown(b: Building) {
+    if (b.kind === "ballista") return BUILD_COOLDOWN.ballista;
     return BUILD_COOLDOWN[b.kind] * RATE_MULT[b.rateRank];
   }
 
@@ -1900,7 +2367,7 @@ export class GameSim {
   }
 
   private applyTowerDamage(u: Unit, raw: number, kind: BuildingKind) {
-    const dmg = raw * towerDamageFactor(kind, u.towerResist);
+    const dmg = raw * towerDamageFactor(kind, u.towerResist, u.kind);
     u.hp -= dmg;
     return dmg;
   }
@@ -1920,7 +2387,7 @@ export class GameSim {
     if (occupants === 0 || keep.attackTimer > 0) return;
 
     const targets = this.state.units
-      .filter((u) => u.team !== team && dist(u.pos, keep.pos) <= KEEP_ARROW_RANGE)
+      .filter((u) => u.team !== team && u.kind !== "spy" && dist(u.pos, keep.pos) <= KEEP_ARROW_RANGE)
       .sort((a, b) => dist(a.pos, keep.pos) - dist(b.pos, keep.pos));
     const target = targets[0];
     if (!target) return;
@@ -1944,6 +2411,7 @@ export class GameSim {
     );
     for (const t of towers) {
       t.attackTimer -= dt;
+      if ((t.disableTimer ?? 0) > 0) continue;
       if (t.attackTimer > 0) continue;
       const reach = this.towerReach(t);
 
@@ -1956,7 +2424,7 @@ export class GameSim {
       });
 
       const inRange = this.state.units.filter((u) => {
-        if (u.team !== enemyTeam) return false;
+        if (u.team !== enemyTeam || u.kind === "spy") return false;
         if (!t.canRefund && dist(u.pos, keep.pos) <= KEEP_THREAT_RADIUS + 30) return true;
         return dist(u.pos, t.pos) <= reach;
       });
@@ -1989,6 +2457,8 @@ export class GameSim {
           return b.towerResist - a.towerResist;
         }
         if (t.kind === "catapult") {
+          const treb = (b.kind === "trebuchet" ? 1 : 0) - (a.kind === "trebuchet" ? 1 : 0);
+          if (treb !== 0) return treb;
           const crowd = (u: Unit) =>
             inRange.reduce((n, o) => n + (dist(o.pos, u.pos) <= CATAPULT_SPLASH_RADIUS ? 1 : 0), 0);
           const packed = crowd(b) - crowd(a);
@@ -2262,6 +2732,7 @@ export class GameSim {
    */
   private meleeDamage(attacker: Unit, target: Unit | Villager) {
     let dealt = attacker.damage;
+    if ("kind" in target && target.kind === "trebuchet") dealt *= MELEE_VS_TREBUCHET;
     if (attacker.kind === "levy" && "kind" in target && target.kind === "ward") {
       dealt *= LEVY_VS_WARD_DAMAGE;
     }
@@ -2277,6 +2748,7 @@ export class GameSim {
     if (attacker.kind !== "archer") return this.meleeDamage(attacker, target);
     let dealt = attacker.damage;
     if ("kind" in target && target.kind === "ward") dealt *= ARCHER_VS_WARD;
+    if ("kind" in target && target.kind === "trebuchet") dealt *= ARCHER_VS_TREBUCHET;
     return dealt;
   }
 
@@ -2326,8 +2798,26 @@ export class GameSim {
       my -= ry;
     }
     const mag = Math.hypot(mx, my);
+    if (u.kind === "spy" && this.tryDogKill(u)) return;
+    if (u.kind === "trebuchet") {
+      this.driveSiegeStance(u, dt, mag > 0.001);
+      if (u.siegePhase !== "ready") this.state.possessCharge = 0;
+      else {
+        this.state.possessCharge = Math.max(0, (this.state.possessCharge ?? 0) - TREB_CHARGE_DECAY * dt);
+        this.refreshPossessTrebAim(u);
+      }
+      if (u.siegePhase !== "packed") {
+        const { minX, maxX } = mapBounds(this.activeMap.seed);
+        u.pos.x = Math.max(minX + 10, Math.min(maxX - 10, u.pos.x));
+        u.pos.y = Math.max(18, Math.min(WORLD_H - 18, u.pos.y));
+        u.rallyPoint = undefined;
+        u.engageFrom = undefined;
+        u.targetUnitId = undefined;
+        return;
+      }
+    }
     if (mag > 0.001) {
-      const speed = u.speed * POSSESS_SPEED_MULT;
+      const speed = u.kind === "trebuchet" ? u.speed : u.speed * POSSESS_SPEED_MULT;
       u.pos.x += (mx / mag) * speed * dt;
       u.pos.y += (my / mag) * speed * dt;
     }
@@ -2357,6 +2847,14 @@ export class GameSim {
       u.attackTimer -= dt;
       if (u.id === this.state.possessedId) {
         this.stepPossessed(u, dt);
+        continue;
+      }
+      if (u.kind === "trebuchet") {
+        this.stepTrebuchet(u, team, dt);
+        continue;
+      }
+      if (u.kind === "spy") {
+        this.stepSpy(u, team, dt);
         continue;
       }
       if (u.kind === "runner" && !this.runnerInMelee(u)) u.chargeReady = true;
@@ -2570,7 +3068,18 @@ export class GameSim {
     if (threats.length === 0) return undefined;
     const stillValid = currentId != null ? threats.find((t) => t.id === currentId) : undefined;
     const priority = (u: Unit) => {
-      const siege = u.kind === "rammer" ? 100 : u.kind === "brute" ? 55 : u.kind === "runner" ? 25 : 10;
+      const siege =
+        u.kind === "rammer"
+          ? 100
+          : u.kind === "trebuchet"
+            ? 90
+            : u.kind === "spy"
+              ? 70
+              : u.kind === "brute"
+                ? 55
+                : u.kind === "runner"
+                  ? 25
+                  : 10;
       return siege + (1 - u.hp / Math.max(1, u.maxHp)) * 20;
     };
     const bestPriority = Math.max(...threats.map(priority));
@@ -2613,7 +3122,7 @@ export class GameSim {
     }
 
     const threatScore = threats.reduce(
-      (score, u) => score + (u.kind === "rammer" ? 3 : u.kind === "brute" ? 2 : 1),
+      (score, u) => score + (u.kind === "rammer" || u.kind === "trebuchet" ? 3 : u.kind === "brute" ? 2 : 1),
       0,
     );
     const critical = keep.hp < keep.maxHp * 0.45 || threatScore >= 6;
@@ -2646,7 +3155,7 @@ export class GameSim {
 
     // Villagers counter exposed siege, but the AI keeps most workers protected
     // instead of throwing its whole economy into every skirmish.
-    const siegeTargets = threats.filter((u) => u.kind === "rammer" || u.kind === "brute");
+    const siegeTargets = threats.filter((u) => u.kind === "rammer" || u.kind === "trebuchet" || u.kind === "brute");
     const desiredMelee = siegeTargets.length > 0 ? Math.min(2, Math.ceil(threatScore / 3)) : 0;
     const melee = peons.filter((v) => v.state === "defend");
     if (melee.length > desiredMelee) {
@@ -2920,7 +3429,10 @@ export class GameSim {
       k.hitFlash = Math.max(0, k.hitFlash - dt);
       k.attackFlash = Math.max(0, k.attackFlash - dt);
     }
-    for (const b of s.buildings) b.animKick = Math.max(0, b.animKick - dt);
+    for (const b of s.buildings) {
+      b.animKick = Math.max(0, b.animKick - dt);
+      b.disableTimer = Math.max(0, (b.disableTimer ?? 0) - dt);
+    }
   }
 
   update(rawDt: number) {
@@ -3082,6 +3594,9 @@ export class GameSim {
       attackTimer: 0,
       trainTimer: 0,
       animKick: 0,
+      hp: BUILD_HP[kind],
+      maxHp: BUILD_HP[kind],
+      disableTimer: 0,
       queue: [],
     });
     return true;
@@ -3101,7 +3616,9 @@ export class GameSim {
 
     const observed = this.aiObservedHumanUnits();
     const lanePressure = [0, 0, 0];
-    for (const unit of observed) lanePressure[unit.lane] += unit.kind === "rammer" ? 3 : 1;
+    for (const unit of observed) {
+      lanePressure[unit.lane] += unit.kind === "rammer" || unit.kind === "trebuchet" ? 3 : 1;
+    }
     const open = mapLanes(this.activeMap.seed).filter((l) => !existing.some((b) => b.lane === l));
     if (open.length === 0) return false;
     // Busiest open road; on a tie, rotate so quiet games still spread walls out.
@@ -3170,7 +3687,9 @@ export class GameSim {
 
     const immediateDefense = this.aiObservedHumanUnits(245).length > 0;
     const groupSize = Math.min(7, 4 + Math.floor(skill / 35));
-    const hasFrontline = held.some((u) => u.kind !== "archer" && u.kind !== "rammer");
+    const hasFrontline = held.some(
+      (u) => u.kind !== "archer" && u.kind !== "rammer" && u.kind !== "trebuchet" && u.kind !== "spy",
+    );
     const hasSupport = held.some((u) => u.kind === "archer" || u.kind === "ward");
     const timedOut = this.state.time >= this.aiRushDeadline;
     const release =
@@ -3204,13 +3723,26 @@ export class GameSim {
     );
     if (towers.length === 0) return false;
     const observed = this.aiObservedHumanUnits();
+    const spies = observed.filter((u) => u.kind === "spy").length;
     const fast = observed.filter((u) => u.kind === "runner" || u.kind === "raider").length;
     const heavy = observed.filter(
-      (u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer",
+      (u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer" || u.kind === "trebuchet",
     ).length;
+    if (spies > 0) {
+      const kennel = towers.find((b) => b.kind === "ballista" && b.rateRank < 2);
+      if (kennel) {
+        const cost = UPGRADE_COST[kennel.rateRank];
+        if (this.state.gold.foe >= cost + AI_RESERVE) {
+          this.spend("foe", cost);
+          kennel.rateRank = (kennel.rateRank + 1) as 1 | 2;
+          kennel.spent += cost;
+          return true;
+        }
+      }
+    }
     const desired = preference === "adaptive" ? (fast > heavy ? "rate" : "damage") : preference;
     const laneThreat = [0, 0, 0];
-    for (const unit of observed) laneThreat[unit.lane] += unit.kind === "rammer" ? 2 : 1;
+    for (const unit of observed) laneThreat[unit.lane] += unit.kind === "rammer" || unit.kind === "trebuchet" ? 2 : 1;
     const threatenedLane = topLane(mapLanes(this.activeMap.seed), (lane) => laneThreat[lane]);
     const pads = this.getPads("foe");
 
@@ -3333,7 +3865,7 @@ export class GameSim {
     const ranged = observed.filter((u) => u.kind === "archer").length;
     const fast = observed.filter((u) => u.kind === "runner" || u.kind === "raider").length;
     const heavy = observed.filter(
-      (u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer",
+      (u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer" || u.kind === "trebuchet",
     ).length;
     const visibleBarricades = this.state.barricades.filter((b) => b.team === "you" && b.built).length;
     const force = this.state.units.filter((u) => u.team === "foe" && u.fromBarracks);
@@ -3342,7 +3874,11 @@ export class GameSim {
       force.filter((u) => u.kind === kind).length + queuedKinds.filter((k) => k === kind).length;
 
     let candidates: TrainKind[];
-    if ((visibleBarricades > 0 || yourTowers >= 4) && count("rammer") === 0) {
+    if (yourTowers >= 2 && count("spy") === 0) {
+      candidates = ["spy", "levy", "runner", "ward"];
+    } else if (yourTowers >= 3 && wood >= (UNIT_DEFS.trebuchet.woodCost ?? 118) && count("trebuchet") < 2) {
+      candidates = ["trebuchet", "rammer", "ward", "levy"];
+    } else if ((visibleBarricades > 0 || yourTowers >= 4) && count("rammer") === 0) {
       candidates = ["rammer", "ward", "runner", "levy"];
     } else if (ranged >= Math.max(2, observed.length * 0.4)) {
       candidates = ["ward", "runner", "archer", "levy"];
@@ -3483,6 +4019,8 @@ export class GameSim {
         attackTimer: u.attackTimer,
         rallyX: u.rallyPoint?.x,
         rallyY: u.rallyPoint?.y,
+        siegePhase: u.siegePhase,
+        siegeTimer: u.siegeTimer,
       })),
       villagers: s.villagers.map((v) => ({
         id: v.id,
@@ -3518,6 +4056,9 @@ export class GameSim {
         damageRank: b.damageRank,
         rateRank: b.rateRank,
         animKick: b.animKick,
+        hp: b.hp,
+        maxHp: b.maxHp,
+        disableTimer: b.disableTimer,
         queue: b.queue.map((job) => ({ kind: job.kind, timeLeft: job.timeLeft, totalTime: job.totalTime })),
         rallyX: b.rallyPoint?.x,
         rallyY: b.rallyPoint?.y,
@@ -3717,6 +4258,8 @@ export class GameSim {
         fromBarracks: u.fromBarracks,
         ignoreEnemyCreeps: !u.fromBarracks,
         rallyPoint: point(u.rallyX, u.rallyY),
+        siegePhase: u.siegePhase ?? (u.kind === "trebuchet" ? "packed" : undefined),
+        siegeTimer: u.siegeTimer,
       });
     }
     s.villagers = [];
@@ -3770,6 +4313,9 @@ export class GameSim {
       attackTimer: 0,
       trainTimer: 0,
       animKick: b.animKick,
+      hp: b.hp ?? BUILD_HP[b.kind],
+      maxHp: b.maxHp ?? BUILD_HP[b.kind],
+      disableTimer: b.disableTimer ?? 0,
       queue: b.queue.map((job) => ({ kind: job.kind, timeLeft: job.timeLeft, totalTime: job.totalTime })),
       rallyPoint: point(b.rallyX, b.rallyY),
     }));
@@ -3807,6 +4353,9 @@ export class GameSim {
     s.hoveredPadId = hoveredPadId;
     s.possessedId = null;
     s.possessVisionScore = 0;
+    s.possessCharge = 0;
+    s.possessAimBuildingId = null;
+    s.possessAimBarricadeId = null;
     s.buildSelection = buildSelection;
     s.selectedKeepTeam = selectedKeepTeam;
     const living = new Set(s.villagers.filter((v) => v.team === this.localTeam && v.hp > 0).map((v) => v.id));
@@ -3972,6 +4521,8 @@ export class GameSim {
             maxHp: body.maxHp,
             visionScore: s.possessVisionScore ?? 0,
             visionMax: POSSESS_VISION_SCORE,
+            charge: body.kind === "trebuchet" ? s.possessCharge ?? 0 : 0,
+            aimLabel: this.possessAimLabel(s),
           }
         : null,
     };
@@ -3985,7 +4536,7 @@ export function hitTest(s: GameState, x: number, y: number): RectHit | null {
     }
   }
   for (const u of s.units) {
-    if (dist({ x, y }, u.pos) < 16) return { kind: "unit", id: String(u.id) };
+    if (dist({ x, y }, u.pos) < (u.kind === "trebuchet" ? 24 : 16)) return { kind: "unit", id: String(u.id) };
   }
   for (const b of s.buildings) {
     if (dist({ x, y }, b.pos) < 28) return { kind: "building", id: String(b.id) };

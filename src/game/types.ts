@@ -1,6 +1,7 @@
 export type Team = "you" | "foe";
 export type WaveUnitKind = "raider" | "soldier" | "brute" | "runner" | "ward";
-export type TrainKind = "levy" | "runner" | "archer" | "ward" | "rammer";
+export type TrainKind = "levy" | "runner" | "archer" | "ward" | "rammer" | "trebuchet" | "spy";
+export type SiegePhase = "packed" | "unpacking" | "ready" | "packing";
 export type UnitKind = WaveUnitKind | TrainKind;
 export type BuildingKind = "watchtower" | "ballista" | "catapult" | "barracks" | "house" | "barricade";
 export type ResourceKind = "pine" | "copper";
@@ -61,6 +62,9 @@ export interface Unit {
   engageFrom?: Vec2;
   aiHeldForRush?: boolean;
   aiStagingPoint?: Vec2;
+  /** Trebuchet only. Packed to roll; unpacked and ready to throw. */
+  siegePhase?: SiegePhase;
+  siegeTimer?: number;
 }
 
 /** First-person body the local player is driving, or none. */
@@ -73,6 +77,10 @@ export interface PossessedUi {
   /** Kills and keep/barricade hits while driving soldiers this match. */
   visionScore: number;
   visionMax: number;
+  /** Trebuchet possess: 0–1 wind on the arm. */
+  charge: number;
+  /** Building or barricade currently in the trebuchet sights. */
+  aimLabel: string;
 }
 
 export type WavePhase = "build" | "spawning" | "fighting";
@@ -97,8 +105,12 @@ export interface Building {
   attackTimer: number;
   trainTimer: number;
   animKick: number;
+  hp: number;
+  maxHp: number;
   queue: TrainJob[];
   rallyPoint?: Vec2;
+  /** Spy sabotage. Gun stays silent while this is above zero. */
+  disableTimer?: number;
 }
 
 export interface Pad {
@@ -183,7 +195,9 @@ export type CombatEventKind =
   | "woodHit"
   | "woodBreak"
   | "buildComplete"
-  | "waveHorn";
+  | "waveHorn"
+  | "trebuchet"
+  | "sabotage";
 
 export interface CombatEvent {
   id: number;
@@ -298,6 +312,10 @@ export interface GameState {
   possessedId: number | null;
   /** Kills and keep/barricade hits scored while possessed this match. Unlocks FPS zoom-out. */
   possessVisionScore: number;
+  /** Trebuchet possess wind (0–1). Unused for other bodies. */
+  possessCharge: number;
+  possessAimBuildingId: number | null;
+  possessAimBarricadeId: number | null;
 }
 
 export interface QueueSlotUi {

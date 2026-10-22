@@ -169,6 +169,7 @@ function saveCampaign(progress: CampaignProgress) {
 export function unitPlural(kind: TrainKind) {
   const label = UNIT_DEFS[kind].label;
   if (label === "Levy") return "Levies";
+  if (label === "Spy") return "Spies";
   return `${label}s`;
 }
 
@@ -185,10 +186,20 @@ export function missionStatus(id: number, progress: CampaignProgress = loadCampa
 }
 
 export function hasCampaignUnit(kind: string, progress: CampaignProgress = loadCampaign()) {
+  if (kind === "trebuchet") return progress.unlocked.includes("rammer");
+  if (kind === "spy") return progress.unlocked.includes("archer");
   return progress.unlocked.includes(kind as TrainKind);
 }
 
 export function unlockLine(kind: string) {
+  if (kind === "trebuchet") {
+    if (hasCampaignUnit(kind)) return "";
+    return "Beat Ramholt Crown to muster Trebuchets";
+  }
+  if (kind === "spy") {
+    if (hasCampaignUnit(kind)) return "";
+    return "Beat Ashbow to muster Spies";
+  }
   const mission = MISSIONS.find((m) => m.mode === "march" && m.unit === kind);
   if (!mission || hasCampaignUnit(kind)) return "";
   return `Beat ${mission.nation} to muster ${unitPlural(mission.unit)}`;

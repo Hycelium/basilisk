@@ -23,7 +23,7 @@ function featuresFrom(sim: GameSim): LearnFeatures {
     wave: s.waveIndex,
     hpLead: s.keeps.foe.hp - s.keeps.you.hp,
     yourFast: observedArmy.filter((u) => u.kind === "runner" || u.kind === "raider").length,
-    yourHeavy: observedArmy.filter((u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer").length,
+    yourHeavy: observedArmy.filter((u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer" || u.kind === "trebuchet").length,
     yourRanged: observedArmy.filter((u) => u.kind === "archer").length,
   };
 }

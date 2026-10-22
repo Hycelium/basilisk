@@ -1,11 +1,16 @@
 import * as THREE from "three";
 import {
   BUILD_RANGE,
+  dogRange,
   POSSESS_FOV_TIGHT,
   POSSESS_FOV_WIDE,
   POSSESS_PULL_MAX,
   POSSESS_VISION_SCORE,
   STARTER_GUARD_RANGE,
+  TREB_POSSESS_AHEAD,
+  TREB_POSSESS_BACK,
+  TREB_POSSESS_FOV,
+  TREB_POSSESS_HEIGHT,
   WORLD_H,
   WORLD_W,
 } from "./balance";
@@ -22,7 +27,7 @@ import { configureStructureMaterials } from "./models/materials";
 import { buildTree } from "./models/nature";
 import { buildGoldMine } from "./models/mine";
 import { configureUnitMaterials } from "./models/unitKit";
-import { animateUnit, buildPeonModel, buildUnitModel, setPeonGear } from "./models/units";
+import { animateTrebuchet, animateUnit, buildPeonModel, buildUnitModel, setPeonGear } from "./models/units";
 import {
   buildBallistaModel,
   buildBarracksModel,
@@ -154,6 +159,7 @@ export class GameRenderer {
   private rallyLinePos: Float32Array;
   private padMaterials = new Map<string, THREE.MeshBasicMaterial>();
   private rangeRingFor = "";
+  private dogRangeRing: THREE.Mesh | null = null;
   // Quality
   private qualitySetting: QualitySetting = "auto";
   private tier: QualityTier = "high";
@@ -229,6 +235,7 @@ export class GameRenderer {
   private fpsSwing = 0;
   private fpsPull = 0;
   private fpsMaxPull = 0;
+  private trebView = false;
   private fpsHead: THREE.Object3D | null = null;
   private fpsEye = new THREE.Vector3();
   private fpsAt = new THREE.Vector3();
@@ -348,11 +355,7 @@ export class GameRenderer {
     this.knownCombatEvents.clear();
     this.particles.length = 0;
     this.rangeRingFor = "";
-    if (this.rangeRing) {
-      this.dynamicRoot.remove(this.rangeRing);
-      this.rangeRing.geometry.dispose();
-      this.rangeRing = null;
-    }
+    this.disposeRangeRings();
     for (const [k, obj] of [...this.entityMap]) {
       this.dynamicRoot.remove(obj);
       this.clearAnimation(k);
@@ -390,6 +393,29 @@ export class GameRenderer {
   private findUnitHead(obj: THREE.Object3D, kind: string) {
     if (kind === "rammer") return obj.getObjectByName("c0.head") ?? obj.getObjectByName("head") ?? null;
     return obj.getObjectByName("head") ?? null;
+  }
+
+  private applyTrebuchetCamera(body: Unit, shake: number) {
+    const yaw = this.fpsYaw;
+    const pitch = THREE.MathUtils.clamp(this.fpsPitch, -0.62, 0.18);
+    const lx = Math.sin(yaw);
+    const lz = -Math.cos(yaw);
+    const x = body.pos.x - WORLD_W / 2;
+    const z = body.pos.y - WORLD_H / 2;
+    const jx = shake > 0 ? (Math.random() - 0.5) * 1.4 : 0;
+    const jy = shake > 0 ? (Math.random() - 0.5) * 0.6 : 0;
+    const jz = shake > 0 ? (Math.random() - 0.5) * 1.4 : 0;
+    if (Math.abs(this.camera.fov - TREB_POSSESS_FOV) > 0.2 || this.camera.near !== 2.4) {
+      this.camera.fov = TREB_POSSESS_FOV;
+      this.camera.near = 2.4;
+      this.camera.updateProjectionMatrix();
+    }
+    this.camera.position.set(
+      x - lx * TREB_POSSESS_BACK + jx,
+      TREB_POSSESS_HEIGHT + pitch * -36 + jy,
+      z - lz * TREB_POSSESS_BACK + jz,
+    );
+    this.camera.lookAt(x + lx * TREB_POSSESS_AHEAD, 10 + pitch * 48, z + lz * TREB_POSSESS_AHEAD);
   }
 
   private applyFpsCamera(eye: THREE.Vector3, shake: number) {
@@ -502,9 +528,10 @@ export class GameRenderer {
     return this.fpsYaw;
   }
 
-  enterPossess(yaw: number) {
+  enterPossess(yaw: number, siege = false) {
+    this.trebView = siege;
     this.fpsYaw = yaw;
-    this.fpsPitch = 0.08;
+    this.fpsPitch = siege ? -0.28 : 0.08;
     this.fpsSwing = 0;
     this.fpsPull = 0;
   }
@@ -792,6 +819,7 @@ export class GameRenderer {
   onWheel(ev: WheelEvent) {
     ev.preventDefault();
     if (this.fpsLive) {
+      if (this.trebView) return;
       const step = ev.deltaY > 0 ? 5.4 : -5.4;
       this.fpsPull = THREE.MathUtils.clamp(this.fpsPull + step, 0, this.fpsMaxPull);
       return;
@@ -830,6 +858,18 @@ export class GameRenderer {
     if (this.particles.length > cap) this.particles.splice(0, this.particles.length - cap);
   }
 
+  private shootRock(fromX: number, fromY: number, toX: number, toY: number) {
+    const mesh = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(1.35, 0),
+      new THREE.MeshStandardMaterial({ color: 0x8a8070, roughness: 0.85 }),
+    );
+    const start = to3(fromX, fromY, 16);
+    const end = to3(toX, toY, 6);
+    mesh.position.copy(start);
+    this.dynamicRoot.add(mesh);
+    this.arrows.push({ mesh, start, end, life: 0.72, max: 0.72 });
+  }
+
   private shootArrow(fromX: number, fromY: number, toX: number, toY: number, spread: number, startH = 12) {
     const mesh = new THREE.Mesh(
       new THREE.CylinderGeometry(0.16, 0.22, 5.5, 5),
@@ -863,6 +903,11 @@ export class GameRenderer {
       const hit = event.target ?? event.pos;
       if (event.kind === "arrow" && event.target) {
         this.shootArrow(event.pos.x, event.pos.y, event.target.x, event.target.y, 0);
+      } else if (event.kind === "trebuchet" && event.target) {
+        this.shootRock(event.pos.x, event.pos.y, event.target.x, event.target.y);
+        this.burst(hit.x, hit.y, 10, 0xe8b66b, 18, 54);
+      } else if (event.kind === "sabotage") {
+        this.burst(hit.x, hit.y, 8, 0xb48cff, 14, 42);
       } else if (event.kind === "meleeHit") {
         this.burst(hit.x, hit.y, 7, 0xffd48a, 7, 34);
       } else if (event.kind === "ramImpact" || event.kind === "keepImpact") {
@@ -970,25 +1015,34 @@ export class GameRenderer {
       state.possessedId != null ? state.units.find((u) => u.id === state.possessedId && u.hp > 0) : undefined;
     if (body) {
       this.fpsSwing = Math.max(0, this.fpsSwing - dt * 5.4);
+      this.fpsHands.visible = false;
+      if (!this.fpsLive) this.fpsLive = true;
+      if (body.kind === "trebuchet") {
+        this.trebView = true;
+        if (this.fpsHead) {
+          this.fpsHead.visible = true;
+          this.fpsHead = null;
+        }
+        this.applyTrebuchetCamera(body, state.shake);
+        return;
+      }
+      this.trebView = false;
       this.fpsMaxPull =
         (Math.min(state.possessVisionScore ?? 0, POSSESS_VISION_SCORE) / POSSESS_VISION_SCORE) * POSSESS_PULL_MAX;
       this.fpsPull = Math.min(this.fpsPull, this.fpsMaxPull);
       const visionT = this.fpsMaxPull > 0.01 ? this.fpsPull / this.fpsMaxPull : 0;
       const fov = THREE.MathUtils.lerp(POSSESS_FOV_TIGHT, POSSESS_FOV_WIDE, visionT);
-      if (!this.fpsLive) {
-        this.fpsLive = true;
-        this.camera.near = 0.18;
-        this.fpsHands.visible = false;
-      }
-      if (Math.abs(this.camera.fov - fov) > 0.15) {
+      if (Math.abs(this.camera.fov - fov) > 0.15 || this.camera.near !== 0.18) {
         this.camera.fov = fov;
-        this.camera.updateProjectionMatrix();
-      } else if (this.camera.near !== 0.18) {
         this.camera.near = 0.18;
         this.camera.updateProjectionMatrix();
       }
       const mesh = this.entityMap.get(`unit-${body.id}`);
-      this.fpsEye.set(body.pos.x - WORLD_W / 2, body.kind === "runner" ? 14.2 : 11.2, body.pos.y - WORLD_H / 2);
+      this.fpsEye.set(
+        body.pos.x - WORLD_W / 2,
+        body.kind === "runner" ? 14.2 : 11.2,
+        body.pos.y - WORLD_H / 2,
+      );
       if (mesh) {
         mesh.updateMatrixWorld(true);
         const head = this.findUnitHead(mesh, body.kind);
@@ -1005,6 +1059,7 @@ export class GameRenderer {
     }
     if (this.fpsLive) {
       this.fpsLive = false;
+      this.trebView = false;
       this.fpsHands.visible = false;
       this.fpsSwing = 0;
       this.fpsPull = 0;
@@ -1232,6 +1287,55 @@ export class GameRenderer {
         return built;
       });
       setPos3(obj, b.pos.x, b.pos.y, 0);
+      const silenced = (b.disableTimer ?? 0) > 0;
+      let hush = obj.userData.hush as THREE.Mesh | undefined;
+      if (!hush) {
+        hush = new THREE.Mesh(
+          new THREE.RingGeometry(9, 13.5, 22),
+          new THREE.MeshBasicMaterial({
+            color: 0x2a1020,
+            transparent: true,
+            opacity: 0.55,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        );
+        hush.rotation.x = -Math.PI / 2;
+        hush.position.y = 0.55;
+        obj.add(hush);
+        obj.userData.hush = hush;
+      }
+      hush.visible = silenced;
+      obj.scale.setScalar(silenced ? 0.94 : 1);
+      if (b.kind === "ballista") {
+        for (let i = 0; i < 2; i++) {
+          const dog = obj.getObjectByName(`guardDog${i}`);
+          if (dog) dog.visible = b.rateRank > i;
+        }
+      }
+      const aimed = state.possessAimBuildingId === b.id;
+      let mark = obj.userData.aimMark as THREE.Mesh | undefined;
+      if (!mark) {
+        mark = new THREE.Mesh(
+          new THREE.RingGeometry(16, 22, 36),
+          new THREE.MeshBasicMaterial({
+            color: 0xffd56a,
+            transparent: true,
+            opacity: 0.88,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        );
+        mark.rotation.x = -Math.PI / 2;
+        mark.position.y = 0.85;
+        obj.add(mark);
+        obj.userData.aimMark = mark;
+      }
+      mark.visible = aimed;
+      if (aimed) {
+        const pulse = 1 + Math.sin(state.time * 7) * 0.1;
+        mark.scale.setScalar(pulse);
+      }
       const arm = obj.userData.arm as THREE.Object3D | null;
       if (arm && b.animKick > 0) arm.rotation.z = -0.8 * (b.animKick / 0.15);
       else if (arm) arm.rotation.z = 0;
@@ -1452,11 +1556,35 @@ export class GameRenderer {
         : Math.max(0.12, barricade.buildProgress / Math.max(0.01, barricade.buildTime));
       obj.scale.set(1, progress, 1);
       obj.visible = true;
+      const aimed = state.possessAimBarricadeId === barricade.id;
+      let mark = obj.userData.aimMark as THREE.Mesh | undefined;
+      if (!mark) {
+        mark = new THREE.Mesh(
+          new THREE.RingGeometry(10, 15, 28),
+          new THREE.MeshBasicMaterial({
+            color: 0xffd56a,
+            transparent: true,
+            opacity: 0.88,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        );
+        mark.rotation.x = -Math.PI / 2;
+        mark.position.y = 0.7;
+        obj.add(mark);
+        obj.userData.aimMark = mark;
+      }
+      mark.visible = aimed;
+      if (aimed) {
+        const pulse = 1 + Math.sin(state.time * 7) * 0.1;
+        mark.scale.setScalar(pulse);
+      }
     }
     this.prune("bar-", live);
   }
 
   private makeUnit(u: Unit) {
+    if (u.kind === "spy") return buildPeonModel(u.team === "you" ? "foe" : "you");
     return buildUnitModel(u.kind, u.team);
   }
 
@@ -1486,7 +1614,17 @@ export class GameRenderer {
           body.rotation.z = Math.sin(state.time * 5.5 + u.id) * 0.012;
         }
       }
-      animateUnit(obj, state.time + u.id * 0.37, { x: u.pos.x, y: u.pos.y, timer: u.attackTimer });
+      if (u.kind === "trebuchet") {
+        animateTrebuchet(obj, {
+          phase: u.siegePhase,
+          siegeTimer: u.siegeTimer,
+          attackTimer: u.attackTimer,
+          attackCooldown: u.attackCooldown,
+          charge: state.possessedId === u.id ? state.possessCharge : 0,
+        });
+      } else {
+        animateUnit(obj, state.time + u.id * 0.37, { x: u.pos.x, y: u.pos.y, timer: u.attackTimer });
+      }
     }
     this.prune("unit-", live);
   }
@@ -1646,27 +1784,51 @@ export class GameRenderer {
     this.prune("cmd-", live);
   }
 
-  private syncSelectionRing(state: GameState) {
-    const b = state.selectedBuildingId ? state.buildings.find((x) => x.id === state.selectedBuildingId) : undefined;
-    const wanted = b && b.kind !== "barracks" ? `${b.id}:${b.canRefund ? 1 : 0}` : "";
-    if (wanted === this.rangeRingFor) return; // unchanged — ring is already correct
-    this.rangeRingFor = wanted;
-    if (this.rangeRing) {
-      this.dynamicRoot.remove(this.rangeRing);
-      this.rangeRing.geometry.dispose();
-      (this.rangeRing.material as THREE.Material).dispose();
-      this.rangeRing = null;
+  private disposeRangeRings() {
+    for (const ring of [this.rangeRing, this.dogRangeRing]) {
+      if (!ring) continue;
+      this.dynamicRoot.remove(ring);
+      ring.geometry.dispose();
+      (ring.material as THREE.Material).dispose();
     }
-    if (!b || b.kind === "barracks") return;
-    const range = !b.canRefund && b.kind === "watchtower" ? STARTER_GUARD_RANGE : BUILD_RANGE[b.kind];
+    this.rangeRing = null;
+    this.dogRangeRing = null;
+  }
+
+  private makeRangeRing(radius: number, color: number, opacity: number, band = 2) {
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(range - 2, range, 64),
-      new THREE.MeshBasicMaterial({ color: 0xf8e0a7, transparent: true, opacity: 0.28, side: THREE.DoubleSide }),
+      new THREE.RingGeometry(Math.max(1, radius - band), radius, 64),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
     );
     ring.rotation.x = -Math.PI / 2;
-    ring.position.copy(to3(b.pos.x, b.pos.y, 0.5));
-    this.dynamicRoot.add(ring);
-    this.rangeRing = ring;
+    return ring;
+  }
+
+  private syncSelectionRing(state: GameState) {
+    const b = state.selectedBuildingId ? state.buildings.find((x) => x.id === state.selectedBuildingId) : undefined;
+    const kennel = b ? dogRange(b) : 0;
+    const wanted = b && b.kind !== "barracks" ? `${b.id}:${b.canRefund ? 1 : 0}:${kennel}` : "";
+    if (wanted === this.rangeRingFor) return;
+    this.rangeRingFor = wanted;
+    this.disposeRangeRings();
+    if (!b || b.kind === "barracks") return;
+    const range = !b.canRefund && b.kind === "watchtower" ? STARTER_GUARD_RANGE : BUILD_RANGE[b.kind];
+    this.rangeRing = this.makeRangeRing(range, 0xf8e0a7, 0.28);
+    this.rangeRing.position.copy(to3(b.pos.x, b.pos.y, 0.5));
+    this.dynamicRoot.add(this.rangeRing);
+    if (kennel > 0) {
+      this.dogRangeRing = this.makeRangeRing(kennel, 0xe2bc72, 0.58, 3.6);
+      this.dogRangeRing.position.copy(to3(b.pos.x, b.pos.y, 1.55));
+      this.dogRangeRing.renderOrder = 32;
+      (this.dogRangeRing.material as THREE.MeshBasicMaterial).depthTest = false;
+      this.dynamicRoot.add(this.dogRangeRing);
+    }
   }
 
   private syncFloats(state: GameState) {

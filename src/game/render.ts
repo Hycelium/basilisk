@@ -1,4 +1,4 @@
-import { BUILD_RANGE, ROAD_X, ROAD_Y_MAX, ROAD_Y_MIN, STARTER_GUARD_RANGE, WORLD_H, WORLD_W } from "./balance";
+import { BUILD_RANGE, dogRange, ROAD_X, ROAD_Y_MAX, ROAD_Y_MIN, STARTER_GUARD_RANGE, WORLD_H, WORLD_W } from "./balance";
 import { buildingName } from "./sim";
 import type { Building, GameState, Team, Unit, Villager } from "./types";
 
@@ -577,6 +577,17 @@ export class GameRenderer {
       ctx.stroke();
       ctx.fillStyle = teamAccent(team);
       ctx.fillRect(x - 2, y - 8, 16, 3);
+      for (let i = 0; i < b.rateRank; i++) {
+        const dx = i === 0 ? -24 : 24;
+        ctx.fillStyle = "#5a3a22";
+        ctx.beginPath();
+        ctx.ellipse(x + dx, y + 6, 5, 3.2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#3a2416";
+        ctx.beginPath();
+        ctx.ellipse(x + dx + (i === 0 ? -4 : 4), y + 4, 2.5, 2.2, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
     } else if (b.kind === "catapult") {
       const kick = b.animKick > 0 ? -12 * (b.animKick / 0.15) : 0;
       this.box3d(ctx, x, y + 4, 22, 14, 10, "#4a3428", "#2a1c14", "#6a4a30");
@@ -633,6 +644,13 @@ export class GameRenderer {
       ctx.arc(x, y, STARTER_GUARD_RANGE, 0, Math.PI * 2);
       ctx.stroke();
     }
+    if (state.possessAimBuildingId === b.id) {
+      ctx.strokeStyle = "rgba(255, 213, 106, 0.95)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.ellipse(x, y + 2, 26, 12, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     if (selected) {
       ctx.strokeStyle = "rgba(255,220,140,0.9)";
       ctx.setLineDash([4, 3]);
@@ -646,6 +664,14 @@ export class GameRenderer {
         ctx.beginPath();
         ctx.arc(x, y, range, 0, Math.PI * 2);
         ctx.stroke();
+        const kennel = dogRange(b);
+        if (kennel > 0) {
+          ctx.strokeStyle = "rgba(226, 188, 114, 0.78)";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(x, y, kennel, 0, Math.PI * 2);
+          ctx.stroke();
+        }
         ctx.fillStyle = "#f8e0a7";
         ctx.font = "10px Georgia, serif";
         ctx.textAlign = "center";
@@ -660,10 +686,17 @@ export class GameRenderer {
       ctx.fill();
     }
     for (let i = 0; i < b.rateRank; i++) {
-      ctx.fillStyle = "#7ad0ff";
+      ctx.fillStyle = b.kind === "ballista" ? "#c4a06a" : "#7ad0ff";
       ctx.beginPath();
       ctx.arc(x - 8 + i * 6, y + 22, 2.2, 0, Math.PI * 2);
       ctx.fill();
+    }
+    if ((b.disableTimer ?? 0) > 0) {
+      ctx.strokeStyle = "rgba(90, 24, 64, 0.75)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, y, 17, 0, Math.PI * 2);
+      ctx.stroke();
     }
   }
 
@@ -716,6 +749,25 @@ export class GameRenderer {
       ctx.arc(x, y - 12, 3.3, 0, Math.PI * 2);
       ctx.fill();
     };
+
+    if (u.kind === "spy") {
+      const d: Team = u.team === "you" ? "foe" : "you";
+      ctx.fillStyle = d === "you" ? "#3a6088" : "#703040";
+      ctx.fillRect(x - 3, y, 2, 5);
+      ctx.fillRect(x + 1, y, 2, 5);
+      const g = ctx.createLinearGradient(x, y - 10, x, y);
+      g.addColorStop(0, d === "you" ? "#b0dcff" : "#f0a8b0");
+      g.addColorStop(1, d === "you" ? "#4a88c0" : "#a04858");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.ellipse(x, y - 3, 5, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#f0d8b8";
+      ctx.beginPath();
+      ctx.arc(x, y - 11, 3.6, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
 
     if (u.kind === "raider" || u.kind === "runner") {
       ctx.fillStyle = deep;
@@ -783,6 +835,28 @@ export class GameRenderer {
       ctx.arc(x, y - 18, 5, 0, Math.PI * 2);
       ctx.fill();
       head();
+    } else if (u.kind === "trebuchet") {
+      ctx.fillStyle = "#6a4a28";
+      ctx.fillRect(x - 10, y - 4, 20, 6);
+      ctx.fillStyle = "#8a6240";
+      ctx.beginPath();
+      ctx.arc(x - 7, y + 2, 4, 0, Math.PI * 2);
+      ctx.arc(x + 7, y + 2, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#c4a06a";
+      ctx.lineWidth = 2.4;
+      const packed = (u.siegePhase ?? "packed") === "packed" || u.siegePhase === "packing";
+      ctx.beginPath();
+      if (packed) {
+        ctx.moveTo(x - 2, y - 6);
+        ctx.lineTo(x + 12, y - 10);
+      } else {
+        ctx.moveTo(x - 2, y - 6);
+        ctx.lineTo(x + 4, y - 22);
+      }
+      ctx.stroke();
+      ctx.fillStyle = accent;
+      ctx.fillRect(x - 3, y - 8, 4, 4);
     } else {
       // brute
       const g = ctx.createRadialGradient(x - 2, y - 4, 2, x, y, 12);
