@@ -1,5 +1,14 @@
 import * as THREE from "three";
-import { BUILD_RANGE, STARTER_GUARD_RANGE, WORLD_H, WORLD_W } from "./balance";
+import {
+  BUILD_RANGE,
+  POSSESS_FOV_TIGHT,
+  POSSESS_FOV_WIDE,
+  POSSESS_PULL_MAX,
+  POSSESS_VISION_SCORE,
+  STARTER_GUARD_RANGE,
+  WORLD_H,
+  WORLD_W,
+} from "./balance";
 import { homeCameraFrame } from "./homeCamera";
 import { mapBounds } from "./map";
 import { cloneModel, ensureModelsLoaded, setSharedAnisotropy } from "./assets3d";
@@ -214,6 +223,18 @@ export class GameRenderer {
   private pinchStartDist = 0;
   private pinchStartCamDist = 520;
   private suppressClick = false;
+  private fpsLive = false;
+  private fpsYaw = 0;
+  private fpsPitch = 0.08;
+  private fpsSwing = 0;
+  private fpsPull = 0;
+  private fpsMaxPull = 0;
+  private fpsHead: THREE.Object3D | null = null;
+  private fpsEye = new THREE.Vector3();
+  private fpsAt = new THREE.Vector3();
+  private fpsHands = new THREE.Group();
+  private fpsSword = new THREE.Group();
+  private fpsBow = new THREE.Group();
 
   constructor(private canvas: HTMLCanvasElement) {
     this.qualitySetting = loadQualitySetting();
@@ -311,6 +332,7 @@ export class GameRenderer {
     this.commandLineRoot.add(this.rallyLine);
 
     this.buildSky();
+    this.buildFpsRig();
     this.fitCamera();
     this.applyTier(this.tier, false);
     void ensureModelsLoaded().then(() => {
@@ -336,6 +358,59 @@ export class GameRenderer {
       this.clearAnimation(k);
       this.entityMap.delete(k);
     }
+  }
+
+  private buildFpsRig() {
+    this.fpsHands.visible = false;
+    this.camera.add(this.fpsHands);
+    this.scene.add(this.camera);
+
+    const wood = new THREE.MeshStandardMaterial({ color: 0x4a2e18, roughness: 0.82 });
+    const steel = new THREE.MeshStandardMaterial({ color: 0xc9d4e0, metalness: 0.72, roughness: 0.28 });
+    const hilt = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.22, 6), wood);
+    hilt.rotation.z = Math.PI / 2;
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.035, 0.95), steel);
+    blade.position.z = -0.52;
+    this.fpsSword.add(hilt, blade);
+    this.fpsSword.position.set(0.38, -0.32, -0.55);
+    this.fpsSword.rotation.set(-0.35, 0.15, -0.55);
+
+    const limb = new THREE.Mesh(
+      new THREE.TorusGeometry(0.38, 0.025, 6, 12, Math.PI),
+      new THREE.MeshStandardMaterial({ color: 0x6b3d1f, roughness: 0.75 }),
+    );
+    limb.rotation.y = Math.PI / 2;
+    this.fpsBow.add(limb);
+    this.fpsBow.position.set(0.28, -0.22, -0.62);
+    this.fpsBow.rotation.set(0.1, 0, -0.2);
+
+    this.fpsHands.add(this.fpsSword, this.fpsBow);
+  }
+
+  private findUnitHead(obj: THREE.Object3D, kind: string) {
+    if (kind === "rammer") return obj.getObjectByName("c0.head") ?? obj.getObjectByName("head") ?? null;
+    return obj.getObjectByName("head") ?? null;
+  }
+
+  private applyFpsCamera(eye: THREE.Vector3, shake: number) {
+    const cp = Math.cos(this.fpsPitch);
+    const sp = Math.sin(this.fpsPitch);
+    const lx = Math.sin(this.fpsYaw) * cp;
+    const ly = sp;
+    const lz = -Math.cos(this.fpsYaw) * cp;
+    const pull = this.fpsPull;
+    const jx = shake > 0 ? (Math.random() - 0.5) * 1.1 : 0;
+    const jy = shake > 0 ? (Math.random() - 0.5) * 0.5 : 0;
+    const jz = shake > 0 ? (Math.random() - 0.5) * 1.1 : 0;
+    // Tight FPS sits just in front of the eyes; earned pull sits behind the soldier.
+    this.fpsEye.set(
+      eye.x - lx * pull + lx * 0.42 + jx,
+      eye.y - ly * pull + 0.28 + pull * 0.12 + jy,
+      eye.z - lz * pull + lz * 0.42 + jz,
+    );
+    this.fpsAt.set(eye.x + lx * (8 + pull * 0.15), eye.y + ly * 8, eye.z + lz * (8 + pull * 0.15));
+    this.camera.position.copy(this.fpsEye);
+    this.camera.lookAt(this.fpsAt);
   }
 
   private buildSky() {
@@ -394,6 +469,7 @@ export class GameRenderer {
   }
 
   zoomBy(factor: number) {
+    if (this.fpsLive) return;
     this.camDist = THREE.MathUtils.clamp(this.camDist * factor, this.camDistMin, this.camDistMax);
     this.applyCamera();
   }
@@ -404,18 +480,41 @@ export class GameRenderer {
   }
 
   setZoomT(t: number) {
+    if (this.fpsLive) return;
     const k = THREE.MathUtils.clamp(t, 0, 1);
     this.camDist = this.camDistMin + (this.camDistMax - this.camDistMin) * k;
     this.applyCamera();
   }
 
   orbitBy(dx: number, dy: number) {
+    if (this.fpsLive) return;
     this.camYaw -= dx * 0.0055;
     this.camPitch = THREE.MathUtils.clamp(this.camPitch + dy * 0.0045, this.camPitchMin, this.camPitchMax);
     this.applyCamera();
   }
 
+  lookBy(dx: number, dy: number) {
+    this.fpsYaw -= dx * 0.0024;
+    this.fpsPitch = THREE.MathUtils.clamp(this.fpsPitch - dy * 0.0022, -1.15, 1.1);
+  }
+
+  getFpsYaw() {
+    return this.fpsYaw;
+  }
+
+  enterPossess(yaw: number) {
+    this.fpsYaw = yaw;
+    this.fpsPitch = 0.08;
+    this.fpsSwing = 0;
+    this.fpsPull = 0;
+  }
+
+  kickSwing() {
+    this.fpsSwing = 1;
+  }
+
   panBy(dx: number, dy: number) {
+    if (this.fpsLive) return;
     // Pan relative to camera facing on the ground plane
     const forward = new THREE.Vector3(Math.sin(this.camYaw), 0, Math.cos(this.camYaw));
     const right = new THREE.Vector3(Math.cos(this.camYaw), 0, -Math.sin(this.camYaw));
@@ -460,6 +559,7 @@ export class GameRenderer {
 
   /** Returns true if this pointerdown should also fire a game click (short tap). */
   onPointerDown(ev: PointerEvent) {
+    if (this.fpsLive) return false;
     this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, ox: ev.clientX, oy: ev.clientY });
     this.pointerType = ev.pointerType;
 
@@ -506,6 +606,7 @@ export class GameRenderer {
   }
 
   onPointerMove(ev: PointerEvent) {
+    if (this.fpsLive) return;
     const prev = this.pointers.get(ev.pointerId);
     if (!prev) return;
     this.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY, ox: prev.ox, oy: prev.oy });
@@ -690,6 +791,11 @@ export class GameRenderer {
 
   onWheel(ev: WheelEvent) {
     ev.preventDefault();
+    if (this.fpsLive) {
+      const step = ev.deltaY > 0 ? 5.4 : -5.4;
+      this.fpsPull = THREE.MathUtils.clamp(this.fpsPull + step, 0, this.fpsMaxPull);
+      return;
+    }
     const factor = ev.deltaY > 0 ? 1.08 : 0.92;
     this.zoomBy(factor);
   }
@@ -859,7 +965,61 @@ export class GameRenderer {
     }
   }
 
-  private updateCamera(state: GameState) {
+  private updateCamera(state: GameState, dt = 0) {
+    const body =
+      state.possessedId != null ? state.units.find((u) => u.id === state.possessedId && u.hp > 0) : undefined;
+    if (body) {
+      this.fpsSwing = Math.max(0, this.fpsSwing - dt * 5.4);
+      this.fpsMaxPull =
+        (Math.min(state.possessVisionScore ?? 0, POSSESS_VISION_SCORE) / POSSESS_VISION_SCORE) * POSSESS_PULL_MAX;
+      this.fpsPull = Math.min(this.fpsPull, this.fpsMaxPull);
+      const visionT = this.fpsMaxPull > 0.01 ? this.fpsPull / this.fpsMaxPull : 0;
+      const fov = THREE.MathUtils.lerp(POSSESS_FOV_TIGHT, POSSESS_FOV_WIDE, visionT);
+      if (!this.fpsLive) {
+        this.fpsLive = true;
+        this.camera.near = 0.18;
+        this.fpsHands.visible = false;
+      }
+      if (Math.abs(this.camera.fov - fov) > 0.15) {
+        this.camera.fov = fov;
+        this.camera.updateProjectionMatrix();
+      } else if (this.camera.near !== 0.18) {
+        this.camera.near = 0.18;
+        this.camera.updateProjectionMatrix();
+      }
+      const mesh = this.entityMap.get(`unit-${body.id}`);
+      this.fpsEye.set(body.pos.x - WORLD_W / 2, body.kind === "runner" ? 14.2 : 11.2, body.pos.y - WORLD_H / 2);
+      if (mesh) {
+        mesh.updateMatrixWorld(true);
+        const head = this.findUnitHead(mesh, body.kind);
+        if (this.fpsHead && this.fpsHead !== head) this.fpsHead.visible = true;
+        this.fpsHead = head;
+        if (head) {
+          head.visible = this.fpsPull > 9;
+          head.getWorldPosition(this.fpsEye);
+          this.fpsEye.y += 0.4;
+        }
+      }
+      this.applyFpsCamera(this.fpsEye, state.shake);
+      return;
+    }
+    if (this.fpsLive) {
+      this.fpsLive = false;
+      this.fpsHands.visible = false;
+      this.fpsSwing = 0;
+      this.fpsPull = 0;
+      this.fpsMaxPull = 0;
+      if (this.fpsHead) {
+        this.fpsHead.visible = true;
+        this.fpsHead = null;
+      }
+      this.camera.near = 5;
+      const rect = this.canvas.getBoundingClientRect();
+      this.camera.fov = rect.height > rect.width ? 44 : 40;
+      this.camera.updateProjectionMatrix();
+      this.resetCamera();
+      return;
+    }
     if (state.shake > 0) {
       this.camShake.set((Math.random() - 0.5) * 4, (Math.random() - 0.5) * 2.5, (Math.random() - 0.5) * 4);
     } else {
@@ -876,9 +1036,9 @@ export class GameRenderer {
     if (this.renderer.getPixelRatio() !== dpr) this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
-    this.camera.fov = h > w ? 44 : 40;
+    if (!this.fpsLive) this.camera.fov = h > w ? 44 : 40;
     this.camera.updateProjectionMatrix();
-    this.applyCamera();
+    if (!this.fpsLive) this.applyCamera();
   }
 
   screenToWorld(screenX: number, screenY: number) {
@@ -931,7 +1091,7 @@ export class GameRenderer {
     this.syncSelectionRing(state);
     this.syncFloats(state);
     this.pulseTorches(state.time);
-    this.updateCamera(state);
+    this.updateCamera(state, step);
 
     this.sun.intensity = 2.25 + Math.sin(state.time * 0.35) * 0.1;
     this.hemi.intensity = 1.3 + Math.sin(state.time * 0.22) * 0.05;
@@ -1311,8 +1471,14 @@ export class GameRenderer {
         return made;
       });
       setPos3(obj, u.pos.x, u.pos.y, 0);
-      // Face march direction
-      obj.rotation.y = u.team === "you" ? Math.PI : 0;
+      obj.visible = true;
+      if (state.possessedId === u.id) {
+        obj.rotation.y = Math.PI - this.fpsYaw;
+      } else {
+        obj.rotation.y = u.team === "you" ? Math.PI : 0;
+        const head = this.findUnitHead(obj, u.kind);
+        if (head) head.visible = true;
+      }
       if (u.kind === "rammer") {
         const body = obj.userData.ramBody as THREE.Object3D | null;
         if (body) {

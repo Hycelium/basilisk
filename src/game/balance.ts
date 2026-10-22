@@ -80,6 +80,20 @@ export const MELEE_AGGRO_RANGE = 42;
 export const AGGRO_LEASH_MULT = 1.75;
 
 /**
+ * First-person possess (vs-AI only). The player drops the map view, so the
+ * body hits harder and runs faster than the same soldier on rails.
+ */
+export const POSSESS_DAMAGE_MULT = 2.4;
+export const POSSESS_SPEED_MULT = 1.55;
+export const POSSESS_MELEE_REACH = 26;
+/** Possessed kills/keep hits needed to unlock the furthest over-shoulder pull. */
+export const POSSESS_VISION_SCORE = 8;
+/** World units the FPS camera can sit behind the eyes at full vision. */
+export const POSSESS_PULL_MAX = 56;
+export const POSSESS_FOV_TIGHT = 70;
+export const POSSESS_FOV_WIDE = 86;
+
+/**
  * Levy melee versus a ward only. 1.25 is +25% of that levy's current attack.
  * Levy hits on every other target stay at the levy's normal damage.
  */

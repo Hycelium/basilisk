@@ -38,11 +38,16 @@ import {
   RUNNER_CHARGE_DAMAGE,
   RUSH_BONUS,
   openingStash,
+  POSSESS_DAMAGE_MULT,
+  POSSESS_MELEE_REACH,
+  POSSESS_SPEED_MULT,
+  POSSESS_VISION_SCORE,
   START_KEEP_HP,
   towerDamageFactor,
   STARTER_GUARD_RANGE,
   TRAIN_ORDER,
   UNIT_DEFS,
+  WORLD_H,
   UPGRADE_COST,
   VILLAGER_HP,
   VILLAGER_SPEED,
@@ -63,6 +68,7 @@ import {
   lanePathX,
   laneStartY,
   laneYGate,
+  mapBounds,
   mapLanes,
   skirmishMap,
   startPadId,
@@ -166,6 +172,8 @@ export class GameSim {
   private lastPoseAt = 0;
   /** Guest peons whose latest order is drawn locally until the next host picture. */
   private predicted = new Set<number>();
+  private possessKeys = { w: false, a: false, s: false, d: false };
+  private possessYaw = 0;
 
   constructor() {
     const meta = loadMeta();
@@ -236,6 +244,8 @@ export class GameSim {
     return {
       phase: "title",
       commandTeam: "you",
+      possessedId: null,
+      possessVisionScore: 0,
       mapId: map.id,
       time: 0,
       paused: false,
@@ -666,7 +676,160 @@ export class GameSim {
 
   toggleSpeed() {
     if (this.redirect({ t: "speed" })) return;
+    if (this.state.possessedId != null) return;
     this.state.speed = this.state.speed === 1 ? 2 : 1;
+  }
+
+  getPossessYaw() {
+    return this.possessYaw;
+  }
+
+  setPossessYaw(yaw: number) {
+    this.possessYaw = yaw;
+  }
+
+  setPossessKey(key: "w" | "a" | "s" | "d", down: boolean) {
+    this.possessKeys[key] = down;
+  }
+
+  /**
+   * Take a living barracks-trained soldier in vs-AI. PvP, peons, creeps, and
+   * the enemy stay on the map.
+   */
+  tryPossess(id: number) {
+    if (this.matchMode === "pvp") return false;
+    const s = this.state;
+    if (s.phase !== "running") return false;
+    const u = s.units.find((x) => x.id === id);
+    if (!u || u.hp <= 0 || u.team !== this.localTeam || !u.fromBarracks) return false;
+    s.possessedId = u.id;
+    s.speed = 1;
+    u.rallyPoint = undefined;
+    u.engageFrom = undefined;
+    u.targetUnitId = undefined;
+    u.aiHeldForRush = undefined;
+    this.possessKeys = { w: false, a: false, s: false, d: false };
+    this.possessYaw = u.team === "you" ? 0 : Math.PI;
+    this.addToast(`Taking the field — ${UNIT_DEFS[u.kind].label}. Esc returns.`);
+    return true;
+  }
+
+  releasePossess(reason: "esc" | "death" | "end" = "esc") {
+    const s = this.state;
+    if (s.possessedId == null) return;
+    s.possessedId = null;
+    this.possessKeys = { w: false, a: false, s: false, d: false };
+    if (reason === "death") this.addToast("Fallen. Click another soldier to take the field.");
+  }
+
+  private notePossessVision(amount: number) {
+    const s = this.state;
+    const before = Math.floor((s.possessVisionScore ?? 0) / 2);
+    s.possessVisionScore = (s.possessVisionScore ?? 0) + amount;
+    if (Math.floor(s.possessVisionScore / 2) > before) {
+      this.addToast("Vision widens — scroll the wheel to look out.");
+    }
+  }
+
+  /** Mouse click while locked: swing, shoot, ram, or chip the keep. */
+  possessAttack() {
+    const s = this.state;
+    if (s.phase !== "running" || s.paused) return false;
+    const u = s.units.find((x) => x.id === s.possessedId);
+    if (!u || u.hp <= 0) return false;
+    if (u.attackTimer > 0) return false;
+    const team = u.team;
+    const enemyTeam = this.enemy(team);
+    const fx = Math.sin(this.possessYaw);
+    const fy = -Math.cos(this.possessYaw);
+    const ranged = u.kind === "archer";
+    const reach = ranged ? ARCHER_RANGE * 1.15 : POSSESS_MELEE_REACH;
+    const minDot = ranged ? 0.82 : 0.32;
+    const aim = (pos: { x: number; y: number }) => {
+      const dx = pos.x - u.pos.x;
+      const dy = pos.y - u.pos.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 0.4 || d > reach) return { d, dot: -1, ok: false };
+      const dot = (dx * fx + dy * fy) / d;
+      return { d, dot, ok: dot >= minDot };
+    };
+
+    const foes: Array<Unit | Villager> = [
+      ...s.units.filter((e) => e.team === enemyTeam && e.hp > 0),
+      ...s.villagers.filter((v) => v.team === enemyTeam && v.hp > 0 && v.state !== "garrisoned"),
+    ];
+    let best: Unit | Villager | null = null;
+    let bestD = Infinity;
+    for (const t of foes) {
+      const a = aim(t.pos);
+      if (!a.ok || a.d >= bestD) continue;
+      best = t;
+      bestD = a.d;
+    }
+
+    u.attackTimer = u.attackCooldown;
+    const lookHit = { x: u.pos.x + fx * Math.min(reach, 80), y: u.pos.y + fy * Math.min(reach, 80) };
+
+    if (best) {
+      const dealt = this.strikeDamage(u, best) * POSSESS_DAMAGE_MULT;
+      best.hp -= dealt;
+      if (best.hp <= 0) this.notePossessVision(1);
+      this.emitCombat(ranged ? "arrow" : "meleeHit", u.pos, best.pos, team);
+      this.addFloat(`-${Math.round(dealt)}`, best.pos.x, best.pos.y - 7, ranged ? "#e8d39a" : "#ffd1cc");
+      return true;
+    }
+
+    const keep = this.teamKeep(enemyTeam);
+    const keepAim = aim(keep.pos);
+    const keepReach = ranged ? ARCHER_RANGE : 34;
+    if (keepAim.ok && keepAim.d <= keepReach) {
+      const dmg = u.damage * u.keepMult * POSSESS_DAMAGE_MULT;
+      keep.hp -= dmg;
+      keep.hitFlash = 0.2;
+      this.emitCombat(u.kind === "rammer" ? "ramImpact" : ranged ? "arrow" : "keepImpact", u.pos, keep.pos, team);
+      if (enemyTeam === "you") {
+        s.redFlash = 0.18;
+        s.shake = 0.15;
+      }
+      this.addFloat(`-${Math.round(dmg)}`, keep.pos.x, keep.pos.y - 18, "#ff9d9d");
+      this.notePossessVision(0.5);
+      return true;
+    }
+
+    const wall = s.barricades
+      .filter((b) => b.built && b.team !== team)
+      .map((b) => ({ b, a: aim(b.pos) }))
+      .filter((x) => x.a.ok && x.a.d <= (ranged ? 22 : POSSESS_MELEE_REACH))
+      .sort((a, b) => a.a.d - b.a.d)[0];
+    if (wall && !ranged) {
+      if (u.kind === "rammer") {
+        s.barricades = s.barricades.filter((b) => b.id !== wall.b.id);
+        s.shake = Math.max(s.shake, 0.12);
+        this.emitCombat("ramImpact", u.pos, wall.b.pos, team);
+        this.addFloat("CRUSH", wall.b.pos.x, wall.b.pos.y - 9, "#e4bd77");
+        this.notePossessVision(1);
+      } else {
+        const chip = Math.round(barricadeStrike(u.kind) * POSSESS_DAMAGE_MULT);
+        wall.b.hp -= chip;
+        this.emitCombat(wall.b.hp > 0 ? "woodHit" : "woodBreak", u.pos, wall.b.pos, team);
+        this.addFloat(wall.b.hp > 0 ? `-${chip}` : "BREACH", wall.b.pos.x, wall.b.pos.y - 9, "#e4bd77");
+        if (wall.b.hp <= 0) {
+          s.shake = Math.max(s.shake, 0.07);
+          s.barricades = s.barricades.filter((b) => b.id !== wall.b.id);
+          this.notePossessVision(1);
+        } else {
+          this.notePossessVision(0.25);
+        }
+      }
+      return true;
+    }
+
+    if (ranged) {
+      this.emitCombat("arrow", u.pos, lookHit, team);
+      return true;
+    }
+    this.emitCombat("meleeHit", u.pos, lookHit, team);
+    return true;
   }
 
   selectBuild(kind: BuildingKind | null) {
@@ -2137,10 +2300,65 @@ export class GameSim {
     );
   }
 
+  private stepPossessed(u: Unit, dt: number) {
+    const { w, a, s, d } = this.possessKeys;
+    const yaw = this.possessYaw;
+    const fx = Math.sin(yaw);
+    const fy = -Math.cos(yaw);
+    const rx = Math.cos(yaw);
+    const ry = Math.sin(yaw);
+    let mx = 0;
+    let my = 0;
+    if (w) {
+      mx += fx;
+      my += fy;
+    }
+    if (s) {
+      mx -= fx;
+      my -= fy;
+    }
+    if (d) {
+      mx += rx;
+      my += ry;
+    }
+    if (a) {
+      mx -= rx;
+      my -= ry;
+    }
+    const mag = Math.hypot(mx, my);
+    if (mag > 0.001) {
+      const speed = u.speed * POSSESS_SPEED_MULT;
+      u.pos.x += (mx / mag) * speed * dt;
+      u.pos.y += (my / mag) * speed * dt;
+    }
+    const { minX, maxX } = mapBounds(this.activeMap.seed);
+    u.pos.x = Math.max(minX + 10, Math.min(maxX - 10, u.pos.x));
+    u.pos.y = Math.max(18, Math.min(WORLD_H - 18, u.pos.y));
+    const lanes = mapLanes(this.activeMap.seed);
+    let bestLane = u.lane;
+    let bestD = Infinity;
+    for (const lane of lanes) {
+      const x = lanePathX(this.activeMap.seed, u.team, lane, u.pos.y);
+      const gap = Math.abs(x - u.pos.x);
+      if (gap < bestD) {
+        bestD = gap;
+        bestLane = lane;
+      }
+    }
+    u.lane = bestLane;
+    u.rallyPoint = undefined;
+    u.engageFrom = undefined;
+    u.targetUnitId = undefined;
+  }
+
   private updateUnitMovementAndMelee(dt: number, team: Team) {
     const enemyTeam = this.enemy(team);
     for (const u of this.state.units.filter((x) => x.team === team)) {
       u.attackTimer -= dt;
+      if (u.id === this.state.possessedId) {
+        this.stepPossessed(u, dt);
+        continue;
+      }
       if (u.kind === "runner" && !this.runnerInMelee(u)) u.chargeReady = true;
       const gateY = laneYGate(team);
       const enemies = this.state.units.filter((e) => e.team === enemyTeam && e.lane === u.lane);
@@ -2284,12 +2502,14 @@ export class GameSim {
   }
 
   private cleanupDeaths() {
+    const possessedId = this.state.possessedId;
     const survivors: Unit[] = [];
     for (const u of this.state.units) {
       if (u.hp > 0) {
         survivors.push(u);
         continue;
       }
+      if (u.id === possessedId) this.releasePossess("death");
       const killer = this.enemy(u.team);
       this.state.gold[killer] += u.bounty;
       this.state.stats[killer].goldEarned += u.bounty;
@@ -2653,6 +2873,7 @@ export class GameSim {
   private finishMatch(reason: string, won: boolean | null) {
     const s = this.state;
     if (s.phase === "ended") return;
+    this.releasePossess("end");
     s.phase = "ended";
     s.endReason = reason;
     s.won = won;
@@ -2704,7 +2925,8 @@ export class GameSim {
 
   update(rawDt: number) {
     const s = this.state;
-    const dt = Math.min(0.05, rawDt) * s.speed;
+    const rate = s.possessedId != null ? 1 : s.speed;
+    const dt = Math.min(0.05, rawDt) * rate;
     if (this.linkDown) s.paused = true;
     this.decayFx(dt);
 
@@ -3583,6 +3805,8 @@ export class GameSim {
     s.soundOn = soundOn;
     s.audioUnlocked = audioUnlocked;
     s.hoveredPadId = hoveredPadId;
+    s.possessedId = null;
+    s.possessVisionScore = 0;
     s.buildSelection = buildSelection;
     s.selectedKeepTeam = selectedKeepTeam;
     const living = new Set(s.villagers.filter((v) => v.team === this.localTeam && v.hp > 0).map((v) => v.id));
@@ -3646,6 +3870,7 @@ export class GameSim {
     const canUpgradeStructure = !!selected && selectedIsYours && selected.kind !== "house";
 
     const brain = foeBrainStats();
+    const body = s.possessedId != null ? s.units.find((u) => u.id === s.possessedId && u.hp > 0) : undefined;
     let endReason = s.endReason;
     if (view === "foe" && s.phase === "ended") {
       if (s.won === true) {
@@ -3667,7 +3892,7 @@ export class GameSim {
       campaignLevel: meta.level,
       scoutSalt: meta.scoutSalt,
       paused: s.paused,
-      speed: s.speed,
+      speed: s.possessedId != null ? 1 : s.speed,
       soundOn: s.soundOn,
       yourHp: Math.max(0, Math.ceil(s.keeps[view].hp)),
       foeHp: Math.max(0, Math.ceil(s.keeps[other].hp)),
@@ -3738,6 +3963,17 @@ export class GameSim {
       missionName: this.campaignMission?.nation ?? "",
       freshUnlock: this.lastUnlock,
       freshHold: this.freshHold,
+      possessed: body
+        ? {
+            id: body.id,
+            kind: body.kind,
+            label: UNIT_DEFS[body.kind].label,
+            hp: Math.max(0, Math.ceil(body.hp)),
+            maxHp: body.maxHp,
+            visionScore: s.possessVisionScore ?? 0,
+            visionMax: POSSESS_VISION_SCORE,
+          }
+        : null,
     };
   }
 }

@@ -84,7 +84,13 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
             {ui.paused ? "▶" : "❚❚"}
           </span>
         </button>
-        <button type="button" onClick={onSpeed} aria-label={`Game speed ${ui.speed}x`}>
+        <button
+          type="button"
+          onClick={onSpeed}
+          disabled={!!ui.possessed}
+          aria-label={`Game speed ${ui.speed}x`}
+          title={ui.possessed ? "Locked at 1× while you hold the field" : "Toggle speed"}
+        >
           {ui.speed}×
         </button>
         <button type="button" onClick={onSound} aria-label={ui.soundOn ? "Sound on" : "Sound off"} aria-pressed={ui.soundOn}>

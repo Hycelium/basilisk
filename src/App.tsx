@@ -85,6 +85,7 @@ const defaultUi: UiSnapshot = {
   missionName: "",
   freshUnlock: "",
   freshHold: false,
+  possessed: null,
 };
 
 const LONG_PRESS_MS = 350;
@@ -368,6 +369,7 @@ export default function App() {
       else if (hosting && document.hidden) sim.stepMatch(elapsed, true);
       else sim.update(Math.min(0.05, elapsed));
       const gameState = sim.getState();
+      if (!gameState.possessedId && document.pointerLockElement === canvas) document.exitPointerLock();
       const home = sim.getLocalTeam();
       if (renderer.getHomeSide() !== home) renderer.setHomeSide(home);
       renderer.draw(gameState);
@@ -415,6 +417,10 @@ export default function App() {
     const onDown = (ev: PointerEvent) => {
       const r = rendererRef.current;
       if (!r) return;
+      if (document.pointerLockElement === canvas) {
+        ev.preventDefault();
+        return;
+      }
       if (ev.button === 2) ev.preventDefault();
       const touch = isTouchLike(ev);
       // Any new finger cancels a pending long-press and the marquee.
@@ -460,6 +466,7 @@ export default function App() {
     const onMove = (ev: PointerEvent) => {
       const r = rendererRef.current;
       if (!r) return;
+      if (document.pointerLockElement === canvas) return;
       const lp = longPressRef.current;
       if (lp && lp.pointerId === ev.pointerId && Math.hypot(ev.clientX - lp.x, ev.clientY - lp.y) > LONG_PRESS_SLOP) {
         clearLongPress();
@@ -493,6 +500,7 @@ export default function App() {
     const onUp = (ev: PointerEvent) => {
       const r = rendererRef.current;
       if (!r) return;
+      if (document.pointerLockElement === canvas) return;
       clearLongPress();
       const tap = r.onPointerUp(ev);
       const p = local(ev);
@@ -533,6 +541,16 @@ export default function App() {
         if (!state.buildSelection && peonsSelected && !ownPeon && !ownStructure) {
           // Tap-to-order: ground → move, tree/mine → gather, enemy → attack.
           issueOrder(world, hit, p.x, p.y);
+          return;
+        }
+      }
+
+      if (!touch && ev.button === 0 && hit?.kind === "unit" && sim.getMatchMode() !== "pvp") {
+        if (sim.tryPossess(Number(hit.id))) {
+          r.enterPossess(sim.getPossessYaw());
+          canvas.requestPointerLock();
+          refreshUi();
+          beep(360, 0.08);
           return;
         }
       }
@@ -669,6 +687,28 @@ export default function App() {
       const target = ev.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "SELECT" || target.tagName === "TEXTAREA")) return;
       const r = rendererRef.current;
+      const possessed = sim.getState().possessedId != null;
+      const step = ev.key.toLowerCase();
+      if (possessed && (step === "w" || step === "a" || step === "s" || step === "d")) {
+        ev.preventDefault();
+        sim.setPossessKey(step, true);
+        return;
+      }
+      if (possessed && ev.key === "Escape") {
+        ev.preventDefault();
+        sim.releasePossess("esc");
+        document.exitPointerLock();
+        refreshUi();
+        return;
+      }
+      if (possessed) {
+        if (ev.code === "Space") {
+          ev.preventDefault();
+          sim.togglePause();
+          refreshUi();
+        }
+        return;
+      }
       const slot = /^[1-9]$/.test(ev.key) ? Number(ev.key) : 0;
       let groupHandled = false;
       if (slot > 0 && (ev.ctrlKey || ev.metaKey)) {
@@ -714,9 +754,49 @@ export default function App() {
       }
       refreshUi();
     };
+    const onUp = (ev: KeyboardEvent) => {
+      const step = ev.key.toLowerCase();
+      if (step === "w" || step === "a" || step === "s" || step === "d") sim.setPossessKey(step, false);
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keyup", onUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onUp);
+    };
   }, [sim, refreshUi, setPatrol, toggleFullscreen]);
+
+  useEffect(() => {
+    const onLook = (ev: MouseEvent) => {
+      const canvas = canvasRef.current;
+      if (document.pointerLockElement !== canvas) return;
+      const r = rendererRef.current;
+      if (!r) return;
+      r.lookBy(ev.movementX, ev.movementY);
+      sim.setPossessYaw(r.getFpsYaw());
+    };
+    const onLockChange = () => {
+      if (document.pointerLockElement === canvasRef.current) return;
+      if (sim.getState().possessedId == null) return;
+      sim.releasePossess("esc");
+      setUi(sim.getUiSnapshot());
+    };
+    const onStrike = (ev: MouseEvent) => {
+      if (document.pointerLockElement !== canvasRef.current) return;
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      sim.possessAttack();
+      rendererRef.current?.kickSwing();
+    };
+    document.addEventListener("mousemove", onLook);
+    document.addEventListener("pointerlockchange", onLockChange);
+    document.addEventListener("mousedown", onStrike);
+    return () => {
+      document.removeEventListener("mousemove", onLook);
+      document.removeEventListener("pointerlockchange", onLockChange);
+      document.removeEventListener("mousedown", onStrike);
+    };
+  }, [sim]);
 
   // Contextual one-shot hints.
   useEffect(() => {
@@ -729,7 +809,9 @@ export default function App() {
         touch ? "touch-start" : "mouse-start",
         touch
           ? "Tap your keep to train peons. Two fingers: drag to pan, pinch to zoom, twist to rotate."
-          : "Click your keep to train peons. Right-drag orbits, Shift-drag pans, wheel zooms.",
+          : ui.pvp
+            ? "Click your keep to train peons. Right-drag orbits, Shift-drag pans, wheel zooms."
+            : "Click a trained soldier to take the field. WASD move, mouse look, click to strike. Kills let you scroll the wheel out. Esc returns.",
       );
     }
     if (ui.selectedPeonCount > 0 && prev.selectedPeonCount === 0) {
@@ -980,7 +1062,17 @@ export default function App() {
         />
 
         <div className={sheetOpen ? "stage sheet-open" : "stage"} ref={stageRef}>
-          <canvas ref={canvasRef} className="battlefield" />
+          <canvas ref={canvasRef} className={ui.possessed ? "battlefield possessed" : "battlefield"} />
+          {ui.possessed && (
+            <div className="fps-hud" aria-hidden>
+              <span className="fps-crosshair" />
+              <p className="fps-banner">
+                {ui.possessed.label} · {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)} · vision{" "}
+                {Math.min(ui.possessed.visionMax, Math.floor(ui.possessed.visionScore))}/{ui.possessed.visionMax}
+                {ui.possessed.visionScore <= 0 ? " · kill to scroll out" : " · wheel looks out"}
+              </p>
+            </div>
+          )}
           {selectionBox && (
             <div
               className="selection-box"

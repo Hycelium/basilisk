@@ -63,6 +63,18 @@ export interface Unit {
   aiStagingPoint?: Vec2;
 }
 
+/** First-person body the local player is driving, or none. */
+export interface PossessedUi {
+  id: number;
+  kind: UnitKind;
+  label: string;
+  hp: number;
+  maxHp: number;
+  /** Kills and keep/barricade hits while driving soldiers this match. */
+  visionScore: number;
+  visionMax: number;
+}
+
 export type WavePhase = "build" | "spawning" | "fighting";
 
 export interface TrainJob {
@@ -282,6 +294,10 @@ export interface GameState {
   won: boolean | null;
   /** Which side this client's build highlights belong to. Not sent in match snapshots. */
   commandTeam: Team;
+  /** Living barracks-trained soldier the local player is driving in first person. */
+  possessedId: number | null;
+  /** Kills and keep/barricade hits scored while possessed this match. Unlocks FPS zoom-out. */
+  possessVisionScore: number;
 }
 
 export interface QueueSlotUi {
@@ -379,6 +395,8 @@ export interface UiSnapshot {
   freshUnlock: string;
   /** This victory was the first time the march was held. */
   freshHold: boolean;
+  /** Set while the local player is in first person on a soldier. */
+  possessed: PossessedUi | null;
 }
 
 export interface RectHit {

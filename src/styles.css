@@ -248,6 +248,72 @@ button:disabled {
   cursor: grabbing;
 }
 
+.battlefield.possessed,
+.battlefield.possessed:active {
+  cursor: none;
+}
+
+.fps-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.fps-crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid rgba(255, 236, 190, 0.92);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(20, 12, 6, 0.45);
+}
+
+.fps-crosshair::before,
+.fps-crosshair::after {
+  content: "";
+  position: absolute;
+  background: rgba(255, 236, 190, 0.92);
+}
+
+.fps-crosshair::before {
+  left: 50%;
+  top: -7px;
+  width: 2px;
+  height: 28px;
+  margin-left: -1px;
+}
+
+.fps-crosshair::after {
+  top: 50%;
+  left: -7px;
+  height: 2px;
+  width: 28px;
+  margin-top: -1px;
+}
+
+.fps-banner {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(18, 12, 8, 0.72);
+  border: 1px solid rgba(201, 164, 90, 0.55);
+  color: #f3e2c0;
+  font: 600 12px/1.2 "Trebuchet MS", sans-serif;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  max-width: min(92%, 520px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .selection-box {
   position: absolute;
   z-index: 8;
