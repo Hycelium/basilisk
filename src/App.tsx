@@ -457,7 +457,7 @@ export default function App() {
           setSelectionBox(null);
           const world = r.screenToWorld(p.x, p.y);
           const hit = hitTest(sim.getState(), world.x, world.y);
-          if (hit?.kind === "villager") {
+          if (hit?.kind === "villager" || (hit?.kind === "unit" && sim.getState().basilisk)) {
             // Long-press on a peon: select it and open orders for it.
             sim.click(hit, world);
             refreshUi();
@@ -541,7 +541,13 @@ export default function App() {
       if (touch && state.phase === "running") {
         const peonsSelected = state.selectedVillagerIds.length > 0;
         const side = sim.getLocalTeam();
-        const ownPeon = hit?.kind === "villager" && state.villagers.some((v) => v.id === Number(hit.id) && v.team === side);
+        const ownPeon =
+          (hit?.kind === "villager" && state.villagers.some((v) => v.id === Number(hit.id) && v.team === side)) ||
+          (hit?.kind === "unit" &&
+            state.basilisk &&
+            state.units.some(
+              (u) => u.id === Number(hit.id) && u.team === side && u.lifeStage === "gatherer" && !u.npcKing,
+            ));
         const ownStructure =
           (hit?.kind === "building" && state.buildings.some((b) => b.id === Number(hit.id) && b.team === side)) ||
           (hit?.kind === "keep" && hit.id === side);
@@ -556,7 +562,10 @@ export default function App() {
         hit?.kind === "unit" &&
         (sim.getState().basilisk || (sim.getMatchMode() !== "pvp" && !touch && ev.button === 0))
       ) {
-        if (sim.tryPossess(Number(hit.id))) {
+        const target = sim.getState().units.find((u) => u.id === Number(hit.id));
+        const kingPickingPeon =
+          sim.isLocalKing() && !sim.getState().possessedId && target?.lifeStage === "gatherer";
+        if (!kingPickingPeon && sim.tryPossess(Number(hit.id))) {
           const body = sim.getState().units.find((u) => u.id === Number(hit.id));
           r.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
           canvas.requestPointerLock();
@@ -567,7 +576,11 @@ export default function App() {
       }
 
       sim.click(hit, world);
-      if (hit?.kind === "villager") pushTapMarker(p.x, p.y, "select", "");
+      if (hit?.kind === "villager" || (hit?.kind === "unit" && sim.getState().basilisk)) {
+        pushTapMarker(p.x, p.y, "select", "");
+      } else if (hit?.kind === "node" || hit?.kind === "work") {
+        pushTapMarker(p.x, p.y, "gather", "Gather");
+      }
       refreshUi();
       beep(320);
     };
@@ -988,7 +1001,7 @@ export default function App() {
           issueOrder(world, null, x, y);
         },
       });
-      if (hit?.kind === "node") {
+      if (hit?.kind === "node" || hit?.kind === "work") {
         radialItems.push({
           id: "gather",
           icon: "⛏",
@@ -1272,7 +1285,7 @@ export default function App() {
           {!layout.touch && (!ui.basilisk || (ui.basilisk.youAreKing && !ui.possessed)) && (
             <p className="cam-hint">
               {ui.basilisk?.youAreKing
-                ? "Select peons · Wood or right-click trees · right-drag orbit · wheel zoom"
+                ? "Select peons, then Wood/Gold/Farm/Hunt — or click the grove, mine, field, or deer"
                 : "Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom"}
             </p>
           )}
@@ -1287,41 +1300,57 @@ export default function App() {
           {!layout.touch && ui.basilisk?.youAreKing && ui.possessed && ui.phase === "running" && (
             <p className="cam-hint">WASD walk · Esc returns to the keep · only barracks soldiers</p>
           )}
-          {ui.basilisk?.youAreKing && ui.phase === "running" && !ui.possessed && (
-            <div className="king-orders labor-orders" role="toolbar" aria-label="Peon labor">
-              <strong>Labor{ui.selectedPeonCount > 0 ? ` · ${ui.selectedPeonCount}` : ""}</strong>
-              {(["wood", "gold", "farm", "hunt"] as WorkKind[]).map((kind) => (
-                <button
-                  key={kind}
-                  type="button"
-                  onClick={() => {
-                    sim.assignBasiliskWork(kind);
-                    refreshUi();
-                    beep(400);
-                  }}
-                >
-                  {kind === "wood" ? "Wood" : kind === "gold" ? "Gold" : kind === "farm" ? "Farm" : "Hunt"}
-                </button>
-              ))}
-            </div>
-          )}
           {ui.basilisk?.youAreKing && ui.phase === "running" && (
-            <div className="king-orders" role="toolbar" aria-label="King orders">
-              <strong>Crown</strong>
-              {(["gather", "hold", "hunt"] as KingOrder[]).map((order) => (
-                <button
-                  key={order}
-                  type="button"
-                  className={ui.basilisk?.kingOrder === order ? "active" : ""}
-                  onClick={() => {
-                    sim.setKingOrder(order);
-                    refreshUi();
-                    beep(400);
-                  }}
-                >
-                  {order === "gather" ? "Gather" : order === "hold" ? "Hold fords" : "Hunt"}
-                </button>
-              ))}
+            <div className="king-panel">
+              {!ui.possessed && (
+                <div className="king-orders labor-orders" role="toolbar" aria-label="Peon labor">
+                  <strong>Labor{ui.selectedPeonCount > 0 ? ` · ${ui.selectedPeonCount}` : " · all"}</strong>
+                  {(["wood", "gold", "farm", "hunt"] as WorkKind[]).map((kind) => {
+                    const count = ui.basilisk?.labor[kind] ?? 0;
+                    const top =
+                      count > 0 &&
+                      count ===
+                        Math.max(
+                          ui.basilisk?.labor.wood ?? 0,
+                          ui.basilisk?.labor.gold ?? 0,
+                          ui.basilisk?.labor.farm ?? 0,
+                          ui.basilisk?.labor.hunt ?? 0,
+                        );
+                    return (
+                      <button
+                        key={kind}
+                        type="button"
+                        className={top ? "active" : ""}
+                        onClick={() => {
+                          sim.assignBasiliskWork(kind);
+                          refreshUi();
+                          beep(400);
+                        }}
+                      >
+                        {kind === "wood" ? "Wood" : kind === "gold" ? "Gold" : kind === "farm" ? "Farm" : "Hunt"}
+                        {count > 0 ? ` ${count}` : ""}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="king-orders" role="toolbar" aria-label="King orders">
+                <strong>Crown</strong>
+                {(["gather", "hold", "hunt"] as KingOrder[]).map((order) => (
+                  <button
+                    key={order}
+                    type="button"
+                    className={ui.basilisk?.kingOrder === order ? "active" : ""}
+                    onClick={() => {
+                      sim.setKingOrder(order);
+                      refreshUi();
+                      beep(400);
+                    }}
+                  >
+                    {order === "gather" ? "Gather" : order === "hold" ? "Hold fords" : "Hunt"}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           <div className="sheet-dock">

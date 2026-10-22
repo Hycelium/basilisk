@@ -168,7 +168,7 @@ import {
   stepHaul,
   visionFromLife,
 } from "./basilisk";
-import { basiliskMap, isBasiliskSeed, WORK_LABEL } from "./basiliskMap";
+import { allWorkSites, basiliskMap, isBasiliskSeed, WORK_LABEL } from "./basiliskMap";
 
 function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -801,6 +801,22 @@ export class GameSim {
     else this.addToast(`${n} peon${n === 1 ? "" : "s"} to ${WORK_LABEL[kind]}.`);
   }
 
+  private gatherJobFromHit(hit: RectHit | null, world?: { x: number; y: number }): WorkKind | null {
+    if (hit?.kind === "work") {
+      if (hit.id === "farm" || hit.id === "hunt" || hit.id === "gold" || hit.id === "wood") return hit.id;
+    }
+    if (hit?.kind === "node") {
+      const node = this.state.nodes.find((n) => n.id === hit.id);
+      if (node?.kind === "pine") return "wood";
+      if (node?.kind === "copper") return "gold";
+    }
+    if (this.state.basilisk && world) {
+      const site = nearestWork(this.localTeam, world);
+      if (site && site.dist < 40) return site.kind;
+    }
+    return null;
+  }
+
   private basiliskGatherers(team: Team) {
     return this.state.units.filter(
       (u) => u.team === team && u.hp > 0 && u.lifeStage === "gatherer" && !u.npcKing,
@@ -822,6 +838,10 @@ export class GameSim {
     const picked = ids.length > 0 ? gatherers.filter((u) => want.has(u.id)) : gatherers;
     const targets = picked.length > 0 ? picked : gatherers;
     for (const u of targets) this.setPeonJob(u, kind);
+    const mark = nearestWork(team, keepPos(team), kind);
+    if (mark) {
+      this.state.commandMarkers.push({ id: this.next(), kind: "gather", pos: { ...mark.pos }, life: 1.2 });
+    }
     return targets.length;
   }
 
@@ -1401,6 +1421,16 @@ export class GameSim {
       this.state.selectedKeepTeam = null;
       return;
     }
+    if (
+      this.state.basilisk &&
+      this.isLocalKing() &&
+      !this.state.buildSelection &&
+      (hit.kind === "node" || hit.kind === "work")
+    ) {
+      const job = this.gatherJobFromHit(hit, world);
+      if (job) this.assignBasiliskWork(job);
+      return;
+    }
     if (hit.kind === "unit" && this.state.basilisk && this.isLocalKing()) {
       const id = Number(hit.id);
       const peon = this.state.units.find(
@@ -1548,16 +1578,7 @@ export class GameSim {
   commandSelected(world: { x: number; y: number }, hit: RectHit | null, patrol = false) {
     if (this.state.basilisk) {
       if (!this.isLocalKing()) return;
-      let kind: WorkKind | null = null;
-      if (hit?.kind === "node") {
-        const node = this.state.nodes.find((n) => n.id === hit.id);
-        if (node?.kind === "pine") kind = "wood";
-        else if (node?.kind === "copper") kind = "gold";
-      }
-      if (!kind) {
-        const site = nearestWork(this.localTeam, world);
-        if (site && site.dist < 36) kind = site.kind;
-      }
+      const kind = this.gatherJobFromHit(hit, world);
       if (kind) this.assignBasiliskWork(kind);
       return;
     }
@@ -5290,6 +5311,13 @@ export class GameSim {
       (s.basilisk && s.playerUnitId[view] != null
         ? s.units.find((u) => u.id === s.playerUnitId[view] && u.hp > 0)
         : undefined);
+    const labor = emptyTrips();
+    if (s.basilisk) {
+      for (const u of this.basiliskGatherers(view)) {
+        const job = u.workKind;
+        if (job) labor[job] += 1;
+      }
+    }
     let endReason = s.endReason;
     if (view === "foe" && s.phase === "ended") {
       if (s.won === true) {
@@ -5435,6 +5463,7 @@ export class GameSim {
                     : UNIT_DEFS[soul.kind].label
                   : "Peon",
             crownHint: this.crownHint(view, soul),
+            labor,
           }
         : null,
     };
@@ -5457,6 +5486,16 @@ export function hitTest(s: GameState, x: number, y: number): RectHit | null {
   // visibly clicked but silently selected the pad underneath.
   for (const n of s.nodes) {
     if (dist({ x, y }, n.pos) < 36) return { kind: "node", id: n.id };
+  }
+  if (s.basilisk) {
+    let best: { kind: "farm" | "hunt" | "gold" | "wood"; d: number } | null = null;
+    for (const team of ["you", "foe"] as const) {
+      for (const site of allWorkSites(team)) {
+        const d = dist({ x, y }, site.pos);
+        if (d < 32 && (!best || d < best.d)) best = { kind: site.kind, d };
+      }
+    }
+    if (best) return { kind: "work", id: best.kind };
   }
   for (const p of s.pads) {
     if (dist({ x, y }, p.pos) < 26) return { kind: "pad", id: p.id };

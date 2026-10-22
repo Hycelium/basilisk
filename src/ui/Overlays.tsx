@@ -117,7 +117,7 @@ export function Overlays({
           <ul className="tips">
             <li>Peons feed the coffer. Only chosen promote: Farm 5 → Levy · Deer 5 → Archer · Gold 5 → Ward · Wood 5 → Ram · Wood 10 → Treb · Farm+Gold 5 → Runner</li>
             <li>Chosen: dump 5 farm, hunt, or gold (or 10 wood) to promote and take the crown. Five kills also usurps. Then command in RTS.</li>
-            <li>Waves march both ways. Break the keep to win. As king you possess only barracks-trained soldiers.</li>
+            <li>As king, send peons with Wood / Gold / Farm / Hunt, or click the grove, mine, field, or deer. Waves march both ways; break the keep. Possess only barracks soldiers.</li>
           </ul>
 
           <div className="title-actions">

@@ -244,7 +244,8 @@ export function stepHaul(state: GameState, u: Unit, dt: number) {
     }
     return null;
   }
-  const near = nearestWork(u.team, u.pos, u.carryKind);
+  const want = u.carryKind ?? u.workKind;
+  const near = nearestWork(u.team, u.pos, want);
   if (!near || near.dist > WORK_REACH) return null;
   if (!u.carryKind) u.carryKind = near.kind;
   if (u.carryKind !== near.kind) return null;

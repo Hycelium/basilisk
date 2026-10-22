@@ -129,6 +129,8 @@ export interface BasiliskUi {
   rankLabel: string;
   /** How to take the keep, or empty once you hold it. */
   crownHint: string;
+  /** Living gatherers on each job. */
+  labor: TripCounts;
 }
 
 export type WavePhase = "build" | "spawning" | "fighting";
@@ -480,6 +482,6 @@ export interface UiSnapshot {
 }
 
 export interface RectHit {
-  kind: "keep" | "pad" | "building" | "node" | "unit" | "villager";
+  kind: "keep" | "pad" | "building" | "node" | "unit" | "villager" | "work";
   id: string;
 }
