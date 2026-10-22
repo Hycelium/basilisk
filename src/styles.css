@@ -1950,6 +1950,10 @@ button:disabled {
   pointer-events: auto;
 }
 
+.labor-orders {
+  bottom: 124px;
+}
+
 .king-orders strong {
   font-family: Cinzel, serif;
   color: #e2bc72;

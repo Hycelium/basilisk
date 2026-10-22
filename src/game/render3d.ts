@@ -1645,6 +1645,25 @@ export class GameRenderer {
       setPos3(obj, u.pos.x, u.pos.y, 0);
       obj.scale.setScalar(peonLook && u.canPromote ? 1.14 : 1);
       obj.visible = true;
+      let selection = obj.userData.selection as THREE.Mesh | null;
+      if (!selection) {
+        selection = new THREE.Mesh(
+          new THREE.RingGeometry(5.8, 7.1, 28),
+          new THREE.MeshBasicMaterial({
+            color: 0x79d3ff,
+            transparent: true,
+            opacity: 0.82,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        );
+        selection.name = "peon-selection";
+        selection.rotation.x = -Math.PI / 2;
+        selection.position.y = 0.25;
+        obj.add(selection);
+        obj.userData.selection = selection;
+      }
+      selection.visible = peonLook && state.selectedVillagerIds.includes(u.id);
       if (state.possessedId === u.id) {
         obj.rotation.y = Math.PI - this.fpsYaw;
       } else {

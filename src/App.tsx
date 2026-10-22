@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { GameRenderer, type QualityInfo, type QualitySetting, type TouchDragMode } from "./game/render3d";
 import { GameSim, hitTest } from "./game/sim";
-import type { BuildingKind, CombatEventKind, KingOrder, RectHit, Team, TrainKind, UiSnapshot } from "./game/types";
+import type { BuildingKind, CombatEventKind, KingOrder, RectHit, Team, TrainKind, UiSnapshot, WorkKind } from "./game/types";
 import { BUILD_COST } from "./game/balance";
 import { Hud } from "./ui/Hud";
 import { BuildBar } from "./ui/BuildBar";
@@ -1158,7 +1158,7 @@ export default function App() {
               {m.label && <em>{m.label}</em>}
             </span>
           ))}
-          {ui.selectedPeonCount > 0 && ui.phase === "running" && !sheetOpen && (
+          {ui.selectedPeonCount > 0 && ui.phase === "running" && !sheetOpen && !ui.basilisk && (
             <div className="unit-command-bar" role="toolbar" aria-label="Peon orders">
               <strong>
                 {ui.selectedPeonCount} peon{ui.selectedPeonCount === 1 ? "" : "s"}
@@ -1267,7 +1267,11 @@ export default function App() {
           </div>
           )}
           {!layout.touch && (!ui.basilisk || (ui.basilisk.youAreKing && !ui.possessed)) && (
-            <p className="cam-hint">Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom</p>
+            <p className="cam-hint">
+              {ui.basilisk?.youAreKing
+                ? "Select peons · Wood or right-click trees · right-drag orbit · wheel zoom"
+                : "Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom"}
+            </p>
           )}
           {!layout.touch &&
             ui.basilisk &&
@@ -1279,6 +1283,24 @@ export default function App() {
           )}
           {!layout.touch && ui.basilisk?.youAreKing && ui.possessed && ui.phase === "running" && (
             <p className="cam-hint">WASD walk · Esc returns to the keep · only barracks soldiers</p>
+          )}
+          {ui.basilisk?.youAreKing && ui.phase === "running" && !ui.possessed && (
+            <div className="king-orders labor-orders" role="toolbar" aria-label="Peon labor">
+              <strong>Labor{ui.selectedPeonCount > 0 ? ` · ${ui.selectedPeonCount}` : ""}</strong>
+              {(["wood", "gold", "farm", "hunt"] as WorkKind[]).map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => {
+                    sim.assignBasiliskWork(kind);
+                    refreshUi();
+                    beep(400);
+                  }}
+                >
+                  {kind === "wood" ? "Wood" : kind === "gold" ? "Gold" : kind === "farm" ? "Farm" : "Hunt"}
+                </button>
+              ))}
+            </div>
           )}
           {ui.basilisk?.youAreKing && ui.phase === "running" && (
             <div className="king-orders" role="toolbar" aria-label="King orders">
