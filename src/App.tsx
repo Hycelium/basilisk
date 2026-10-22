@@ -165,7 +165,7 @@ export default function App() {
     }
   });
   const [quality, setQuality] = useState<QualityInfo>({ setting: "auto", tier: "high", fps: 60 });
-  const [zoomT, setZoomT] = useState(0.39);
+  const [zoomT, setZoomT] = useState(0.54);
   const [tapMarkers, setTapMarkers] = useState<TapMarker[]>([]);
   const tapIdRef = useRef(0);
   const [radial, setRadial] = useState<RadialState | null>(null);

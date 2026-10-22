@@ -200,7 +200,7 @@ export class GameRenderer {
   private homeSide: Team = "you";
   /** Battlefield width in sim units. 3-road maps are wider than the default 400. */
   private mapWidth = WORLD_W;
-  private readonly camDistMin = 280;
+  private readonly camDistMin = 80;
   private readonly camDistMax = 900;
   private readonly camPitchMin = 0.72;
   private readonly camPitchMax = 1.35;
