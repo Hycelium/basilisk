@@ -6,6 +6,7 @@ export type UnitKind = WaveUnitKind | TrainKind;
 export type Job = "farmer" | "hunter" | "smith" | "lumber";
 export type LifeStage = "gatherer" | "warrior" | "king";
 export type KingOrder = "gather" | "hold" | "hunt";
+export type KingController = "ai" | "player";
 export type WorkKind = "farm" | "hunt" | "gold" | "wood";
 export type Coffer = { gold: number; wood: number; food: number };
 export type TripCounts = { farm: number; hunt: number; gold: number; wood: number };
@@ -83,6 +84,8 @@ export interface Unit {
   kills?: number;
   deposited?: number;
   lastHitBy?: number;
+  /** Starting steward king. Not possessable. */
+  npcKing?: boolean;
 }
 
 /** First-person body the local player is driving, or none. */
@@ -319,6 +322,7 @@ export interface GameState {
   joinTimer: number;
   trickleTimer: number;
   kingId: Record<Team, number | null>;
+  kingController: Record<Team, KingController>;
   kingOrder: Record<Team, KingOrder>;
   kingTreasury: Record<Team, number>;
   kingCoffer: Record<Team, Coffer>;

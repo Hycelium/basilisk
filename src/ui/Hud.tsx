@@ -69,6 +69,19 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
               <span className="label">KILLS</span>
               <span className="value">{realm.kills}</span>
             </div>
+            <div className="stat lives">
+              <span className="label">KEEP</span>
+              <span className={ui.yourHp <= 80 ? "value danger" : "value"}>{ui.yourHp}</span>
+            </div>
+            <div className="stat">
+              <span className="label">FOE</span>
+              <span className="value">{ui.foeHp}</span>
+            </div>
+            <div className="stat">
+              <span className="label">WAVE</span>
+              <span className="value">{ui.waveLabel}</span>
+              <span className="phase-tag">{phaseLabel}</span>
+            </div>
             {realm.joinTimer > 0 && (
               <div className="stat">
                 <span className="label">REJOIN</span>
@@ -120,7 +133,7 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
           </>
         )}
       </div>
-      {realm ? (
+      {realm && !(realm.youAreKing && !ui.possessed) ? (
         <div className="hud-xp-row trip-row">
           <div className="stat keep-xp-stat">
             <span className="label">FARM {realm.trips.farm}/5</span>
@@ -147,7 +160,7 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
             </div>
           </div>
         </div>
-      ) : (
+      ) : !realm ? (
         <div className="hud-xp-row">
           <div className="stat keep-xp-stat">
             <span className="label">KEEP LV {ui.keepLevel}</span>
@@ -156,7 +169,7 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
             </div>
           </div>
         </div>
-      )}
+      ) : null}
       <div className="hud-controls">
         <button type="button" onClick={onPause} aria-label={ui.paused ? "Resume" : "Pause"} title="Space">
           <span className="full">{ui.paused ? "Resume" : "Pause"}</span>

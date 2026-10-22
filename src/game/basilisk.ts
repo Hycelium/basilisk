@@ -1,7 +1,7 @@
 import { UNIT_DEFS, VILLAGER_HP, VILLAGER_SPEED, PEON_DAMAGE } from "./balance";
 import { allWorkSites, chokePoints, type WorkKind } from "./basiliskMap";
 import { keepPos } from "./map";
-import type { GameState, KingOrder, Team, Unit, UnitKind, Vec2 } from "./types";
+import type { GameState, KingController, KingOrder, Team, Unit, UnitKind, Vec2, WaveSpec } from "./types";
 
 export const BASILISK_START_EACH = 8;
 export const BASILISK_SOFT_CAP = 15;
@@ -13,6 +13,27 @@ export const FILL_RATE = 4;
 export const WORK_REACH = 16;
 export const KEEP_REACH = 26;
 export const KING_KILL_NEED = 5;
+export const BASILISK_KEEP_HP = 400;
+export const BASILISK_START_COFFER = { gold: 150, wood: 125, food: 0 };
+export const BASILISK_FIRST_BUILD = 48;
+export const BASILISK_BUILD_PAUSE = 20;
+export const BASILISK_KING_HP = 96;
+
+/** Mirrored, lighter than Roadkeep so neither keep falls before towns stand. */
+export const BASILISK_WAVES: WaveSpec[] = [
+  { raider: 2, soldier: 0, brute: 0, runner: 0, ward: 0 },
+  { raider: 4, soldier: 0, brute: 0, runner: 0, ward: 0 },
+  { raider: 2, soldier: 2, brute: 0, runner: 0, ward: 0 },
+  { raider: 4, soldier: 2, brute: 0, runner: 0, ward: 0 },
+  { raider: 2, soldier: 2, brute: 0, runner: 2, ward: 0 },
+  { raider: 0, soldier: 4, brute: 0, runner: 0, ward: 2 },
+  { raider: 2, soldier: 2, brute: 2, runner: 0, ward: 0 },
+  { raider: 4, soldier: 2, brute: 0, runner: 2, ward: 2 },
+  { raider: 2, soldier: 4, brute: 2, runner: 2, ward: 0 },
+  { raider: 0, soldier: 4, brute: 2, runner: 2, ward: 2 },
+  { raider: 2, soldier: 4, brute: 4, runner: 2, ward: 2 },
+  { raider: 4, soldier: 4, brute: 4, runner: 4, ward: 2 },
+];
 
 const WORK_KINDS: WorkKind[] = ["farm", "hunt", "gold", "wood"];
 
@@ -30,6 +51,18 @@ export type Coffer = { gold: number; wood: number; food: number };
 
 export function defaultKingOrder(): Record<Team, KingOrder> {
   return { you: "gather", foe: "gather" };
+}
+
+export function defaultKingController(): Record<Team, KingController> {
+  return { you: "ai", foe: "ai" };
+}
+
+export function isClanSoul(u: Unit) {
+  return !!u.lifeStage;
+}
+
+export function isWaveCreep(u: Unit) {
+  return !u.fromBarracks && !u.lifeStage && !u.npcKing;
 }
 
 export function emptyScars() {
@@ -227,42 +260,26 @@ export function orderTarget(state: GameState, u: Unit): Vec2 | null {
 export function refreshKings(state: GameState) {
   for (const team of ["you", "foe"] as Team[]) {
     const living = state.units.filter((u) => u.team === team && u.hp > 0);
-    const military = living.filter((u) => u.lifeStage !== "gatherer");
-    if (military.length === 0) {
+    if (state.kingController[team] === "player") {
+      const steward = living.find((u) => u.npcKing);
+      state.kingId[team] = steward?.id ?? state.kingId[team];
+      continue;
+    }
+    const npc = living.find((u) => u.npcKing);
+    if (!npc) {
       state.kingId[team] = null;
       continue;
     }
-    const cur = military.find((u) => u.id === state.kingId[team]);
-    if (!cur) {
-      let first = military[0]!;
-      for (const u of military) {
-        if ((u.deposited ?? 0) > (first.deposited ?? 0)) first = u;
-      }
-      for (const u of military) {
-        if (u.lifeStage === "king") u.lifeStage = "warrior";
-      }
-      first.lifeStage = "king";
-      state.kingId[team] = first.id;
-      continue;
+    for (const u of living) {
+      if (u.lifeStage === "king" && !u.npcKing) u.lifeStage = "warrior";
     }
-    let usurper: Unit | null = null;
-    for (const u of military) {
-      if (u.id === cur.id) continue;
-      if ((u.kills ?? 0) < KING_KILL_NEED) continue;
-      if ((u.deposited ?? 0) <= (cur.deposited ?? 0)) continue;
-      if (!usurper || (u.deposited ?? 0) > (usurper.deposited ?? 0)) usurper = u;
-    }
-    const next = usurper ?? cur;
-    for (const u of military) {
-      if (u.lifeStage === "king") u.lifeStage = "warrior";
-    }
-    next.lifeStage = "king";
-    state.kingId[team] = next.id;
+    npc.lifeStage = "king";
+    state.kingId[team] = npc.id;
   }
 }
 
 export function countClan(state: GameState, team: Team) {
-  return state.units.filter((u) => u.team === team && u.hp > 0).length;
+  return state.units.filter((u) => u.team === team && u.hp > 0 && isClanSoul(u) && !u.npcKing).length;
 }
 
 export function isMilitary(u: Unit) {

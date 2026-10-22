@@ -135,17 +135,27 @@ import type {
 import {
   applyPeonBody,
   applyRank,
+  BASILISK_BUILD_PAUSE,
+  BASILISK_FIRST_BUILD,
   BASILISK_HARD_CAP,
   BASILISK_JOIN_WAIT,
+  BASILISK_KEEP_HP,
+  BASILISK_KING_HP,
   BASILISK_SOFT_CAP,
+  BASILISK_START_COFFER,
   BASILISK_START_EACH,
+  BASILISK_WAVES,
   countClan,
+  defaultKingController,
   defaultKingOrder,
   emptyCoffer,
   emptyScars,
   emptyTrips,
   hashId,
+  isClanSoul,
   isMilitary,
+  isWaveCreep,
+  KING_KILL_NEED,
   KING_TAX,
   orderTarget,
   pickWork,
@@ -334,6 +344,7 @@ export class GameSim {
       joinTimer: 0,
       trickleTimer: 18,
       kingId: { you: null, foe: null },
+      kingController: defaultKingController(),
       kingOrder: defaultKingOrder(),
       kingTreasury: { you: 0, foe: 0 },
       kingCoffer: { you: emptyCoffer(), foe: emptyCoffer() },
@@ -574,7 +585,7 @@ export class GameSim {
   }
 
   private combatScale(team: Team) {
-    if (this.matchMode === "pvp") return 1;
+    if (this.state.basilisk || this.matchMode === "pvp") return 1;
     return combatWaveScale(team, this.state.waveIndex);
   }
 
@@ -666,6 +677,7 @@ export class GameSim {
   }
 
   private waveCap() {
+    if (this.state.basilisk) return BASILISK_WAVES.length;
     return this.campaignMission?.waves ?? WAVES.length;
   }
 
@@ -715,19 +727,30 @@ export class GameSim {
     this.state.playerJob = null;
     this.state.kingOrder = { you: "gather", foe: "gather" };
     this.state.kingTreasury = { you: 0, foe: 0 };
-    this.state.kingCoffer = { you: emptyCoffer(), foe: emptyCoffer() };
+    this.state.kingController = defaultKingController();
+    this.state.kingCoffer = {
+      you: { ...BASILISK_START_COFFER },
+      foe: { ...BASILISK_START_COFFER },
+    };
     this.state.scars = emptyScars();
     this.state.phase = "running";
-    this.state.wavePhase = "fighting";
-    this.state.buildTimer = 9999;
+    this.state.wavePhase = "build";
+    this.state.buildTimer = BASILISK_FIRST_BUILD;
+    this.state.waveIndex = 0;
+    this.state.wavesCleared = 0;
+    this.state.allWavesLaunched = false;
+    this.state.pendingWaveUnits = [];
     for (const team of ["you", "foe"] as Team[]) {
+      this.state.keeps[team].hp = BASILISK_KEEP_HP;
+      this.state.keeps[team].maxHp = BASILISK_KEEP_HP;
+      this.spawnBasiliskKing(team);
       for (let i = 0; i < BASILISK_START_EACH; i++) {
         this.spawnBasiliskSoul(team, team === clan && i === 0);
       }
     }
     refreshKings(this.state);
     const you = clan === "you" ? "Blue" : "Red";
-    this.addToast(`${you} peon — haul 10 home. Farm, hunt, mine, or chop.`);
+    this.addToast(`${you} peon — haul 10 home. An AI king already holds the keep.`);
   }
 
   setKingOrder(order: KingOrder) {
@@ -738,14 +761,37 @@ export class GameSim {
     this.addToast(`The crown bids: ${order}.`);
   }
 
-  private isLocalKing() {
+  isLocalKing() {
     const s = this.state;
-    const id = s.possessedId ?? s.playerUnitId;
-    return s.kingId[this.localTeam] === id;
+    return s.basilisk && s.kingController[this.localTeam] === "player";
+  }
+
+  private spawnBasiliskKing(team: Team) {
+    this.spawnUnit(team, "levy", team === "you" ? 0 : 1, false);
+    const u = this.state.units[this.state.units.length - 1];
+    if (!u) return;
+    const keep = keepPos(team);
+    u.npcKing = true;
+    u.lifeStage = "king";
+    u.fromBarracks = false;
+    u.ignoreEnemyCreeps = false;
+    u.aiHeldForRush = false;
+    u.hp = BASILISK_KING_HP;
+    u.maxHp = BASILISK_KING_HP;
+    u.kills = 0;
+    u.deposited = 0;
+    u.trips = emptyTrips();
+    u.carry = 0;
+    u.carryKind = null;
+    u.pos = {
+      x: keep.x + (team === "you" ? -10 : 10),
+      y: keep.y + (team === "you" ? -22 : 22),
+    };
+    this.state.kingId[team] = u.id;
   }
 
   private spawnBasiliskSoul(team: Team, player = false) {
-    this.spawnUnit(team, "levy", team === "you" ? 0 : 1, true);
+    this.spawnUnit(team, "levy", team === "you" ? 0 : 1, false);
     const u = this.state.units[this.state.units.length - 1];
     if (!u) return;
     applyPeonBody(u);
@@ -755,11 +801,12 @@ export class GameSim {
       x: keep.x + (hashId(u.id + 3) - 0.5) * 28,
       y: keep.y + (team === "you" ? -18 : 18) + (hashId(u.id + 7) - 0.5) * 16,
     };
-    u.fromBarracks = true;
+    u.fromBarracks = false;
+    u.npcKing = false;
     u.ignoreEnemyCreeps = false;
     u.aiHeldForRush = false;
     u.xp = 0;
-    if (player) {
+    if (player && !this.isLocalKing()) {
       this.state.playerUnitId = u.id;
       this.tryPossess(u.id);
     }
@@ -842,7 +889,18 @@ export class GameSim {
     const s = this.state;
     if (s.phase !== "running") return false;
     const u = s.units.find((x) => x.id === id);
-    if (!u || u.hp <= 0 || u.team !== this.localTeam || !u.fromBarracks) return false;
+    if (!u || u.hp <= 0 || u.team !== this.localTeam) return false;
+    if (u.npcKing || isWaveCreep(u)) return false;
+    if (s.basilisk && this.isLocalKing()) {
+      if (!u.fromBarracks || u.lifeStage === "gatherer") {
+        this.addToast("The crown possesses only barracks-trained soldiers.");
+        return false;
+      }
+    } else if (s.basilisk) {
+      if (u.fromBarracks || !isClanSoul(u)) return false;
+    } else if (!u.fromBarracks) {
+      return false;
+    }
     s.possessedId = u.id;
     if (s.basilisk) s.playerUnitId = u.id;
     s.speed = 1;
@@ -864,7 +922,7 @@ export class GameSim {
     return true;
   }
 
-  releasePossess(reason: "esc" | "death" | "end" = "esc") {
+  releasePossess(reason: "esc" | "death" | "end" | "crown" = "esc") {
     const s = this.state;
     if (s.possessedId == null) return;
     s.possessedId = null;
@@ -872,10 +930,16 @@ export class GameSim {
     s.possessAimBuildingId = null;
     s.possessAimBarricadeId = null;
     this.possessKeys = { w: false, a: false, s: false, d: false };
-    if (reason === "death") {
-      this.addToast(s.basilisk ? "Fallen. Wait to rejoin as a gatherer." : "Fallen. Click another soldier to take the field.");
+    if (reason === "crown") {
+      this.addToast("The crown is yours. Command the keep. Click barracks soldiers to take the field.");
+    } else if (reason === "death") {
+      this.addToast(
+        s.basilisk && !this.isLocalKing()
+          ? "Fallen. Wait to rejoin as a gatherer."
+          : "Fallen. Click another soldier to take the field.",
+      );
     } else if (reason === "esc" && s.basilisk) {
-      this.addToast("Body keeps the circuit. Click them to take first person.");
+      this.addToast(this.isLocalKing() ? "Back to the keep. Click a barracks soldier to possess." : "Body keeps the circuit. Click them to take first person.");
     }
   }
 
@@ -1693,7 +1757,7 @@ export class GameSim {
       damage *= DAMAGE_MULT[barracks.damageRank];
       cooldown *= RATE_MULT[barracks.rateRank];
     }
-    const aiHeldForRush = this.matchMode === "ai" && team === "foe" && fromBarracks;
+    const aiHeldForRush = !this.state.basilisk && this.matchMode === "ai" && team === "foe" && fromBarracks;
     const stagingY = 138 + lane * 8;
     const u: Unit = {
       id: this.next(),
@@ -1738,7 +1802,7 @@ export class GameSim {
    * kept, so a wounded unit is not healed. Buildings and keeps are left alone.
    */
   private retuneLivingAiCombat(prevWave: number, nextWave: number) {
-    if (this.matchMode === "pvp") return;
+    if (this.matchMode === "pvp" || this.state.basilisk) return;
     const from = aiWaveStrength(prevWave);
     const to = aiWaveStrength(nextWave);
     if (from === to) return;
@@ -1762,6 +1826,35 @@ export class GameSim {
     return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
   }
 
+  private tickWaveClock(dt: number) {
+    const s = this.state;
+    if (s.wavePhase === "build") {
+      s.buildTimer -= dt;
+      if (s.buildTimer <= 0 && s.waveIndex < this.waveCap()) {
+        this.launchNextWave();
+      }
+    } else if (s.wavePhase === "spawning") {
+      if (s.pendingWaveUnits.length > 0) {
+        s.waveSpawnTimer -= dt;
+        if (s.waveSpawnTimer <= 0) {
+          const idx = s.pendingWaveUnits.findIndex((x) => x.team === s.waveSpawnSide);
+          const pick = idx >= 0 ? s.pendingWaveUnits.splice(idx, 1)[0] : s.pendingWaveUnits.shift();
+          if (pick) {
+            this.spawnUnit(pick.team, pick.kind, pick.lane, false);
+            s.waveSpawnSide = s.waveSpawnSide === "you" ? "foe" : "you";
+            s.waveSpawnTimer = WAVE_UNIT_GAP;
+          }
+        }
+      } else {
+        s.wavePhase = "fighting";
+      }
+    } else if (s.wavePhase === "fighting") {
+      if (!this.waveCreepsAlive() && s.pendingWaveUnits.length === 0) {
+        this.onWaveCleared();
+      }
+    }
+  }
+
   private launchNextWave() {
     const s = this.state;
     if (s.waveIndex >= this.waveCap()) return;
@@ -1773,8 +1866,13 @@ export class GameSim {
     s.wavePhase = "spawning";
     s.waveSpawnTimer = 0;
     const income = WAVE_START_INCOME + Math.floor(idx * 3);
-    s.gold.you += income;
-    s.gold.foe += income;
+    if (s.basilisk) {
+      s.kingCoffer.you.gold += income;
+      s.kingCoffer.foe.gold += income;
+    } else {
+      s.gold.you += income;
+      s.gold.foe += income;
+    }
     s.stats.you.goldEarned += income;
     s.stats.foe.goldEarned += income;
     this.addToast(`Wave ${s.waveIndex}/${this.waveCap()} — +${income}g`);
@@ -1785,7 +1883,7 @@ export class GameSim {
 
   rushNextWave() {
     // Human skirmish: neither player may skip the build clock. Versus AI still can.
-    if (this.matchMode === "pvp") return;
+    if (this.matchMode === "pvp" || this.state.basilisk) return;
     if (this.redirect({ t: "rush" })) return;
     const s = this.state;
     if (s.phase !== "running" || s.wavePhase !== "build") return;
@@ -1800,15 +1898,20 @@ export class GameSim {
   }
 
   private waveCreepsAlive() {
-    return this.state.units.some((u) => !u.fromBarracks);
+    return this.state.units.some((u) => isWaveCreep(u));
   }
 
   private onWaveCleared() {
     const s = this.state;
     s.wavesCleared += 1;
     const bonus = WAVE_CLEAR_BASE + s.wavesCleared * WAVE_CLEAR_SCALE;
-    s.gold.you += bonus;
-    s.gold.foe += bonus;
+    if (s.basilisk) {
+      s.kingCoffer.you.gold += bonus;
+      s.kingCoffer.foe.gold += bonus;
+    } else {
+      s.gold.you += bonus;
+      s.gold.foe += bonus;
+    }
     s.stats.you.goldEarned += bonus;
     s.stats.foe.goldEarned += bonus;
     this.addToast(`Wave cleared! +${bonus}g — build phase`);
@@ -1821,7 +1924,7 @@ export class GameSim {
       return;
     }
     s.wavePhase = "build";
-    s.buildTimer = BUILD_PAUSE;
+    s.buildTimer = s.basilisk ? BASILISK_BUILD_PAUSE : BUILD_PAUSE;
   }
 
   private splitWave(count: number): number {
@@ -1841,7 +1944,8 @@ export class GameSim {
       }
       return;
     }
-    const spec = WAVES[index];
+    const spec = this.state.basilisk ? BASILISK_WAVES[index] : WAVES[index];
+    if (!spec) return;
     const pairs: { kind: UnitKind; count: number }[] = [
       { kind: "raider", count: spec.raider },
       { kind: "soldier", count: spec.soldier },
@@ -2433,6 +2537,10 @@ export class GameSim {
   }
 
   enqueueTrain(kind: TrainKind, team: Team = "you") {
+    if (this.state.basilisk && team === this.localTeam && !this.isLocalKing()) {
+      this.addToast("Only the king trains from the barracks.");
+      return false;
+    }
     if (team === this.localTeam) {
       const id = this.state.selectedBuildingId;
       if (this.orderSink && !this.applyingRemote) {
@@ -3021,16 +3129,62 @@ export class GameSim {
       this.fightMilitary(u, nearest, u.team, dt);
       return;
     }
+    if (nearest && u.lifeStage === "gatherer" && nearestD < 28) {
+      this.fightMilitary(u, nearest, u.team, dt);
+      return;
+    }
     const dest = orderTarget(s, u);
     if (dest) moveTowards(u.pos, dest, u.speed, dt);
     const note = stepHaul(s, u, dt);
     if (note && u.team === this.localTeam) this.addToast(note);
   }
 
+  private stepNpcKing(u: Unit, dt: number) {
+    const s = this.state;
+    const keep = keepPos(u.team);
+    const home = { x: keep.x + (u.team === "you" ? -10 : 10), y: keep.y + (u.team === "you" ? -22 : 22) };
+    const foe = this.enemy(u.team);
+    let nearest: Unit | null = null;
+    let nearestD = 78;
+    for (const e of s.units) {
+      if (e.team !== foe || e.hp <= 0) continue;
+      const d = dist(u.pos, e.pos);
+      if (d < nearestD) {
+        nearestD = d;
+        nearest = e;
+      }
+    }
+    if (nearest) {
+      this.fightMilitary(u, nearest, u.team, dt);
+      return;
+    }
+    moveTowards(u.pos, home, u.speed, dt);
+  }
+
+  private tryUsurpCrown() {
+    const s = this.state;
+    const team = this.localTeam;
+    if (s.kingController[team] !== "ai") return;
+    const body = s.units.find((u) => u.id === (s.possessedId ?? s.playerUnitId) && u.team === team && u.hp > 0);
+    if (!body || body.npcKing) return;
+    const steward = s.units.find((u) => u.id === s.kingId[team]);
+    if ((body.kills ?? 0) < KING_KILL_NEED) return;
+    if ((body.deposited ?? 0) <= (steward?.deposited ?? 0)) return;
+    s.kingController[team] = "player";
+    if (body.lifeStage === "king") body.lifeStage = "warrior";
+    this.releasePossess("crown");
+  }
+
   private tickBasilisk(dt: number) {
     const s = this.state;
+    this.tryUsurpCrown();
     refreshKings(s);
-    if (s.joinTimer > 0) {
+    for (const team of ["you", "foe"] as Team[]) {
+      if (s.kingController[team] !== "ai") continue;
+      if (s.units.some((u) => u.team === team && u.hp > 0 && u.npcKing)) continue;
+      this.spawnBasiliskKing(team);
+    }
+    if (s.joinTimer > 0 && !this.isLocalKing()) {
       s.joinTimer -= dt;
       if (s.joinTimer <= 0) {
         this.spawnBasiliskSoul(this.localTeam, true);
@@ -3040,27 +3194,64 @@ export class GameSim {
     s.trickleTimer -= dt;
     if (s.trickleTimer <= 0) {
       s.trickleTimer = 16 + hashId(Math.floor(s.time)) * 10;
+      const clanTotal = countClan(s, "you") + countClan(s, "foe");
       for (const team of ["you", "foe"] as Team[]) {
         if (countClan(s, team) >= BASILISK_SOFT_CAP) continue;
-        if (s.units.length >= BASILISK_HARD_CAP * 2) continue;
+        if (clanTotal >= BASILISK_HARD_CAP * 2) continue;
         this.spawnBasiliskSoul(team);
       }
     }
-    if (Math.floor(s.time / 22) !== Math.floor((s.time - dt) / 22)) {
-      const foeHasArms = s.units.some((u) => u.team === "foe" && isMilitary(u));
-      s.kingOrder.foe = foeHasArms ? (s.time > 70 ? "hunt" : "hold") : "gather";
-      this.basiliskKingBuild(this.enemy(this.localTeam));
+    if (Math.floor(s.time / 14) !== Math.floor((s.time - dt) / 14)) {
+      for (const team of ["you", "foe"] as Team[]) {
+        if (s.kingController[team] !== "ai") continue;
+        const hasBarracks = s.buildings.some((b) => b.team === team && b.kind === "barracks");
+        if (team !== this.localTeam) {
+          s.kingOrder[team] = !hasBarracks ? "gather" : s.waveIndex >= 4 ? "hunt" : "hold";
+        } else {
+          s.kingOrder[team] = "gather";
+        }
+        this.basiliskKingBuild(team);
+      }
     }
   }
 
   private basiliskKingBuild(team: Team) {
     const s = this.state;
-    if (!s.kingId[team]) return;
-    const cost = BUILD_COST.watchtower;
-    if (!this.canAfford(team, cost)) return;
-    const pad = s.pads.find((p) => p.team === team && p.zone === "combat" && !s.buildings.some((b) => b.padId === p.id));
-    if (!pad) return;
-    this.buildFor(team, "watchtower", pad.id);
+    if (s.kingController[team] !== "ai") return;
+    const occupied = (padId: string) => s.buildings.some((b) => b.padId === padId);
+    const keep = keepPos(team);
+    const emptyCombat = s.pads
+      .filter((p) => p.team === team && p.zone === "combat" && !occupied(p.id))
+      .sort((a, b) => dist(a.pos, keep) - dist(b.pos, keep));
+    const emptyEco = s.pads.filter((p) => p.team === team && p.zone === "eco" && !occupied(p.id));
+    const hasTower = s.buildings.some((b) => b.team === team && (b.kind === "watchtower" || b.kind === "ballista"));
+    const hasHouse = s.buildings.some((b) => b.team === team && b.kind === "house");
+    const barracks = s.buildings.filter((b) => b.team === team && b.kind === "barracks");
+    if (!hasTower && emptyCombat[0] && this.canAfford(team, BUILD_COST.watchtower)) {
+      this.buildFor(team, "watchtower", emptyCombat[0].id);
+      return;
+    }
+    if (barracks.length === 0 && emptyCombat[0] && this.canAfford(team, BUILD_COST.barracks)) {
+      this.buildFor(team, "barracks", emptyCombat[0].id);
+      return;
+    }
+    if (!hasHouse && emptyEco[0] && this.canAfford(team, BUILD_COST.house)) {
+      this.buildFor(team, "house", emptyEco[0].id);
+      return;
+    }
+    if (hasTower && emptyCombat[0] && this.canAfford(team, BUILD_COST.ballista)) {
+      this.buildFor(team, "ballista", emptyCombat[0].id);
+      return;
+    }
+    const hall = barracks[0];
+    if (!hall || hall.queue.length > 0) return;
+    const levyCost = { gold: UNIT_DEFS.levy.cost ?? 26, wood: UNIT_DEFS.levy.woodCost ?? 0 };
+    const archerCost = { gold: UNIT_DEFS.archer.cost ?? 34, wood: UNIT_DEFS.archer.woodCost ?? 0 };
+    if (this.canAfford(team, archerCost) && s.waveIndex >= 2) {
+      this.enqueueTrainAt(team, "archer", hall.id);
+      return;
+    }
+    if (this.canAfford(team, levyCost)) this.enqueueTrainAt(team, "levy", hall.id);
   }
 
   private updateUnitMovementAndMelee(dt: number, team: Team) {
@@ -3072,8 +3263,14 @@ export class GameSim {
         continue;
       }
       if (this.state.basilisk) {
-        this.stepBasiliskSoul(u, dt);
-        continue;
+        if (u.npcKing) {
+          this.stepNpcKing(u, dt);
+          continue;
+        }
+        if (u.lifeStage === "gatherer" || (isClanSoul(u) && !u.fromBarracks)) {
+          this.stepBasiliskSoul(u, dt);
+          continue;
+        }
       }
       if (u.kind === "trebuchet") {
         this.stepTrebuchet(u, team, dt);
@@ -3245,7 +3442,7 @@ export class GameSim {
             this.addToast(`Kill rank: ${UNIT_DEFS[slayer.kind].label}.`);
           }
         }
-        if (u.id === this.state.playerUnitId) this.state.joinTimer = BASILISK_JOIN_WAIT;
+        if (u.id === this.state.playerUnitId && !this.isLocalKing()) this.state.joinTimer = BASILISK_JOIN_WAIT;
       } else {
         this.state.gold[killer] += u.bounty;
       }
@@ -3687,42 +3884,32 @@ export class GameSim {
     this.updateResourceRegen(dt);
 
     if (s.basilisk) {
+      this.tickWaveClock(dt);
       this.updateUnitMovementAndMelee(dt, "you");
       this.updateUnitMovementAndMelee(dt, "foe");
       this.doTowerCombat(dt, "you");
       this.doTowerCombat(dt, "foe");
+      this.doKeepCombat(dt, "you");
+      this.doKeepCombat(dt, "foe");
       this.doBarracks(dt, "you");
       this.doBarracks(dt, "foe");
       this.cleanupDeaths();
       this.tickBasilisk(dt);
+      if (s.keeps.you.hp <= 0 && s.keeps.foe.hp <= 0) {
+        this.finishMatch("Stalemate. Both keeps are broken.", null);
+        return;
+      }
+      if (s.keeps.foe.hp <= 0) {
+        this.finishMatch("Victory. Their keep is broken.", true);
+        return;
+      }
+      if (s.keeps.you.hp <= 0) {
+        this.finishMatch("Defeat. Your keep has fallen.", false);
+      }
       return;
     }
 
-    if (s.wavePhase === "build") {
-      s.buildTimer -= dt;
-      if (s.buildTimer <= 0 && s.waveIndex < this.waveCap()) {
-        this.launchNextWave();
-      }
-    } else if (s.wavePhase === "spawning") {
-      if (s.pendingWaveUnits.length > 0) {
-        s.waveSpawnTimer -= dt;
-        if (s.waveSpawnTimer <= 0) {
-          const idx = s.pendingWaveUnits.findIndex((x) => x.team === s.waveSpawnSide);
-          const pick = idx >= 0 ? s.pendingWaveUnits.splice(idx, 1)[0] : s.pendingWaveUnits.shift();
-          if (pick) {
-            this.spawnUnit(pick.team, pick.kind, pick.lane, false);
-            s.waveSpawnSide = s.waveSpawnSide === "you" ? "foe" : "you";
-            s.waveSpawnTimer = WAVE_UNIT_GAP;
-          }
-        }
-      } else {
-        s.wavePhase = "fighting";
-      }
-    } else if (s.wavePhase === "fighting") {
-      if (!this.waveCreepsAlive() && s.pendingWaveUnits.length === 0) {
-        this.onWaveCleared();
-      }
-    }
+    this.tickWaveClock(dt);
 
     if (this.matchMode === "ai") this.manageFoePeonDefense();
     this.updateVillagers(dt, "you");
@@ -4706,6 +4893,7 @@ export class GameSim {
       wavePhase: s.wavePhase,
       buildTimer: Math.max(0, s.buildTimer),
       canRush:
+        !s.basilisk &&
         this.matchMode !== "pvp" &&
         s.wavePhase === "build" &&
         s.waveIndex < this.waveCap() &&
@@ -4778,7 +4966,7 @@ export class GameSim {
             job: body.job ?? null,
             xp: body.xp ?? 0,
             lifeStage: body.lifeStage ?? null,
-            isKing: s.kingId[body.team] === body.id,
+            isKing: s.basilisk ? s.kingController[body.team] === "player" : s.kingId[body.team] === body.id,
           }
         : null,
       basilisk: s.basilisk
@@ -4790,18 +4978,21 @@ export class GameSim {
             cofferWood: Math.floor(s.kingCoffer[view].wood),
             cofferFood: Math.floor(s.kingCoffer[view].food),
             kingOrder: s.kingOrder[view],
-            youAreKing: s.kingId[view] === (s.possessedId ?? s.playerUnitId),
+            youAreKing: s.kingController[view] === "player",
             joinTimer: Math.max(0, s.joinTimer),
             clanmates: countClan(s, view),
             carry: body?.carry ?? 0,
             carryKind: body?.carryKind ?? null,
             trips: body?.trips ?? emptyTrips(),
             kills: body?.kills ?? 0,
-            rankLabel: body
-              ? body.lifeStage === "gatherer"
-                ? "Peon"
-                : UNIT_DEFS[body.kind].label
-              : "Peon",
+            rankLabel:
+              !body && s.kingController[view] === "player"
+                ? "King"
+                : body
+                  ? body.lifeStage === "gatherer"
+                    ? "Peon"
+                    : UNIT_DEFS[body.kind].label
+                  : "Peon",
           }
         : null,
     };

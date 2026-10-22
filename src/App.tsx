@@ -710,7 +710,7 @@ export default function App() {
         return;
       }
       const realm = sim.getState();
-      if (realm.basilisk && realm.kingId[sim.getLocalTeam()] === (realm.possessedId ?? realm.playerUnitId)) {
+      if (realm.basilisk && sim.isLocalKing() && possessed) {
         if (ev.key === "1") {
           sim.setKingOrder("gather");
           refreshUi();
@@ -1266,11 +1266,14 @@ export default function App() {
             />
           </div>
           )}
-          {!layout.touch && !ui.basilisk && (
+          {!layout.touch && (!ui.basilisk || (ui.basilisk.youAreKing && !ui.possessed)) && (
             <p className="cam-hint">Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom</p>
           )}
-          {!layout.touch && ui.basilisk && ui.phase === "running" && (
+          {!layout.touch && ui.basilisk && ui.phase === "running" && !ui.basilisk.youAreKing && (
             <p className="cam-hint">WASD walk · stand on farm/deer/mine/trees to fill 10 · dump at keep</p>
+          )}
+          {!layout.touch && ui.basilisk?.youAreKing && ui.possessed && ui.phase === "running" && (
+            <p className="cam-hint">WASD walk · Esc returns to the keep · only barracks soldiers</p>
           )}
           {ui.basilisk?.youAreKing && ui.phase === "running" && (
             <div className="king-orders" role="toolbar" aria-label="King orders">
