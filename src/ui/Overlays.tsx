@@ -102,7 +102,7 @@ export function Overlays({
           <img className="menu-logo" src={`${import.meta.env.BASE_URL}icons/icon-512.png`} alt="" />
           <h1>Basilisk</h1>
           <p className="keep-lvl">Twin valleys · one life at a time</p>
-          <p>Spawn a peon. Haul ten home. An AI king already holds the keep.</p>
+          <p>Most peons only haul. A few chosen can promote. An AI king already holds the keep.</p>
 
           <div className="clan-pick" role="group" aria-label="Clan">
             <button type="button" className={clan === "you" ? "cta" : "ghost"} onClick={() => setClan("you")}>
@@ -114,8 +114,8 @@ export function Overlays({
           </div>
 
           <ul className="tips">
-            <li>Farm 5 → Levy · Deer 5 → Archer · Gold 5 → Ward · Wood 5 → Ram · Wood 10 → Treb · Farm+Gold 5 → Runner</li>
-            <li>Kills promote gun-game: Levy, Archer, Ward, Runner. Usurp with 5 kills and more hauled gold, then command in RTS.</li>
+            <li>Peons feed the coffer. Only chosen promote: Farm 5 → Levy · Deer 5 → Archer · Gold 5 → Ward · Wood 5 → Ram · Wood 10 → Treb · Farm+Gold 5 → Runner</li>
+            <li>Chosen kills still gun-game: Levy, Archer, Ward, Runner. Usurp with 5 kills and more hauled gold, then command in RTS.</li>
             <li>Waves march both ways. Break the keep to win. As king you possess only barracks-trained soldiers.</li>
           </ul>
 

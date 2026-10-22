@@ -136,6 +136,8 @@ import {
   applyPeonBody,
   applyRank,
   BASILISK_BUILD_PAUSE,
+  BASILISK_CHOSEN_CAP,
+  BASILISK_CHOSEN_START,
   BASILISK_FIRST_BUILD,
   BASILISK_HARD_CAP,
   BASILISK_JOIN_WAIT,
@@ -145,6 +147,7 @@ import {
   BASILISK_START_COFFER,
   BASILISK_START_EACH,
   BASILISK_WAVES,
+  countChosen,
   countClan,
   defaultKingController,
   defaultKingOrder,
@@ -748,12 +751,12 @@ export class GameSim {
       this.state.keeps[team].maxHp = BASILISK_KEEP_HP;
       this.spawnBasiliskKing(team);
       for (let i = 0; i < BASILISK_START_EACH; i++) {
-        this.spawnBasiliskSoul(team, team === clan && i === 0);
+        this.spawnBasiliskSoul(team, team === clan && i === 0, i < BASILISK_CHOSEN_START);
       }
     }
     refreshKings(this.state);
     const you = clan === "you" ? "Blue" : "Red";
-    this.addToast(`${you} peon — haul 10 home. An AI king already holds the keep.`);
+    this.addToast(`${you} chosen peon — haul 10 home. Most others only work the fields.`);
   }
 
   setKingOrder(order: KingOrder) {
@@ -815,7 +818,7 @@ export class GameSim {
     this.state.kingId[team] = u.id;
   }
 
-  private spawnBasiliskSoul(team: Team, player = false) {
+  private spawnBasiliskSoul(team: Team, player = false, canPromote = false) {
     this.spawnUnit(team, "levy", team === "you" ? 0 : 1, false);
     const u = this.state.units[this.state.units.length - 1];
     if (!u) return;
@@ -828,6 +831,7 @@ export class GameSim {
     };
     u.fromBarracks = false;
     u.npcKing = false;
+    u.canPromote = player || canPromote;
     u.ignoreEnemyCreeps = false;
     u.aiHeldForRush = false;
     u.xp = 0;
@@ -941,7 +945,9 @@ export class GameSim {
     this.possessYaw = u.team === "you" ? 0 : Math.PI;
     const label = s.basilisk
       ? u.lifeStage === "gatherer"
-        ? "Peon"
+        ? u.canPromote
+          ? "Chosen"
+          : "Peon"
         : UNIT_DEFS[u.kind].label
       : UNIT_DEFS[u.kind].label;
     this.addToast(s.basilisk ? `You walk as ${label}. Esc leaves them working.` : `Taking the field — ${label}. Esc returns.`);
@@ -3225,7 +3231,10 @@ export class GameSim {
       for (const team of ["you", "foe"] as Team[]) {
         if (countClan(s, team) >= BASILISK_SOFT_CAP) continue;
         if (clanTotal >= BASILISK_HARD_CAP * 2) continue;
-        this.spawnBasiliskSoul(team);
+        const promote =
+          countChosen(s, team) < BASILISK_CHOSEN_CAP &&
+          hashId(Math.floor(s.time) + (team === "you" ? 3 : 11)) < 0.14;
+        this.spawnBasiliskSoul(team, false, promote);
       }
     }
     if (Math.floor(s.time / 14) !== Math.floor((s.time - dt) / 14)) {
@@ -4890,6 +4899,9 @@ export class GameSim {
 
     const brain = foeBrainStats();
     const body = s.possessedId != null ? s.units.find((u) => u.id === s.possessedId && u.hp > 0) : undefined;
+    const soul =
+      body ??
+      (s.basilisk && s.playerUnitId != null ? s.units.find((u) => u.id === s.playerUnitId && u.hp > 0) : undefined);
     let endReason = s.endReason;
     if (view === "foe" && s.phase === "ended") {
       if (s.won === true) {
@@ -4987,7 +4999,12 @@ export class GameSim {
         ? {
             id: body.id,
             kind: body.kind,
-            label: s.basilisk && body.lifeStage === "gatherer" ? "Peon" : UNIT_DEFS[body.kind].label,
+            label:
+              s.basilisk && body.lifeStage === "gatherer"
+                ? body.canPromote
+                  ? "Chosen"
+                  : "Peon"
+                : UNIT_DEFS[body.kind].label,
             hp: Math.max(0, Math.ceil(body.hp)),
             maxHp: body.maxHp,
             visionScore: s.possessVisionScore ?? 0,
@@ -5013,17 +5030,19 @@ export class GameSim {
             joinTimer: Math.max(0, s.joinTimer),
             joinReady: s.joinReady,
             clanmates: countClan(s, view),
-            carry: body?.carry ?? 0,
-            carryKind: body?.carryKind ?? null,
-            trips: body?.trips ?? emptyTrips(),
-            kills: body?.kills ?? 0,
+            carry: soul?.carry ?? 0,
+            carryKind: soul?.carryKind ?? null,
+            trips: soul?.trips ?? emptyTrips(),
+            kills: soul?.kills ?? 0,
             rankLabel:
-              !body && s.kingController[view] === "player"
+              !soul && s.kingController[view] === "player"
                 ? "King"
-                : body
-                  ? body.lifeStage === "gatherer"
-                    ? "Peon"
-                    : UNIT_DEFS[body.kind].label
+                : soul
+                  ? soul.lifeStage === "gatherer"
+                    ? soul.canPromote
+                      ? "Chosen"
+                      : "Peon"
+                    : UNIT_DEFS[soul.kind].label
                   : "Peon",
           }
         : null,

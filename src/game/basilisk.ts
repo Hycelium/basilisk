@@ -6,6 +6,10 @@ import type { GameState, KingController, KingOrder, Team, Unit, UnitKind, Vec2, 
 export const BASILISK_START_EACH = 8;
 export const BASILISK_SOFT_CAP = 15;
 export const BASILISK_HARD_CAP = 30;
+/** Chosen peons at kickoff per clan (the rest only haul). */
+export const BASILISK_CHOSEN_START = 2;
+/** Soft cap on living chosen souls per clan, not counting the player rejoin. */
+export const BASILISK_CHOSEN_CAP = 3;
 export const BASILISK_JOIN_WAIT = 8;
 export const KING_TAX = 0.15;
 export const LOAD_SIZE = 10;
@@ -160,6 +164,7 @@ export function morphKind(u: Unit, kind: UnitKind) {
 }
 
 export function applyRank(u: Unit) {
+  if (!u.canPromote) return false;
   const next = desiredKind(u);
   if (!next) return false;
   return morphKind(u, next);
@@ -280,6 +285,10 @@ export function refreshKings(state: GameState) {
 
 export function countClan(state: GameState, team: Team) {
   return state.units.filter((u) => u.team === team && u.hp > 0 && isClanSoul(u) && !u.npcKing).length;
+}
+
+export function countChosen(state: GameState, team: Team) {
+  return state.units.filter((u) => u.team === team && u.hp > 0 && u.canPromote && !u.npcKing).length;
 }
 
 export function isMilitary(u: Unit) {

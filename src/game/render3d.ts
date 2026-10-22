@@ -1643,6 +1643,7 @@ export class GameRenderer {
         });
       }
       setPos3(obj, u.pos.x, u.pos.y, 0);
+      obj.scale.setScalar(peonLook && u.canPromote ? 1.14 : 1);
       obj.visible = true;
       if (state.possessedId === u.id) {
         obj.rotation.y = Math.PI - this.fpsYaw;

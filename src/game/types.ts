@@ -86,6 +86,8 @@ export interface Unit {
   lastHitBy?: number;
   /** Starting steward king. Not possessable. */
   npcKing?: boolean;
+  /** Only a few peons can trip/kill promote. The rest stay economy. */
+  canPromote?: boolean;
 }
 
 /** First-person body the local player is driving, or none. */
