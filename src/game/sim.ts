@@ -342,6 +342,7 @@ export class GameSim {
       playerJob: null,
       playerUnitId: null,
       joinTimer: 0,
+      joinReady: false,
       trickleTimer: 18,
       kingId: { you: null, foe: null },
       kingController: defaultKingController(),
@@ -733,6 +734,8 @@ export class GameSim {
       foe: { ...BASILISK_START_COFFER },
     };
     this.state.scars = emptyScars();
+    this.state.joinTimer = 0;
+    this.state.joinReady = false;
     this.state.phase = "running";
     this.state.wavePhase = "build";
     this.state.buildTimer = BASILISK_FIRST_BUILD;
@@ -764,6 +767,28 @@ export class GameSim {
   isLocalKing() {
     const s = this.state;
     return s.basilisk && s.kingController[this.localTeam] === "player";
+  }
+
+  isAwaitingJoin() {
+    const s = this.state;
+    return s.basilisk && s.phase === "running" && !this.isLocalKing() && (s.joinTimer > 0 || s.joinReady);
+  }
+
+  pickJoinClan(team: Team) {
+    if (!this.isAwaitingJoin()) return;
+    this.setLocalTeam(team);
+  }
+
+  rejoinBasilisk(team: Team) {
+    const s = this.state;
+    if (!this.isAwaitingJoin() || !s.joinReady || s.joinTimer > 0) return false;
+    this.setLocalTeam(team);
+    s.joinReady = false;
+    s.joinTimer = 0;
+    this.spawnBasiliskSoul(team, true);
+    const you = team === "you" ? "Blue" : "Red";
+    this.addToast(`${you} peon — back in the valley.`);
+    return true;
   }
 
   private spawnBasiliskKing(team: Team) {
@@ -890,6 +915,7 @@ export class GameSim {
     if (s.phase !== "running") return false;
     const u = s.units.find((x) => x.id === id);
     if (!u || u.hp <= 0 || u.team !== this.localTeam) return false;
+    if (s.basilisk && this.isAwaitingJoin()) return false;
     if (u.npcKing || isWaveCreep(u)) return false;
     if (s.basilisk && this.isLocalKing()) {
       if (!u.fromBarracks || u.lifeStage === "gatherer") {
@@ -935,7 +961,7 @@ export class GameSim {
     } else if (reason === "death") {
       this.addToast(
         s.basilisk && !this.isLocalKing()
-          ? "Fallen. Wait to rejoin as a gatherer."
+          ? "Fallen. Wait, then enter as a peon — you can switch sides."
           : "Fallen. Click another soldier to take the field.",
       );
     } else if (reason === "esc" && s.basilisk) {
@@ -3187,8 +3213,9 @@ export class GameSim {
     if (s.joinTimer > 0 && !this.isLocalKing()) {
       s.joinTimer -= dt;
       if (s.joinTimer <= 0) {
-        this.spawnBasiliskSoul(this.localTeam, true);
-        this.addToast("You rejoin as a peon.");
+        s.joinTimer = 0;
+        s.joinReady = true;
+        this.addToast("Enter when you are ready. You can switch sides.");
       }
     }
     s.trickleTimer -= dt;
@@ -3442,7 +3469,11 @@ export class GameSim {
             this.addToast(`Kill rank: ${UNIT_DEFS[slayer.kind].label}.`);
           }
         }
-        if (u.id === this.state.playerUnitId && !this.isLocalKing()) this.state.joinTimer = BASILISK_JOIN_WAIT;
+        if (u.id === this.state.playerUnitId && !this.isLocalKing()) {
+          this.state.joinTimer = BASILISK_JOIN_WAIT;
+          this.state.joinReady = false;
+          this.state.playerUnitId = null;
+        }
       } else {
         this.state.gold[killer] += u.bounty;
       }
@@ -4980,6 +5011,7 @@ export class GameSim {
             kingOrder: s.kingOrder[view],
             youAreKing: s.kingController[view] === "player",
             joinTimer: Math.max(0, s.joinTimer),
+            joinReady: s.joinReady,
             clanmates: countClan(s, view),
             carry: body?.carry ?? 0,
             carryKind: body?.carryKind ?? null,

@@ -59,6 +59,8 @@ interface OverlaysProps {
   onReturnToMap: () => void;
   onMarchAgain: () => void;
   onRerollMap: () => void;
+  onPickJoinClan?: (team: Team) => void;
+  onRejoin?: (team: Team) => void;
 }
 
 export function Overlays({
@@ -69,6 +71,8 @@ export function Overlays({
   onRestart,
   onReturnToMap,
   onMarchAgain,
+  onPickJoinClan,
+  onRejoin,
 }: OverlaysProps) {
   const [shareNote, setShareNote] = useState("");
   const [clan, setClan] = useState<Team>("you");
@@ -145,6 +149,45 @@ export function Overlays({
           </a>
         </div>
       )}
+
+      {ui.phase === "running" &&
+        ui.basilisk &&
+        !ui.possessed &&
+        !ui.basilisk.youAreKing &&
+        (ui.basilisk.joinTimer > 0 || ui.basilisk.joinReady) && (
+          <div className="overlay join-overlay" role="dialog" aria-label="Rejoin the valley">
+            <h2>{ui.basilisk.joinReady ? "Enter the valley" : "Fallen"}</h2>
+            <p>
+              {ui.basilisk.joinReady
+                ? "Pick a clan, then spawn as a peon."
+                : `Respawn in ${Math.ceil(ui.basilisk.joinTimer)}s. You can switch sides.`}
+            </p>
+            <div className="clan-pick" role="group" aria-label="Clan">
+              <button
+                type="button"
+                className={ui.localTeam === "you" ? "cta" : "ghost"}
+                onClick={() => onPickJoinClan?.("you")}
+              >
+                Blue south
+              </button>
+              <button
+                type="button"
+                className={ui.localTeam === "foe" ? "cta" : "ghost"}
+                onClick={() => onPickJoinClan?.("foe")}
+              >
+                Red north
+              </button>
+            </div>
+            <button
+              type="button"
+              className="cta"
+              disabled={!ui.basilisk.joinReady}
+              onClick={() => onRejoin?.(ui.localTeam)}
+            >
+              {ui.basilisk.joinReady ? "Spawn as peon" : `Wait ${Math.ceil(ui.basilisk.joinTimer)}s`}
+            </button>
+          </div>
+        )}
 
       {ui.phase === "ended" && !skirmishLive && (
         <div className="overlay">

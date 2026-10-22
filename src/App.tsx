@@ -1269,7 +1269,12 @@ export default function App() {
           {!layout.touch && (!ui.basilisk || (ui.basilisk.youAreKing && !ui.possessed)) && (
             <p className="cam-hint">Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom</p>
           )}
-          {!layout.touch && ui.basilisk && ui.phase === "running" && !ui.basilisk.youAreKing && (
+          {!layout.touch &&
+            ui.basilisk &&
+            ui.phase === "running" &&
+            !ui.basilisk.youAreKing &&
+            !ui.basilisk.joinReady &&
+            ui.basilisk.joinTimer <= 0 && (
             <p className="cam-hint">WASD walk · stand on farm/deer/mine/trees to fill 10 · dump at keep</p>
           )}
           {!layout.touch && ui.basilisk?.youAreKing && ui.possessed && ui.phase === "running" && (
@@ -1361,6 +1366,18 @@ export default function App() {
             onCampaign={() => {
               setTriumph(null);
               setCampaignOpen(true);
+            }}
+            onPickJoinClan={(clan: Team) => {
+              sim.pickJoinClan(clan);
+              refreshUi();
+            }}
+            onRejoin={(clan: Team) => {
+              if (!sim.rejoinBasilisk(clan)) return;
+              const r = rendererRef.current;
+              r?.enterPossess(sim.getPossessYaw(), false);
+              canvasRef.current?.requestPointerLock();
+              refreshUi();
+              beep(520);
             }}
             onStart={(clan: Team) => {
               if (skirmish.lobby.open || skirmish.lobby.live) return;

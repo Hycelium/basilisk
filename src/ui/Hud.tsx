@@ -82,10 +82,10 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
               <span className="value">{ui.waveLabel}</span>
               <span className="phase-tag">{phaseLabel}</span>
             </div>
-            {realm.joinTimer > 0 && (
+            {(realm.joinTimer > 0 || realm.joinReady) && (
               <div className="stat">
                 <span className="label">REJOIN</span>
-                <span className="value danger">{Math.ceil(realm.joinTimer)}s</span>
+                <span className="value danger">{realm.joinReady ? "Ready" : `${Math.ceil(realm.joinTimer)}s`}</span>
               </div>
             )}
           </>

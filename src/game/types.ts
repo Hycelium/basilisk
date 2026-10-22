@@ -118,6 +118,7 @@ export interface BasiliskUi {
   kingOrder: KingOrder;
   youAreKing: boolean;
   joinTimer: number;
+  joinReady: boolean;
   clanmates: number;
   carry: number;
   carryKind: WorkKind | null;
@@ -320,6 +321,7 @@ export interface GameState {
   playerJob: Job | null;
   playerUnitId: number | null;
   joinTimer: number;
+  joinReady: boolean;
   trickleTimer: number;
   kingId: Record<Team, number | null>;
   kingController: Record<Team, KingController>;
