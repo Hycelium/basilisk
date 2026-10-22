@@ -1889,6 +1889,71 @@ button:disabled {
   }
 }
 
+.clan-pick,
+.job-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin: 8px 0;
+}
+
+.clan-pick .cta,
+.clan-pick .ghost,
+.job-pick .cta,
+.job-pick .ghost {
+  min-width: 0;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.king-orders {
+  position: absolute;
+  left: 50%;
+  bottom: 72px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(18, 14, 12, 0.78);
+  border: 1px solid rgba(212, 175, 95, 0.45);
+  border-radius: 10px;
+  z-index: 8;
+  pointer-events: auto;
+}
+
+.king-orders strong {
+  font-family: Cinzel, serif;
+  color: #e2bc72;
+  margin-right: 6px;
+}
+
+.king-orders button {
+  background: #2a2218;
+  color: #f0e6d0;
+  border: 1px solid #6a5438;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.leave-body {
+  position: absolute;
+  right: 16px;
+  top: 18px;
+  z-index: 9;
+  padding: 6px 10px;
+  font-size: 13px;
+  pointer-events: auto;
+}
+
+.king-orders button.active {
+  background: #6a4a22;
+  border-color: #e2bc72;
+  color: #ffe7b0;
+}
+
 .title-actions {
   display: flex;
   flex-wrap: wrap;

@@ -1,4 +1,5 @@
 import type { QualityInfo, QualitySetting } from "../game/render3d";
+import { JOB_LABEL } from "../game/basiliskMap";
 import type { UiSnapshot } from "../game/types";
 
 interface HudProps {
@@ -14,8 +15,9 @@ interface HudProps {
 }
 
 export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound, onRush }: HudProps) {
+  const realm = ui.basilisk;
   const hpPct = Math.max(0, Math.min(1, ui.yourHp / ui.yourMaxHp));
-  const xpPct = ui.keepXpPct;
+  const xpPct = realm ? Math.max(0, Math.min(1, realm.xp / Math.max(1, realm.promoteAt))) : ui.keepXpPct;
   const phaseLabel =
     ui.wavePhase === "build"
       ? `Build ${Math.ceil(ui.buildTimer)}s`
@@ -29,6 +31,41 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
   return (
     <div className={compact ? "hud compact" : "hud"}>
       <div className="hud-top">
+        {realm ? (
+          <>
+            <div className="stat">
+              <span className="label">JOB</span>
+              <span className="value">{realm.job ? JOB_LABEL[realm.job] : "—"}</span>
+            </div>
+            <div className="stat">
+              <span className="label">FOOD</span>
+              <span className="value">{realm.food}</span>
+            </div>
+            <div className="stat">
+              <span className="label">GOLD</span>
+              <span className="value">{realm.clanGold}</span>
+            </div>
+            <div className="stat">
+              <span className="label">WOOD</span>
+              <span className="value wood">{realm.clanWood}</span>
+            </div>
+            <div className="stat">
+              <span className="label">KING CUT</span>
+              <span className="value">{realm.kingCut}</span>
+            </div>
+            <div className="stat">
+              <span className="label">CLAN</span>
+              <span className="value">{realm.clanmates}</span>
+            </div>
+            {realm.joinTimer > 0 && (
+              <div className="stat">
+                <span className="label">REJOIN</span>
+                <span className="value danger">{Math.ceil(realm.joinTimer)}s</span>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
         <div className="stat lives">
           <span className="label">LIVES</span>
           <span className={ui.yourHp <= 80 ? "value danger" : "value"}>{ui.yourHp}</span>
@@ -68,10 +105,12 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
             </span>
           </div>
         )}
+          </>
+        )}
       </div>
       <div className="hud-xp-row">
         <div className="stat keep-xp-stat">
-          <span className="label">KEEP LV {ui.keepLevel}</span>
+          <span className="label">{realm ? `XP ${Math.floor(realm.xp)}` : `KEEP LV ${ui.keepLevel}`}</span>
           <div className="bar xp">
             <div className="fill" style={{ width: `${xpPct * 100}%` }} />
           </div>
@@ -115,7 +154,7 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
             <option value="high">High</option>
           </select>
         </label>
-        {!ui.pvp && (
+        {!ui.pvp && !realm && (
           <button type="button" className="rush-btn" onClick={onRush} disabled={!ui.canRush}>
             <span className="full">Rush wave +18g</span>
             <span className="short" aria-hidden>

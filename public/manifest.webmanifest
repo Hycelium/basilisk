@@ -1,7 +1,7 @@
 {
-  "name": "Roadkeep",
-  "short_name": "Roadkeep",
-  "description": "A medieval lane-defense RTS. Hold the road, train peons, out-think a learning foe.",
+  "name": "Basilisk",
+  "short_name": "Basilisk",
+  "description": "Walk a job in twin valleys, promote on the fat tail, wear the crown.",
   "id": "./",
   "start_url": "./",
   "scope": "./",

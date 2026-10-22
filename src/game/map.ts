@@ -1,4 +1,5 @@
 import { COPPER_REGEN, PINE_REGEN, ROAD_X, WORLD_H, WORLD_W } from "./balance";
+import { basiliskMap, isBasiliskSeed, SPINE_Y } from "./basiliskMap";
 import type { Lane, LaneCount, MapDef, MapId, Pad, ResourceNode, ResourceKind, Team } from "./types";
 
 /** Deterministic RNG (mulberry32). */
@@ -97,6 +98,9 @@ export function lanePathX(seed: number, team: Team, lane: Lane, y: number) {
 
 /** Some generated worlds have a cross-map river; location/shape is deterministic. */
 export function riverSpec(seed: number) {
+  if (isBasiliskSeed(seed)) {
+    return { enabled: true, y: SPINE_Y, amplitude: 7, phase: 0.35, width: 22 };
+  }
   const variant = hashSeed(seed, 0x51a7);
   return {
     enabled: variant % 4 !== 0,
@@ -178,6 +182,7 @@ function tooClose(
 }
 
 export function generateMap(seed: number): MapDef {
+  if (isBasiliskSeed(seed)) return basiliskMap();
   const rng = rngFromSeed(seed);
   const adj = pick(rng, ADJECTIVES);
   const noun = pick(rng, NOUNS);

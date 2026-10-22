@@ -242,6 +242,9 @@ export class GameRenderer {
   private fpsHands = new THREE.Group();
   private fpsSword = new THREE.Group();
   private fpsBow = new THREE.Group();
+  private scarTrees: THREE.Object3D[] = [];
+  private scarFields: THREE.Object3D[] = [];
+  private scarPits: THREE.Object3D[] = [];
 
   constructor(private canvas: HTMLCanvasElement) {
     this.qualitySetting = loadQualitySetting();
@@ -1146,6 +1149,7 @@ export class GameRenderer {
     this.syncSelectionRing(state);
     this.syncFloats(state);
     this.pulseTorches(state.time);
+    this.applyBasiliskScars(state);
     this.updateCamera(state, step);
 
     this.sun.intensity = 2.25 + Math.sin(state.time * 0.35) * 0.1;
@@ -1182,10 +1186,38 @@ export class GameRenderer {
     const seed = this.hashMapSeed(state.mapId);
     this.worldGroup.add(buildTerrain(seed));
     this.worldGroup.add(buildScenery(seed));
+    this.scarTrees = [];
+    this.scarFields = [];
+    this.scarPits = [];
+    this.worldGroup.traverse((obj) => {
+      if (obj.userData.scarTree) this.scarTrees.push(obj);
+      if (obj.userData.scarField) this.scarFields.push(obj);
+      if (obj.userData.scarPit) this.scarPits.push(obj);
+    });
     const width = mapBounds(seed).width;
     if (width !== this.mapWidth) {
       this.mapWidth = width;
       this.resetCamera();
+    }
+  }
+
+  private applyBasiliskScars(state: GameState) {
+    if (!state.basilisk) return;
+    const treesGone = Math.min(this.scarTrees.length, Math.floor(state.scars.trees));
+    this.scarTrees.forEach((tree, i) => {
+      tree.visible = i >= treesGone;
+    });
+    const wear = Math.min(1, state.scars.fields / 40);
+    for (const field of this.scarFields) {
+      field.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        const mat = mesh.material as THREE.MeshStandardMaterial | undefined;
+        if (mat?.color) mat.color.setRGB(0.55 + wear * 0.2, 0.48 - wear * 0.18, 0.28 - wear * 0.08);
+      });
+    }
+    const pit = 1 + Math.min(2.2, state.scars.pit / 28);
+    for (const mesh of this.scarPits) {
+      mesh.scale.set(1 + pit * 0.12, pit, 1 + pit * 0.12);
     }
   }
 

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Roadkeep privacy</title>
+    <title>Basilisk privacy</title>
     <style>
       body {
         font-family: Georgia, "Palatino Linotype", Palatino, serif;
@@ -20,21 +20,13 @@
     </style>
   </head>
   <body>
-    <h1>Roadkeep privacy</h1>
-    <p>Roadkeep is a single-player game with an optional invite-link skirmish. There is no account.</p>
+    <h1>Basilisk privacy</h1>
+    <p>Basilisk is a single-player proof of concept. There is no account.</p>
     <p>
-      The game stores a nickname and settings in localStorage on this device. That includes the skirmish
-      name, graphics and control preferences, tutorial hints already seen, campaign progress, and the foe's
-      learned behavior. That data stays in the browser. Roadkeep does not upload it to an account server.
+      The game stores settings in localStorage on this device. That data stays in the browser. Basilisk does not
+      upload it to an account server.
     </p>
-    <p>
-      A skirmish connects the two browsers directly and exchanges match orders and snapshots. The GitHub Pages
-      host sees the page request, including a room code when someone opens an invite link. The PeerJS signaling
-      broker sees the room connection that introduces the two browsers. A public STUN server helps them find a
-      direct path. Roadkeep does not use a relay.
-    </p>
-    <p>Roadkeep does not add analytics.</p>
-    <p>The public page is <a href="https://ka9krew.itch.io/roadkeep">https://ka9krew.itch.io/roadkeep</a>.</p>
+    <p>Basilisk does not add analytics.</p>
     <p>Optional community Discord: <a href="https://discord.gg/FGbUfaxy8v">discord.gg/FGbUfaxy8v</a></p>
     <p><a href="./">Back to the game</a></p>
   </body>

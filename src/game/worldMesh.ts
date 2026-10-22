@@ -3,6 +3,7 @@ import { WORLD_H, WORLD_W } from "./balance";
 import { groundLookForSeed, groundTexture, wheatTexture } from "./groundLooks";
 import { buildRockPile, buildTree, SCENERY_TREES } from "./models/nature";
 import { BACK_FIELD, MAP_CX, mapBounds, mapLanes, riverSpec, rngFromSeed, roadCenterX } from "./map";
+import { FORD_X, isBasiliskSeed, RIDGE_HALF, SPINE_Y } from "./basiliskMap";
 import { buildBackdrop, buildCliffs, buildValleyLakes, canyonCenterX, fbm, valleyLakeT } from "./landscape";
 import type { Team } from "./types";
 
@@ -71,6 +72,17 @@ function sampleGround(simX: number, simY: number, seed: number, river: ReturnTyp
   else if (inField) h *= 0.35;
   else h += Math.max(0, Math.abs(simX - MAP_CX) / width - 0.35) * 12.6;
 
+  if (isBasiliskSeed(seed)) {
+    const alongSpine = Math.abs(simY - SPINE_Y);
+    const nearFord = FORD_X.some((fx) => Math.abs(simX - fx) < 18 && alongSpine < 32);
+    if (!nearFord && alongSpine < RIDGE_HALF) {
+      const ridge = Math.max(0, 1 - alongSpine / RIDGE_HALF);
+      h = Math.max(h, ridge * ridge * 38 + fbm(simX * 0.04, simY * 0.04, seed + 41) * 5);
+    }
+    if (nearFord) h = Math.min(h, 0.42);
+    if (onRiver && !nearFord) h = -2.6;
+  }
+
   // Deep valley in the center behind each keep, past the house yard.
   const southDrop = Math.max(0, simY - (WORLD_H + 28));
   const northDrop = Math.max(0, -28 - simY);
@@ -119,6 +131,7 @@ export function buildTerrain(seed: number) {
   const cOlive = new THREE.Color(0x6e6c2c);
   const cStraw = new THREE.Color(0xb09048);
   const cRoad = new THREE.Color(0x8a6e52);
+  const cValley = new THREE.Color(0x4f7a38);
 
   for (let i = 0; i < pos.count; i++) {
     const simX = pos.getX(i) + WORLD_W / 2;
@@ -135,6 +148,9 @@ export function buildTerrain(seed: number) {
     if (s.underLake) col.setHex(0x1c4658);
     else if (s.onRiver) col.setHex(0x315f72);
     else if (s.onRoad) col.lerp(cRoad, 0.35);
+    else if (isBasiliskSeed(seed) && Math.abs(simY - SPINE_Y) > 48) {
+      col.lerp(cValley, 0.38);
+    }
     colors[i * 3] = col.r;
     colors[i * 3 + 1] = col.g;
     colors[i * 3 + 2] = col.b;
@@ -162,7 +178,8 @@ export function buildTerrain(seed: number) {
   ground.castShadow = false;
   g.add(ground);
 
-  if (look.wheat) g.add(buildWheatPatches(seed, river));
+  if (look.wheat || isBasiliskSeed(seed)) g.add(buildWheatPatches(seed, river));
+  if (isBasiliskSeed(seed)) g.add(buildBasiliskFords(seed, river));
 
   // River ribbon first; roads cross it on timber/stone bridges.
   if (river.enabled) {
@@ -252,6 +269,31 @@ export function buildTerrain(seed: number) {
   return g;
 }
 
+/** Timber planks on the three river fords — the only walkable chokes. */
+function buildBasiliskFords(seed: number, river: ReturnType<typeof riverSpec>) {
+  const g = new THREE.Group();
+  const plankMat = new THREE.MeshStandardMaterial({ color: 0x6e5230, roughness: 0.88, metalness: 0.04 });
+  for (const fx of FORD_X) {
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(22, 1.2, river.width + 10, 4, 1, 3), plankMat);
+    const gy = sampleGround(fx, SPINE_Y, seed, river).h;
+    plank.position.set(fx - WORLD_W / 2, Math.max(0.4, gy + 0.8), SPINE_Y - WORLD_H / 2);
+    plank.castShadow = true;
+    plank.receiveShadow = true;
+    g.add(plank);
+  }
+  const pitMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1c, roughness: 1 });
+  for (const pit of [
+    { x: 268, y: 600 },
+    { x: 132, y: 118 },
+  ]) {
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(9, 11, 4, 10), pitMat);
+    mesh.position.set(pit.x - WORLD_W / 2, -0.4, pit.y - WORLD_H / 2);
+    mesh.userData.scarPit = true;
+    g.add(mesh);
+  }
+  return g;
+}
+
 /** Striped crop fields draped on the terrain, kept clear of roads and the river. */
 function buildWheatPatches(seed: number, river: ReturnType<typeof riverSpec>) {
   const g = new THREE.Group();
@@ -287,6 +329,7 @@ function buildWheatPatches(seed: number, river: ReturnType<typeof riverSpec>) {
     const m = new THREE.Mesh(geo, mat);
     m.position.set(cx - WORLD_W / 2, 0, cy - WORLD_H / 2);
     m.receiveShadow = true;
+    m.userData.scarField = true;
     g.add(m);
     placed++;
   }
@@ -332,9 +375,12 @@ export function buildScenery(seed: number) {
 
     // Scenery never uses the oak, which marks wood nodes.
     const kind = SCENERY_TREES[Math.floor(rng() * SCENERY_TREES.length)];
+    if (isBasiliskSeed(seed) && Math.abs(y - SPINE_Y) < RIDGE_HALF - 8) continue;
     const tree = buildTree(kind, rng() * 3, 14 + rng() * 12);
     tree.position.set(x - WORLD_W / 2, 0, y - WORLD_H / 2);
     tree.rotation.y = rng() * Math.PI * 2;
+    const lumberBelt = (x < 110 || x > 290) && Math.abs(y - SPINE_Y) > 90;
+    if (lumberBelt) tree.userData.scarTree = true;
     g.add(tree);
   }
 

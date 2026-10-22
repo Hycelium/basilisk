@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { laneCount } from "../game/map";
-import type { UiSnapshot } from "../game/types";
+import { JOB_LABEL } from "../game/basiliskMap";
+import type { Job, Team, UiSnapshot } from "../game/types";
 
 const ITCH_PAGE = "https://ka9krew.itch.io/roadkeep";
 const DISCORD_INVITE = "https://discord.gg/FGbUfaxy8v";
 
 function shareText(url: string) {
-  return `Play Roadkeep with me: ${url} — versus AI, or Skirmish and I'll send an invite link. Discord: ${DISCORD_INVITE}`;
+  return `Play Basilisk with me: ${url} — walk a job, promote, take the crown. Discord: ${DISCORD_INVITE}`;
 }
 
 function copyWithSelection(text: string) {
@@ -53,7 +53,7 @@ interface OverlaysProps {
   ui: UiSnapshot;
   hideTitle?: boolean;
   skirmishLive?: boolean;
-  onStart: () => void;
+  onStart: (clan: Team, job: Job) => void;
   onSkirmish: () => void;
   onCampaign: () => void;
   onRestart: () => void;
@@ -67,16 +67,13 @@ export function Overlays({
   hideTitle,
   skirmishLive,
   onStart,
-  onSkirmish,
-  onCampaign,
   onRestart,
   onReturnToMap,
   onMarchAgain,
-  onRerollMap,
 }: OverlaysProps) {
   const [shareNote, setShareNote] = useState("");
-  const [arcadeOpen, setArcadeOpen] = useState(false);
-  const roads = laneCount(ui.mapSeed);
+  const [clan, setClan] = useState<Team>("you");
+  const [job, setJob] = useState<Job>("farmer");
 
   useEffect(() => {
     if (!shareNote) return;
@@ -100,70 +97,42 @@ export function Overlays({
     <>
       {ui.phase === "title" && !hideTitle && (
         <div className="overlay title-overlay">
-          {!arcadeOpen && (
-            <img className="menu-logo" src={`${import.meta.env.BASE_URL}icons/icon-512.png`} alt="" />
-          )}
-          <h1>Roadkeep</h1>
-          <p className="keep-lvl">
-            Keep Level {ui.keepLevel} · XP {ui.keepXp}/{ui.keepXpNext}
-          </p>
-          <p>Every keep level forges a new battlefield. The Ten Marches unlock the units you can muster.</p>
+          <img className="menu-logo" src={`${import.meta.env.BASE_URL}icons/icon-512.png`} alt="" />
+          <h1>Basilisk</h1>
+          <p className="keep-lvl">Twin valleys · one life at a time</p>
+          <p>Walk your job. Promote on the fat tail. The highest XP wears the crown.</p>
 
-          {arcadeOpen ? (
-            <>
-              <div className="map-card selected campaign-map">
-                <strong>{ui.mapName}</strong>
-                <span>{ui.mapTagline}</span>
-                <span className="map-meta">
-                  Campaign Lv {ui.campaignLevel}
-                  {ui.scoutSalt > 0 ? ` · Scout ${ui.scoutSalt}` : ""} · {roads === 1 ? "1 road" : `${roads} roads`} · seed{" "}
-                  {ui.mapSeed}
-                </span>
-              </div>
-
-              <button type="button" className="ghost reroll-btn" onClick={onRerollMap}>
-                Scout new terrain
+          <div className="clan-pick" role="group" aria-label="Clan">
+            <button type="button" className={clan === "you" ? "cta" : "ghost"} onClick={() => setClan("you")}>
+              Blue south
+            </button>
+            <button type="button" className={clan === "foe" ? "cta" : "ghost"} onClick={() => setClan("foe")}>
+              Red north
+            </button>
+          </div>
+          <div className="job-pick" role="group" aria-label="Job">
+            {(Object.keys(JOB_LABEL) as Job[]).map((id) => (
+              <button
+                key={id}
+                type="button"
+                className={job === id ? "cta" : "ghost"}
+                onClick={() => setJob(id)}
+              >
+                {JOB_LABEL[id]}
               </button>
+            ))}
+          </div>
 
-              <p className="foe-brain-tease">
-                Foe intellect {ui.foeIntellect}
-                {ui.foeGames > 0 ? ` · ${ui.foeWins}W / ${ui.foeGames} games learned` : " · virgin Q-table"}
-              </p>
+          <ul className="tips">
+            <li>Farmer → Runner · Hunter → Archer · Blacksmith → Ward · Lumberjack → Ram</li>
+            <li>Esc leaves the body gathering. Click it to take first person again.</li>
+          </ul>
 
-              <div className="title-actions">
-                <button type="button" className="cta" onClick={onStart}>
-                  Start
-                </button>
-                <button type="button" className="ghost" onClick={() => setArcadeOpen(false)}>
-                  Back
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="foe-brain-tease">
-                Foe intellect {ui.foeIntellect}
-                {ui.foeGames > 0 ? ` · ${ui.foeWins}W / ${ui.foeGames} games learned` : " · virgin Q-table"}
-              </p>
-
-              <ul className="tips">
-                <li>Beat a nation that fields one unit, and that unit joins your muster</li>
-                <li>Level up → brand-new map layout forever</li>
-              </ul>
-
-              <div className="title-actions">
-                <button type="button" className="cta" onClick={onCampaign}>
-                  Campaign
-                </button>
-                <button type="button" className="ghost" onClick={() => setArcadeOpen(true)}>
-                  Arcade mode
-                </button>
-                <button type="button" className="ghost" onClick={onSkirmish}>
-                  Multiplayer
-                </button>
-              </div>
-            </>
-          )}
+          <div className="title-actions">
+            <button type="button" className="cta" onClick={() => onStart(clan, job)}>
+              Enter the valley
+            </button>
+          </div>
 
           <div className="title-share" role="group" aria-label="Share this game">
             <button type="button" onClick={() => void copyLink()}>

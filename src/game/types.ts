@@ -3,6 +3,9 @@ export type WaveUnitKind = "raider" | "soldier" | "brute" | "runner" | "ward";
 export type TrainKind = "levy" | "runner" | "archer" | "ward" | "rammer" | "trebuchet" | "spy";
 export type SiegePhase = "packed" | "unpacking" | "ready" | "packing";
 export type UnitKind = WaveUnitKind | TrainKind;
+export type Job = "farmer" | "hunter" | "smith" | "lumber";
+export type LifeStage = "gatherer" | "warrior" | "king";
+export type KingOrder = "gather" | "hold" | "hunt";
 export type BuildingKind = "watchtower" | "ballista" | "catapult" | "barracks" | "house" | "barricade";
 export type ResourceKind = "pine" | "copper";
 export type PadZone = "combat" | "eco";
@@ -65,6 +68,11 @@ export interface Unit {
   /** Trebuchet only. Packed to roll; unpacked and ready to throw. */
   siegePhase?: SiegePhase;
   siegeTimer?: number;
+  job?: Job;
+  lifeStage?: LifeStage;
+  xp: number;
+  homeLoop?: Vec2[];
+  loopIndex?: number;
 }
 
 /** First-person body the local player is driving, or none. */
@@ -81,6 +89,24 @@ export interface PossessedUi {
   charge: number;
   /** Building or barricade currently in the trebuchet sights. */
   aimLabel: string;
+  job: Job | null;
+  xp: number;
+  lifeStage: LifeStage | null;
+  isKing: boolean;
+}
+
+export interface BasiliskUi {
+  food: number;
+  clanGold: number;
+  clanWood: number;
+  kingCut: number;
+  kingOrder: KingOrder;
+  youAreKing: boolean;
+  joinTimer: number;
+  job: Job | null;
+  xp: number;
+  promoteAt: number;
+  clanmates: number;
 }
 
 export type WavePhase = "build" | "spawning" | "fighting";
@@ -272,6 +298,16 @@ export interface GameState {
   keeps: Record<Team, Keep>;
   gold: Record<Team, number>;
   wood: Record<Team, number>;
+  food: Record<Team, number>;
+  basilisk: boolean;
+  playerJob: Job | null;
+  playerUnitId: number | null;
+  joinTimer: number;
+  trickleTimer: number;
+  kingId: Record<Team, number | null>;
+  kingOrder: Record<Team, KingOrder>;
+  kingTreasury: Record<Team, number>;
+  scars: { trees: number; fields: number; pit: number; trails: number };
   units: Unit[];
   buildings: Building[];
   villagers: Villager[];
@@ -415,6 +451,7 @@ export interface UiSnapshot {
   freshHold: boolean;
   /** Set while the local player is in first person on a soldier. */
   possessed: PossessedUi | null;
+  basilisk: BasiliskUi | null;
 }
 
 export interface RectHit {

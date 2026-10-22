@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { GameRenderer, type QualityInfo, type QualitySetting, type TouchDragMode } from "./game/render3d";
 import { GameSim, hitTest } from "./game/sim";
-import type { BuildingKind, CombatEventKind, RectHit, TrainKind, UiSnapshot } from "./game/types";
+import type { BuildingKind, CombatEventKind, Job, KingOrder, RectHit, Team, TrainKind, UiSnapshot } from "./game/types";
 import { BUILD_COST } from "./game/balance";
 import { Hud } from "./ui/Hud";
 import { BuildBar } from "./ui/BuildBar";
@@ -86,6 +86,7 @@ const defaultUi: UiSnapshot = {
   freshUnlock: "",
   freshHold: false,
   possessed: null,
+  basilisk: null,
 };
 
 const LONG_PRESS_MS = 350;
@@ -373,6 +374,9 @@ export default function App() {
       else sim.update(Math.min(0.05, elapsed));
       const gameState = sim.getState();
       if (!gameState.possessedId && document.pointerLockElement === canvas) document.exitPointerLock();
+      if (gameState.basilisk && gameState.possessedId != null && document.pointerLockElement !== canvas) {
+        renderer.enterPossess(sim.getPossessYaw(), false);
+      }
       const home = sim.getLocalTeam();
       if (renderer.getHomeSide() !== home) renderer.setHomeSide(home);
       renderer.draw(gameState);
@@ -548,7 +552,7 @@ export default function App() {
         }
       }
 
-      if (!touch && ev.button === 0 && hit?.kind === "unit" && sim.getMatchMode() !== "pvp") {
+      if ((sim.getState().basilisk || (!touch && ev.button === 0)) && hit?.kind === "unit" && sim.getMatchMode() !== "pvp") {
         if (sim.tryPossess(Number(hit.id))) {
           const body = sim.getState().units.find((u) => u.id === Number(hit.id));
           r.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
@@ -705,6 +709,24 @@ export default function App() {
         refreshUi();
         return;
       }
+      const realm = sim.getState();
+      if (realm.basilisk && realm.kingId[sim.getLocalTeam()] === (realm.possessedId ?? realm.playerUnitId)) {
+        if (ev.key === "1") {
+          sim.setKingOrder("gather");
+          refreshUi();
+          return;
+        }
+        if (ev.key === "2") {
+          sim.setKingOrder("hold");
+          refreshUi();
+          return;
+        }
+        if (ev.key === "3") {
+          sim.setKingOrder("hunt");
+          refreshUi();
+          return;
+        }
+      }
       if (possessed) {
         if (ev.code === "Space") {
           ev.preventDefault();
@@ -762,11 +784,19 @@ export default function App() {
       const step = ev.key.toLowerCase();
       if (step === "w" || step === "a" || step === "s" || step === "d") sim.setPossessKey(step, false);
     };
+    const onLock = () => {
+      if (document.pointerLockElement != null) return;
+      if (!sim.getState().basilisk || sim.getState().possessedId == null) return;
+      sim.releasePossess("esc");
+      refreshUi();
+    };
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onUp);
+    document.addEventListener("pointerlockchange", onLock);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onUp);
+      document.removeEventListener("pointerlockchange", onLock);
     };
   }, [sim, refreshUi, setPatrol, toggleFullscreen]);
 
@@ -1034,7 +1064,7 @@ export default function App() {
     <div className={pageClass} ref={pageRef}>
       <div className="phone shell">
         <header className="brand">
-          <span className="brand-mark">Roadkeep</span>
+          <span className="brand-mark">Basilisk</span>
           <span className="brand-sub">three.js siege · dusk valley</span>
         </header>
 
@@ -1082,11 +1112,33 @@ export default function App() {
                   </div>
                 </>
               ) : (
+                <>
                 <p className="fps-banner">
                   {ui.possessed.label} · {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)} · vision{" "}
                   {Math.min(ui.possessed.visionMax, Math.floor(ui.possessed.visionScore))}/{ui.possessed.visionMax}
-                  {ui.possessed.visionScore <= 0 ? " · kill to scroll out" : " · wheel looks out"}
+                  {ui.basilisk
+                    ? ui.possessed.visionScore < 1
+                      ? " · walk for XP to look out"
+                      : " · wheel looks out"
+                    : ui.possessed.visionScore <= 0
+                      ? " · kill to scroll out"
+                      : " · wheel looks out"}
+                  {ui.possessed.isKing ? " · KING" : ""}
                 </p>
+                {ui.basilisk && (
+                  <button
+                    type="button"
+                    className="ghost leave-body"
+                    onClick={() => {
+                      sim.releasePossess("esc");
+                      document.exitPointerLock();
+                      refreshUi();
+                    }}
+                  >
+                    Leave body
+                  </button>
+                )}
+                </>
               )}
             </div>
           )}
@@ -1180,7 +1232,7 @@ export default function App() {
               onDismiss={dismissRadial}
             />
           )}
-          {ui.phase === "running" && (
+          {ui.phase === "running" && !ui.basilisk && (
           <div className="banner-rail">
             {ui.idlePeonCount > 0 && (
               <button
@@ -1214,11 +1266,34 @@ export default function App() {
             />
           </div>
           )}
-          {!layout.touch && (
+          {!layout.touch && !ui.basilisk && (
             <p className="cam-hint">Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom</p>
+          )}
+          {!layout.touch && ui.basilisk && ui.phase === "running" && (
+            <p className="cam-hint">WASD walk · click clanmates · Esc idle-gather · wheel looks out with XP</p>
+          )}
+          {ui.basilisk?.youAreKing && ui.phase === "running" && (
+            <div className="king-orders" role="toolbar" aria-label="King orders">
+              <strong>Crown</strong>
+              {(["gather", "hold", "hunt"] as KingOrder[]).map((order) => (
+                <button
+                  key={order}
+                  type="button"
+                  className={ui.basilisk?.kingOrder === order ? "active" : ""}
+                  onClick={() => {
+                    sim.setKingOrder(order);
+                    refreshUi();
+                    beep(400);
+                  }}
+                >
+                  {order === "gather" ? "Gather" : order === "hold" ? "Hold fords" : "Hunt"}
+                </button>
+              ))}
+            </div>
           )}
           <div className="sheet-dock">
             <div className="sheet-slot">
+            {!ui.basilisk && (
             <DetailSheet
             ui={ui}
             onClose={() => {
@@ -1267,6 +1342,7 @@ export default function App() {
               beep(260);
             }}
           />
+            )}
             </div>
           </div>
           <Overlays
@@ -1283,13 +1359,16 @@ export default function App() {
               setTriumph(null);
               setCampaignOpen(true);
             }}
-            onStart={() => {
+            onStart={(clan: Team, job: Job) => {
               if (skirmish.lobby.open || skirmish.lobby.live) return;
               setCampaignOpen(false);
               afterPortalBreak(() => {
                 sim.setMatchMode("ai");
-                sim.setLocalTeam("you");
-                sim.startMatch();
+                sim.setLocalTeam(clan);
+                sim.startBasilisk(clan, job);
+                const r = rendererRef.current;
+                r?.enterPossess(sim.getPossessYaw(), false);
+                canvasRef.current?.requestPointerLock();
                 refreshUi();
                 beep(520);
               });
@@ -1410,6 +1489,7 @@ export default function App() {
           )}
         </div>
 
+        {ui.phase === "running" && !ui.basilisk && (
         <BuildBar
           ui={ui}
           compact={compactBuild}
@@ -1420,6 +1500,7 @@ export default function App() {
             refreshUi();
           }}
         />
+        )}
       </div>
     </div>
   );
