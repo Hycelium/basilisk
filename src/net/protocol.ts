@@ -1,15 +1,22 @@
+import { basiliskMap } from "../game/basiliskMap";
 import { skirmishMap } from "../game/map";
 import type {
   BuildingKind,
+  Coffer,
   GamePhase,
+  KingController,
+  KingOrder,
   Lane,
+  LifeStage,
   MapDef,
   Team,
   SiegePhase,
   TrainKind,
+  TripCounts,
   UnitKind,
   Villager,
   WavePhase,
+  WorkKind,
 } from "../game/types";
 
 /**
@@ -36,7 +43,14 @@ export type RemoteOrder =
   | { t: "cancel"; team: Team; buildingId: number; index: number }
   | { t: "pause" }
   | { t: "speed" }
-  | { t: "rush" };
+  | { t: "rush" }
+  | { t: "drive"; team: Team; id: number; w: boolean; a: boolean; s: boolean; d: boolean; yaw: number }
+  | { t: "strike"; team: Team }
+  | { t: "possess"; team: Team; id: number }
+  | { t: "unpossess"; team: Team }
+  | { t: "labor"; team: Team; kind: WorkKind; ids: number[] }
+  | { t: "crown"; team: Team; order: KingOrder }
+  | { t: "rejoin"; team: Team };
 
 export interface SnapKeep {
   hp: number;
@@ -61,6 +75,16 @@ export interface SnapUnit {
   rallyY?: number;
   siegePhase?: SiegePhase;
   siegeTimer?: number;
+  lifeStage?: LifeStage;
+  npcKing?: boolean;
+  workKind?: WorkKind;
+  carryKind?: WorkKind | null;
+  carry?: number;
+  trips?: TripCounts;
+  kills?: number;
+  deposited?: number;
+  canPromote?: boolean;
+  xp?: number;
 }
 
 export interface SnapVillager {
@@ -164,6 +188,16 @@ export interface MatchSnapshot {
   nodes: SnapNode[];
   barricades: SnapBarricade[];
   pads: SnapPad[];
+  basilisk?: boolean;
+  food?: Record<Team, number>;
+  coffer?: Record<Team, Coffer>;
+  kingController?: Record<Team, KingController>;
+  kingOrder?: Record<Team, KingOrder>;
+  kingId?: Record<Team, number | null>;
+  playerUnitId?: Record<Team, number | null>;
+  driven?: Record<Team, number | null>;
+  joinTimer?: Record<Team, number>;
+  joinReady?: Record<Team, boolean>;
 }
 
 export type NetMsg =
@@ -199,7 +233,18 @@ const ORDER_TYPES = new Set<RemoteOrder["t"]>([
   "pause",
   "speed",
   "rush",
+  "drive",
+  "strike",
+  "possess",
+  "unpossess",
+  "labor",
+  "crown",
+  "rejoin",
 ]);
+
+function knownMap(id: string) {
+  return id === basiliskMap().id || !!skirmishMap(id);
+}
 
 export function createRoomId() {
   const bytes = new Uint8Array(16);
@@ -244,7 +289,7 @@ export function asNetMsg(data: unknown): NetMsg | null {
   if (t === "snap" && !snapshotUsable((data as { snap?: unknown }).snap)) return null;
   if (t === "pick" || t === "rematch") {
     const mapId = (data as { mapId?: unknown }).mapId;
-    if (typeof mapId !== "string" || !skirmishMap(mapId)) return null;
+    if (typeof mapId !== "string" || !knownMap(mapId)) return null;
   }
   if (
     t === "hello" ||

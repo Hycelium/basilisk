@@ -68,6 +68,7 @@ export function Overlays({
   hideTitle,
   skirmishLive,
   onStart,
+  onSkirmish,
   onRestart,
   onReturnToMap,
   onMarchAgain,
@@ -123,6 +124,9 @@ export function Overlays({
             <button type="button" className="cta" onClick={() => onStart(clan)}>
               Enter the valley
             </button>
+            <button type="button" className="ghost" onClick={onSkirmish}>
+              Skirmish
+            </button>
           </div>
 
           <div className="title-share" role="group" aria-label="Share this game">
@@ -159,9 +163,14 @@ export function Overlays({
             <h2>{ui.basilisk.joinReady ? "Enter the valley" : "Fallen"}</h2>
             <p>
               {ui.basilisk.joinReady
-                ? "Pick a clan, then spawn as a peon."
-                : `Respawn in ${Math.ceil(ui.basilisk.joinTimer)}s. You can switch sides.`}
+                ? ui.pvp
+                  ? "Spawn as a peon on your keep."
+                  : "Pick a clan, then spawn as a peon."
+                : ui.pvp
+                  ? `Respawn in ${Math.ceil(ui.basilisk.joinTimer)}s.`
+                  : `Respawn in ${Math.ceil(ui.basilisk.joinTimer)}s. You can switch sides.`}
             </p>
+            {!ui.pvp && (
             <div className="clan-pick" role="group" aria-label="Clan">
               <button
                 type="button"
@@ -178,6 +187,7 @@ export function Overlays({
                 Red north
               </button>
             </div>
+            )}
             <button
               type="button"
               className="cta"

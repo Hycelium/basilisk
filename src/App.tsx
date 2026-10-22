@@ -13,7 +13,7 @@ import { ControlCluster, type ClusterAction } from "./ui/ControlCluster";
 import { RadialMenu, type RadialItem } from "./ui/RadialMenu";
 import { useHints } from "./ui/hints";
 import { useLayout } from "./ui/useLayout";
-import { skirmishMaps } from "./game/map";
+import { basiliskMap } from "./game/basiliskMap";
 import { useSkirmish } from "./net/useSkirmish";
 import { SkirmishEnd, SkirmishLobby } from "./ui/SkirmishLobby";
 import { afterPortalBreak, bindPortalAudio, onMatchEndToMenu, onMatchStart, onReturnToTitle } from "./portal";
@@ -552,7 +552,10 @@ export default function App() {
         }
       }
 
-      if ((sim.getState().basilisk || (!touch && ev.button === 0)) && hit?.kind === "unit" && sim.getMatchMode() !== "pvp") {
+      if (
+        hit?.kind === "unit" &&
+        (sim.getState().basilisk || (sim.getMatchMode() !== "pvp" && !touch && ev.button === 0))
+      ) {
         if (sim.tryPossess(Number(hit.id))) {
           const body = sim.getState().units.find((u) => u.id === Number(hit.id));
           r.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
@@ -1484,6 +1487,9 @@ export default function App() {
               onStart={() => {
                 afterPortalBreak(() => {
                   skirmish.startSkirmish();
+                  const r = rendererRef.current;
+                  r?.enterPossess(sim.getPossessYaw(), false);
+                  canvasRef.current?.requestPointerLock();
                   refreshUi();
                   beep(520);
                 });
@@ -1507,7 +1513,7 @@ export default function App() {
             <SkirmishEnd
               result={ui.endReason}
               role={skirmish.lobby.role}
-              maps={skirmishMaps()}
+              maps={[basiliskMap()]}
               mapId={skirmish.lobby.selectedMapId}
               linkDown={skirmish.lobby.link === "down"}
               canRematch={skirmish.lobby.role === "host" && skirmish.lobby.link === "open" && skirmish.lobby.guestConnected}

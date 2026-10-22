@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { skirmishMap, skirmishMaps } from "../game/map";
+import { basiliskMap } from "../game/basiliskMap";
+import { skirmishMap } from "../game/map";
 import type { GameRenderer } from "../game/render3d";
 import type { GameSim } from "../game/sim";
 import { createRoomId, inviteLink, parseRoomInput, type NetMsg } from "./protocol";
 import { SkirmishLink } from "./skirmish";
 
-const DEFAULT_MAP = skirmishMaps()[0].id;
+const DEFAULT_MAP = basiliskMap().id;
 
 const NAME_KEY = "roadkeep_name";
 const PICTURE_REJECTED = "The match picture was rejected.";
@@ -117,6 +118,9 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
       sim.adoptMap(map);
       sim.getState().phase = "running";
       sim.getState().paused = false;
+      sim.getState().units = [];
+      sim.getState().buildings = [];
+      sim.getState().villagers = [];
       liveRef.current = true;
       roleRef.current = "guest";
       rendererRef.current?.setHomeSide("foe");
@@ -146,7 +150,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
         return;
       }
       if (msg.t === "pick") {
-        if (roleRef.current !== "guest" || !skirmishMap(msg.mapId)) return;
+        if (roleRef.current !== "guest" || (msg.mapId !== basiliskMap().id && !skirmishMap(msg.mapId))) return;
         setLobby((s) => ({ ...s, selectedMapId: msg.mapId }));
         return;
       }
@@ -284,19 +288,19 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
   const announceMap = useCallback(() => {
     if (roleRef.current !== "host" || lobbyRef.current.link !== "open") return;
     const mapId = lobbyRef.current.selectedMapId;
-    if (!skirmishMap(mapId)) return;
+    if (mapId !== basiliskMap().id && !skirmishMap(mapId)) return;
     linkRef.current?.send({ t: "pick", mapId });
   }, []);
 
   const pickMap = useCallback((mapId: string) => {
-    if (roleRef.current !== "host" || !skirmishMap(mapId)) return;
+    if (roleRef.current !== "host" || (mapId !== basiliskMap().id && !skirmishMap(mapId))) return;
     setLobby((s) => ({ ...s, selectedMapId: mapId }));
     if (lobbyRef.current.link === "open") linkRef.current?.send({ t: "pick", mapId });
   }, []);
 
   const rematch = useCallback(() => {
     if (roleRef.current !== "host" || !liveRef.current || lobbyRef.current.link !== "open") return;
-    const mapId = lobbyRef.current.selectedMapId;
+    const mapId = basiliskMap().id;
     if (!sim.applyRematch(mapId, "host")) return;
     linkRef.current?.send({ t: "rematch", mapId });
     linkRef.current?.send({ t: "snap", snap: sim.exportSnapshot() });
@@ -309,7 +313,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
     sim.setLocalTeam("you");
     sim.setOrderSink(null);
     sim.setRemoteNote((text) => linkRef.current?.send({ t: "note", text }));
-    sim.startMatch();
+    sim.startBasilisk("you", "pvp");
     const map = sim.getActiveMap();
     linkRef.current?.send({ t: "start", map });
     linkRef.current?.send({ t: "snap", snap: sim.exportSnapshot() });

@@ -321,9 +321,9 @@ export interface GameState {
   food: Record<Team, number>;
   basilisk: boolean;
   playerJob: Job | null;
-  playerUnitId: number | null;
-  joinTimer: number;
-  joinReady: boolean;
+  playerUnitId: Record<Team, number | null>;
+  joinTimer: Record<Team, number>;
+  joinReady: Record<Team, boolean>;
   trickleTimer: number;
   kingId: Record<Team, number | null>;
   kingController: Record<Team, KingController>;

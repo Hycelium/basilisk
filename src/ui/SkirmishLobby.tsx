@@ -29,7 +29,7 @@ export function SkirmishEnd({
   return (
     <div className="skirmish-end" role="dialog" aria-label="Match over">
       <h2>{result}</h2>
-      {role === "host" ? (
+      {role === "host" && maps.length > 1 && (
         <div className="map-picks" role="listbox" aria-label="Rematch map">
           {maps.map((map) => (
             <button
@@ -43,11 +43,13 @@ export function SkirmishEnd({
             </button>
           ))}
         </div>
-      ) : linkDown ? (
-        <p className="skirmish-end-down">Opponent disconnected.</p>
-      ) : (
-        <p>Waiting for host</p>
       )}
+      {role !== "host" &&
+        (linkDown ? (
+          <p className="skirmish-end-down">Opponent disconnected.</p>
+        ) : (
+          <p>Waiting for host</p>
+        ))}
       {selected && role === "host" && <p className="skirmish-end-map">{selected.tagline}</p>}
       {selected && role !== "host" && (
         <p className="skirmish-end-map">
@@ -120,7 +122,7 @@ export function SkirmishLobby({
   return (
     <div className="overlay title-overlay skirmish-lobby">
       <h1>Skirmish</h1>
-      <p>Two keeps. One invite link.</p>
+      <p>Two keeps on Twin Valleys. Walk a peon, take the crown. One invite link.</p>
 
       <label className="lobby-label">
         Your name
