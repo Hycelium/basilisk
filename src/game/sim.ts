@@ -157,6 +157,7 @@ import {
   isClanSoul,
   isMilitary,
   isPeonBody,
+  jobReady,
   isWaveCreep,
   KING_KILL_NEED,
   KING_TAX,
@@ -774,8 +775,8 @@ export class GameSim {
     refreshKings(this.state);
     this.addToast(
       mode === "pvp"
-        ? "Skirmish — Blue south, Red north. Haul, then take the crown."
-        : `${this.localTeam === "you" ? "Blue" : "Red"} chosen peon — haul 10 home. Most others only work the fields.`,
+        ? "Skirmish — dump 5 farm, hunt, or gold (or 10 wood) to take the crown. Peons cannot duel soldiers."
+        : `${this.localTeam === "you" ? "Blue" : "Red"} chosen — dump 5 farm at the keep to take the crown. Labor peons cannot promote.`,
     );
   }
 
@@ -849,6 +850,15 @@ export class GameSim {
   isLocalKing() {
     const s = this.state;
     return s.basilisk && s.kingController[this.localTeam] === "player";
+  }
+
+  private crownHint(team: Team, soul: Unit | undefined) {
+    const s = this.state;
+    if (s.kingController[team] === "player") return "Yours";
+    if (!soul?.canPromote) return "Labor only";
+    const kills = soul.kills ?? 0;
+    if (jobReady(soul) || isMilitary(soul) || kills >= KING_KILL_NEED) return "Seizing keep";
+    return `Farm 5 or ${kills}/${KING_KILL_NEED} kills`;
   }
 
   isAwaitingJoin() {
@@ -1044,7 +1054,7 @@ export class GameSim {
     if (this.state.basilisk && this.state.kingController[team] === "player") {
       return u.fromBarracks && u.lifeStage !== "gatherer";
     }
-    if (this.state.basilisk) return !u.fromBarracks && isClanSoul(u);
+    if (this.state.basilisk) return !u.fromBarracks && isClanSoul(u) && !!u.canPromote;
     return u.fromBarracks;
   }
 
@@ -1063,6 +1073,8 @@ export class GameSim {
       if (s.basilisk && this.isLocalKing() && u.lifeStage === "gatherer") return false;
       if (s.basilisk && this.isLocalKing() && !u.fromBarracks) {
         this.addToast("The crown possesses only barracks-trained soldiers.");
+      } else if (s.basilisk && !this.isLocalKing() && isClanSoul(u) && !u.canPromote) {
+        this.addToast("Labor peon — they cannot take the crown. Walk as a Chosen.");
       }
       return false;
     }
@@ -3412,14 +3424,20 @@ export class GameSim {
           ? (s.possessedId ?? s.playerUnitId[team])
           : (this.remoteBody ?? s.playerUnitId[team]);
       const body = s.units.find((u) => u.id === bodyId && u.team === team && u.hp > 0);
-      if (!body || body.npcKing) continue;
-      const steward = s.units.find((u) => u.id === s.kingId[team]);
-      if ((body.kills ?? 0) < KING_KILL_NEED) continue;
-      if ((body.deposited ?? 0) <= (steward?.deposited ?? 0)) continue;
+      if (!body || body.npcKing || !body.canPromote) continue;
+      const soldier = isMilitary(body) || jobReady(body);
+      const bloody = (body.kills ?? 0) >= KING_KILL_NEED;
+      // First job-table or kill-ladder promotion takes the keep. Five kills
+      // still usurps if a Chosen somehow stays a gatherer. Peons cannot duel
+      // soldiers, so farming is the real path.
+      if (!soldier && !bloody) continue;
       s.kingController[team] = "player";
       if (body.lifeStage === "king") body.lifeStage = "warrior";
       if (team === this.localTeam) this.releasePossess("crown");
-      else this.remoteBody = null;
+      else {
+        this.remoteBody = null;
+        this.tell(team, "The crown is yours. Command the keep.");
+      }
     }
   }
 
@@ -5407,7 +5425,7 @@ export class GameSim {
             trips: soul?.trips ?? emptyTrips(),
             kills: soul?.kills ?? 0,
             rankLabel:
-              !soul && s.kingController[view] === "player"
+              s.kingController[view] === "player" && !body
                 ? "King"
                 : soul
                   ? soul.lifeStage === "gatherer"
@@ -5416,6 +5434,7 @@ export class GameSim {
                       : "Peon"
                     : UNIT_DEFS[soul.kind].label
                   : "Peon",
+            crownHint: this.crownHint(view, soul),
           }
         : null,
     };

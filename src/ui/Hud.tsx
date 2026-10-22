@@ -1,5 +1,5 @@
 import type { QualityInfo, QualitySetting } from "../game/render3d";
-import { LOAD_SIZE } from "../game/basilisk";
+import { KING_KILL_NEED, LOAD_SIZE } from "../game/basilisk";
 import { WORK_LABEL } from "../game/basiliskMap";
 import type { UiSnapshot } from "../game/types";
 
@@ -73,8 +73,16 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
             </div>
             <div className="stat">
               <span className="label">KILLS</span>
-              <span className="value">{realm.kills}</span>
+              <span className="value">
+                {realm.youAreKing ? realm.kills : `${realm.kills}/${KING_KILL_NEED}`}
+              </span>
             </div>
+            {!realm.youAreKing && (
+              <div className="stat crown-hint">
+                <span className="label">CROWN</span>
+                <span className="value">{realm.crownHint}</span>
+              </div>
+            )}
             <div className="stat lives">
               <span className="label">KEEP</span>
               <span className={ui.yourHp <= 80 ? "value danger" : "value"}>{ui.yourHp}</span>

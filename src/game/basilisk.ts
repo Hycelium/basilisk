@@ -113,6 +113,11 @@ function gatherKind(trips: TripCounts): UnitKind | null {
   return null;
 }
 
+/** Finished a job-table rank (farm 5, hunt 5, gold 5, wood 5/10). */
+export function jobReady(u: Unit) {
+  return gatherKind(u.trips ?? emptyTrips()) != null;
+}
+
 function killKind(kills: number): UnitKind | null {
   if (kills >= 4) return "runner";
   if (kills >= 3) return "ward";
@@ -228,7 +233,14 @@ export function stepHaul(state: GameState, u: Unit, dt: number) {
       const kind = u.carryKind;
       payDeposit(state, u);
       const ranked = applyRank(u);
-      return ranked ? `Promoted to ${UNIT_DEFS[u.kind].label}.` : `Dumped ${kind ?? "load"} at the keep.`;
+      if (ranked) return `Promoted to ${UNIT_DEFS[u.kind].label}. The crown is yours.`;
+      if (u.canPromote) {
+        const t = u.trips ?? emptyTrips();
+        const next =
+          kind === "wood" ? `wood ${t.wood}/10` : kind ? `${kind} ${t[kind]}/5` : "five dumps";
+        return `Dumped ${kind ?? "load"}. ${next} takes the crown.`;
+      }
+      return `Dumped ${kind ?? "load"} at the keep.`;
     }
     return null;
   }

@@ -861,6 +861,12 @@ button:disabled {
   line-height: 1.2;
 }
 
+.stat.crown-hint .value {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
 .danger {
   color: var(--danger);
 }

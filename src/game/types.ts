@@ -127,6 +127,8 @@ export interface BasiliskUi {
   trips: TripCounts;
   kills: number;
   rankLabel: string;
+  /** How to take the keep, or empty once you hold it. */
+  crownHint: string;
 }
 
 export type WavePhase = "build" | "spawning" | "fighting";
