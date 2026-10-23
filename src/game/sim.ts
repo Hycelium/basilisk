@@ -121,6 +121,7 @@ import type {
   Barricade,
   Building,
   BuildingKind,
+  ClanMomentKind,
   GameState,
   Lane,
   MapDef,
@@ -150,6 +151,9 @@ import {
   BASILISK_START_COFFER,
   BASILISK_START_EACH,
   BASILISK_WAVES,
+  awardXp,
+  canTakeCrown,
+  clanPanel,
   countClan,
   defaultKingController,
   defaultKingOrder,
@@ -157,19 +161,22 @@ import {
   emptyScars,
   emptyTrips,
   hashId,
+  healInKeep,
+  insideOwnKeep,
   isClanSoul,
   isMilitary,
   isPeonBody,
-  jobReady,
   isWaveCreep,
-  KING_KILL_NEED,
+  KING_STICKY,
   KING_TAX,
+  LOAD_SIZE,
   nearestWork,
   orderTarget,
   pickWork,
   refreshKings,
   stepHaul,
   visionFromLife,
+  XP_KILL,
 } from "./basilisk";
 import { basiliskMap, deerSpots, isBasiliskSeed, setValleySeed, WORK_LABEL } from "./basiliskMap";
 import { wheatPatchAt } from "./wheat";
@@ -361,6 +368,10 @@ export class GameSim {
       joinReady: { you: false, foe: false },
       trickleTimer: 18,
       kingId: { you: null, foe: null },
+      crownId: { you: null, foe: null },
+      kingScore: { you: 0, foe: 0 },
+      clanMoment: { you: null, foe: null },
+      lastSkim: { you: null, foe: null },
       kingController: defaultKingController(),
       kingOrder: defaultKingOrder(),
       kingTreasury: { you: 0, foe: 0 },
@@ -767,6 +778,10 @@ export class GameSim {
     this.state.kingOrder = { you: "gather", foe: "gather" };
     this.state.kingTreasury = { you: 0, foe: 0 };
     this.state.kingController = defaultKingController();
+    this.state.crownId = { you: null, foe: null };
+    this.state.kingScore = { you: 0, foe: 0 };
+    this.state.clanMoment = { you: null, foe: null };
+    this.state.lastSkim = { you: null, foe: null };
     this.state.kingCoffer = {
       you: { ...BASILISK_START_COFFER },
       foe: { ...BASILISK_START_COFFER },
@@ -794,8 +809,8 @@ export class GameSim {
     refreshKings(this.state);
     this.addToast(
       mode === "pvp"
-        ? "Skirmish — dump 5 farm, hunt, or gold (or 10 wood) to take the crown. Peons cannot duel soldiers."
-        : `${this.localTeam === "you" ? "Blue" : "Red"} chosen — dump 5 farm at the keep to take the crown. Labor peons cannot promote.`,
+        ? "Hauls earn XP. Promote, then the highest XP wears the sticky crown."
+        : `${this.localTeam === "you" ? "Blue" : "Red"} Chosen — haul for XP. Promote, then beat the king on XP.`,
     );
   }
 
@@ -953,13 +968,21 @@ export class GameSim {
     return s.basilisk && s.kingController[this.localTeam] === "player";
   }
 
-  private crownHint(team: Team, soul: Unit | undefined) {
-    const s = this.state;
-    if (s.kingController[team] === "player") return "Yours";
-    if (!soul?.canPromote) return "Labor only";
-    const kills = soul.kills ?? 0;
-    if (jobReady(soul) || isMilitary(soul) || kills >= KING_KILL_NEED) return "Seizing keep";
-    return `Farm 5 or ${kills}/${KING_KILL_NEED} kills`;
+  private pushMoment(team: Team, kind: ClanMomentKind, title: string, detail: string) {
+    this.state.clanMoment[team] = { kind, title, detail, life: 4.2 };
+  }
+
+  private handleHaul(u: Unit, dt: number) {
+    const note = stepHaul(this.state, u, dt);
+    if (!note) return;
+    this.addFloat(`+${note.xp} XP`, u.pos.x, u.pos.y - 12, u.canPromote ? "#f0d090" : "#b8a888");
+    this.state.lastSkim[u.team] = { kind: note.dump, amount: LOAD_SIZE, xp: note.xp, life: 2.6 };
+    if (this.state.crownId[u.team] === u.id) {
+      this.state.kingScore[u.team] = Math.max(this.state.kingScore[u.team], u.xp ?? 0);
+    }
+    if (note.promoted) {
+      this.pushMoment(u.team, "promoted", `Promoted to ${note.promoted}`, `${Math.floor(u.xp ?? 0)} XP · contest the crown`);
+    }
   }
 
   isAwaitingJoin() {
@@ -1015,6 +1038,8 @@ export class GameSim {
       y: keep.y + (team === "you" ? -22 : 22),
     };
     this.state.kingId[team] = u.id;
+    this.state.crownId[team] = u.id;
+    this.state.kingScore[team] = 0;
   }
 
   private spawnBasiliskSoul(team: Team, player = false, canPromote = false) {
@@ -1218,10 +1243,10 @@ export class GameSim {
     return true;
   }
 
-  releasePossess(reason: "esc" | "death" | "end" | "crown" = "esc") {
+  releasePossess(reason: "esc" | "death" | "end" | "crown" | "dethrone" = "esc") {
     const s = this.state;
     if (s.possessedId == null) return;
-    if (reason === "esc" || reason === "crown") this.redirect({ t: "unpossess", team: this.localTeam });
+    if (reason === "esc" || reason === "crown" || reason === "dethrone") this.redirect({ t: "unpossess", team: this.localTeam });
     s.possessedId = null;
     s.possessCharge = 0;
     s.possessAimBuildingId = null;
@@ -3578,6 +3603,7 @@ export class GameSim {
         u.rallyPoint = undefined;
         u.engageFrom = undefined;
         u.targetUnitId = undefined;
+        healInKeep(u, dt);
         return;
       }
     }
@@ -3605,11 +3631,11 @@ export class GameSim {
     u.engageFrom = undefined;
     u.targetUnitId = undefined;
     if (this.state.basilisk && live) {
-      const note = stepHaul(this.state, u, dt);
-      if (note && u.team === this.localTeam) this.addToast(note);
+      this.handleHaul(u, dt);
       refreshKings(this.state);
       if (u.id === this.state.possessedId) this.state.possessVisionScore = visionFromLife(u);
     }
+    healInKeep(u, dt);
   }
 
   private stepBasiliskSoul(u: Unit, dt: number) {
@@ -3636,8 +3662,7 @@ export class GameSim {
       return;
     }
     if (u.kingHeld) {
-      const holdNote = stepHaul(s, u, dt);
-      if (holdNote && u.team === this.localTeam) this.addToast(holdNote);
+      this.handleHaul(u, dt);
       return;
     }
     if (u.rallyPoint) {
@@ -3651,14 +3676,12 @@ export class GameSim {
           u.rallyPoint = undefined;
         }
       }
-      const walkNote = stepHaul(s, u, dt);
-      if (walkNote && u.team === this.localTeam) this.addToast(walkNote);
+      this.handleHaul(u, dt);
       return;
     }
     const dest = orderTarget(s, u);
     if (dest) moveTowards(u.pos, dest, u.speed, dt);
-    const note = stepHaul(s, u, dt);
-    if (note && u.team === this.localTeam) this.addToast(note);
+    this.handleHaul(u, dt);
   }
 
   private stepNpcKing(u: Unit, dt: number) {
@@ -3686,26 +3709,58 @@ export class GameSim {
   private tryUsurpCrown() {
     const s = this.state;
     for (const team of ["you", "foe"] as Team[]) {
-      if (s.kingController[team] !== "ai") continue;
-      const bodyId =
-        team === this.localTeam
-          ? (s.possessedId ?? s.playerUnitId[team])
-          : (this.remoteBody ?? s.playerUnitId[team]);
-      const body = s.units.find((u) => u.id === bodyId && u.team === team && u.hp > 0);
-      if (!body || body.npcKing || !body.canPromote) continue;
-      const soldier = isMilitary(body) || jobReady(body);
-      const bloody = (body.kills ?? 0) >= KING_KILL_NEED;
-      // First job-table or kill-ladder promotion takes the keep. Five kills
-      // still usurps if a Chosen somehow stays a gatherer. Peons cannot duel
-      // soldiers, so farming is the real path.
-      if (!soldier && !bloody) continue;
+      const living = s.units.filter((u) => u.team === team && u.hp > 0);
+      const elig = living.filter(canTakeCrown).sort((a, b) => (b.xp ?? 0) - (a.xp ?? 0) || a.id - b.id);
+      const steward = living.find((u) => u.npcKing);
+      if (elig.length === 0) {
+        if (s.kingController[team] === "player") continue;
+        if (steward) {
+          s.crownId[team] = steward.id;
+          s.kingScore[team] = steward.xp ?? 0;
+        }
+        continue;
+      }
+      const holder = living.find((u) => u.id === s.crownId[team] && canTakeCrown(u));
+      let lead = elig[0]!;
+      const holdXp = holder?.xp ?? s.kingScore[team];
+      if (lead.id !== s.crownId[team] && (lead.xp ?? 0) < holdXp * KING_STICKY) {
+        if (holder) lead = holder;
+        else if (s.kingController[team] === "player") continue;
+      }
+      this.seatCrown(team, lead);
+    }
+  }
+
+  private seatCrown(team: Team, lead: Unit) {
+    const s = this.state;
+    const wasPlayer = s.kingController[team] === "player";
+    const nowPlayer = lead.id === s.playerUnitId[team];
+    const same = s.crownId[team] === lead.id && wasPlayer === nowPlayer;
+    s.crownId[team] = lead.id;
+    s.kingScore[team] = Math.max(s.kingScore[team], lead.xp ?? 0);
+    if (same) return;
+    if (nowPlayer) {
       s.kingController[team] = "player";
-      if (body.lifeStage === "king") body.lifeStage = "warrior";
+      if (lead.lifeStage === "king") lead.lifeStage = "warrior";
+      this.pushMoment(team, "crowned", "You are King", `${Math.floor(lead.xp ?? 0)} XP leads the clan. Every haul lands in your coffer.`);
       if (team === this.localTeam) this.releasePossess("crown");
       else {
         this.remoteBody = null;
         this.tell(team, "The crown is yours. Command the keep.");
       }
+      return;
+    }
+    s.kingController[team] = "ai";
+    const name = lead.canPromote ? (isMilitary(lead) ? UNIT_DEFS[lead.kind].label : "Chosen") : "Steward";
+    if (wasPlayer) {
+      this.pushMoment(team, "dethroned", "Dethroned", `${name} leads on ${Math.floor(lead.xp ?? 0)} XP. Haul to take it back.`);
+      if (team === this.localTeam) {
+        this.releasePossess("dethrone");
+        const body = s.units.find((u) => u.id === s.playerUnitId[team] && u.hp > 0);
+        if (body) this.tryPossess(body.id);
+      }
+    } else if (!lead.npcKing) {
+      this.pushMoment(team, "crowned", `${name} is King`, `${Math.floor(lead.xp ?? 0)} XP · they skim every haul until you pass them.`);
     }
   }
 
@@ -4021,8 +4076,13 @@ export class GameSim {
         const slayer = this.state.units.find((x) => x.id === u.lastHitBy && x.team === killer && x.hp > 0);
         if (slayer) {
           slayer.kills = (slayer.kills ?? 0) + 1;
-          if (applyRank(slayer) && slayer.team === this.localTeam) {
-            this.addToast(`Kill rank: ${UNIT_DEFS[slayer.kind].label}.`);
+          const xp = awardXp(slayer, XP_KILL);
+          this.addFloat(`+${xp} XP`, slayer.pos.x, slayer.pos.y - 14, "#f0d090");
+          if (this.state.crownId[slayer.team] === slayer.id) {
+            this.state.kingScore[slayer.team] = Math.max(this.state.kingScore[slayer.team], slayer.xp ?? 0);
+          }
+          if (applyRank(slayer)) {
+            this.pushMoment(slayer.team, "promoted", `Promoted to ${UNIT_DEFS[slayer.kind].label}`, `${Math.floor(slayer.xp ?? 0)} XP · kill rank`);
           }
         }
         if (u.id === this.state.playerUnitId[u.team] && this.state.kingController[u.team] !== "player") {
@@ -4438,6 +4498,18 @@ export class GameSim {
     const s = this.state;
     s.toasts.forEach((t) => (t.life -= dt));
     s.toasts = s.toasts.filter((t) => t.life > 0);
+    for (const team of ["you", "foe"] as Team[]) {
+      const moment = s.clanMoment[team];
+      if (moment) {
+        moment.life -= dt;
+        if (moment.life <= 0) s.clanMoment[team] = null;
+      }
+      const skim = s.lastSkim[team];
+      if (skim) {
+        skim.life -= dt;
+        if (skim.life <= 0) s.lastSkim[team] = null;
+      }
+    }
     for (const f of s.floatingTexts) {
       f.life -= dt;
       f.rise += 18 * dt;
@@ -5180,6 +5252,16 @@ export class GameSim {
       kingController: { ...s.kingController },
       kingOrder: { ...s.kingOrder },
       kingId: { ...s.kingId },
+      crownId: { ...s.crownId },
+      kingScore: { ...s.kingScore },
+      clanMoment: {
+        you: s.clanMoment.you ? { ...s.clanMoment.you } : null,
+        foe: s.clanMoment.foe ? { ...s.clanMoment.foe } : null,
+      },
+      lastSkim: {
+        you: s.lastSkim.you ? { ...s.lastSkim.you } : null,
+        foe: s.lastSkim.foe ? { ...s.lastSkim.foe } : null,
+      },
       playerUnitId: { ...s.playerUnitId },
       driven: { you: s.possessedId, foe: this.remoteBody },
       joinTimer: { ...s.joinTimer },
@@ -5334,6 +5416,20 @@ export class GameSim {
     if (snap.kingController) s.kingController = { ...snap.kingController };
     if (snap.kingOrder) s.kingOrder = { ...snap.kingOrder };
     if (snap.kingId) s.kingId = { ...snap.kingId };
+    if (snap.crownId) s.crownId = { ...snap.crownId };
+    if (snap.kingScore) s.kingScore = { ...snap.kingScore };
+    if (snap.clanMoment) {
+      s.clanMoment = {
+        you: snap.clanMoment.you ? { ...snap.clanMoment.you } : null,
+        foe: snap.clanMoment.foe ? { ...snap.clanMoment.foe } : null,
+      };
+    }
+    if (snap.lastSkim) {
+      s.lastSkim = {
+        you: snap.lastSkim.you ? { ...snap.lastSkim.you } : null,
+        foe: snap.lastSkim.foe ? { ...snap.lastSkim.foe } : null,
+      };
+    }
     if (snap.playerUnitId) s.playerUnitId = { ...snap.playerUnitId };
     if (snap.joinTimer) s.joinTimer = { ...snap.joinTimer };
     if (snap.joinReady) s.joinReady = { ...snap.joinReady };
@@ -5697,6 +5793,7 @@ export class GameSim {
                 : UNIT_DEFS[body.kind].label,
             hp: Math.max(0, Math.ceil(body.hp)),
             maxHp: body.maxHp,
+            healing: body.hp < body.maxHp - 0.05 && insideOwnKeep(body),
             visionScore: s.possessVisionScore ?? 0,
             visionMax: POSSESS_VISION_SCORE,
             charge: body.kind === "trebuchet" ? s.possessCharge ?? 0 : 0,
@@ -5708,35 +5805,51 @@ export class GameSim {
           }
         : null,
       basilisk: s.basilisk
-        ? {
-            food: Math.floor(s.food[view]),
-            clanGold: Math.floor(s.gold[view]),
-            clanWood: Math.floor(s.wood[view]),
-            cofferGold: Math.floor(s.kingCoffer[view].gold),
-            cofferWood: Math.floor(s.kingCoffer[view].wood),
-            cofferFood: Math.floor(s.kingCoffer[view].food),
-            kingOrder: s.kingOrder[view],
-            youAreKing: s.kingController[view] === "player",
-            joinTimer: Math.max(0, s.joinTimer[view]),
-            joinReady: s.joinReady[view],
-            clanmates: countClan(s, view),
-            carry: soul?.carry ?? 0,
-            carryKind: soul?.carryKind ?? null,
-            trips: soul?.trips ?? emptyTrips(),
-            kills: soul?.kills ?? 0,
-            rankLabel:
-              s.kingController[view] === "player" && !body
-                ? "King"
-                : soul
-                  ? soul.lifeStage === "gatherer"
-                    ? soul.canPromote
-                      ? "Chosen"
-                      : "Peon"
-                    : UNIT_DEFS[soul.kind].label
-                  : "Peon",
-            crownHint: this.crownHint(view, soul),
-            labor,
-          }
+        ? (() => {
+            const panel = clanPanel(s, view, s.playerUnitId[view] ?? soul?.id ?? null, soul);
+            return {
+              food: Math.floor(s.food[view]),
+              clanGold: Math.floor(s.gold[view]),
+              clanWood: Math.floor(s.wood[view]),
+              cofferGold: Math.floor(s.kingCoffer[view].gold),
+              cofferWood: Math.floor(s.kingCoffer[view].wood),
+              cofferFood: Math.floor(s.kingCoffer[view].food),
+              kingOrder: s.kingOrder[view],
+              youAreKing: s.kingController[view] === "player",
+              joinTimer: Math.max(0, s.joinTimer[view]),
+              joinReady: s.joinReady[view],
+              clanmates: countClan(s, view),
+              carry: soul?.carry ?? 0,
+              carryKind: soul?.carryKind ?? null,
+              trips: soul?.trips ?? emptyTrips(),
+              kills: soul?.kills ?? 0,
+              rankLabel:
+                s.kingController[view] === "player" && !body
+                  ? "King"
+                  : soul
+                    ? soul.lifeStage === "gatherer"
+                      ? soul.canPromote
+                        ? "Chosen"
+                        : "Peon"
+                      : UNIT_DEFS[soul.kind].label
+                    : "Peon",
+              crownHint: panel.crownHint,
+              labor,
+              xp: panel.xp,
+              xpRank: panel.xpRank,
+              clanSize: panel.clanSize,
+              kingName: panel.kingName,
+              kingXp: panel.kingXp,
+              promotionLabel: panel.promotionLabel,
+              promotionHave: panel.promotionHave,
+              promotionNeed: panel.promotionNeed,
+              promotionPct: panel.promotionPct,
+              ranks: panel.ranks,
+              skimLine: panel.skimLine,
+              lastSkim: panel.lastSkim,
+              moment: panel.moment,
+            };
+          })()
         : null,
     };
   }

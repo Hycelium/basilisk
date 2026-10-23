@@ -100,7 +100,7 @@ export function Overlays({
           <img className="menu-logo" src={`${import.meta.env.BASE_URL}icons/icon-512.png`} alt="" />
           <h1>Basilisk</h1>
           <p className="keep-lvl">Twin valleys · one life at a time</p>
-          <p className="menu-lead">Most peons only haul. A few chosen can promote. An AI king already holds the keep.</p>
+          <p className="menu-lead">Hauls earn XP. Most peons stay a long tail. A few Chosen promote, and the highest XP wears the sticky crown and skims every dump.</p>
           <p className="phone-controls-tip">On a phone: left stick walks, drag the right side to look, Fire to strike.</p>
           <p className="foe-brain-tease">{playerRecord}</p>
 

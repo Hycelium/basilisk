@@ -322,6 +322,48 @@ button:disabled {
   margin-top: -1px;
 }
 
+.fps-hp {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  width: min(280px, 48%);
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(18, 12, 8, 0.72);
+  border: 1px solid rgba(201, 164, 90, 0.55);
+  overflow: hidden;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
+.fps-hp i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #2f8a4a, #8dffb0);
+  transition: width 80ms linear;
+}
+
+.fps-hp.low i {
+  background: linear-gradient(90deg, #8a2420, #ff6a58);
+}
+
+.fps-hp.healing i {
+  background: linear-gradient(90deg, #3a9a58, #d8ffc8);
+  box-shadow: inset 0 0 10px rgba(180, 255, 190, 0.55);
+}
+
+.fps-hp span {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #f8ecd0;
+  font: 700 11px/1 "Trebuchet MS", sans-serif;
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
 .fps-banner {
   position: absolute;
   left: 50%;
@@ -2264,6 +2306,199 @@ button:disabled {
   top: 54px;
 }
 
+.stage:has(.clan-ladder) .toasts {
+  left: auto;
+  right: 8px;
+}
+
+.clan-ladder {
+  position: absolute;
+  top: 58px;
+  left: 10px;
+  z-index: 11;
+  width: min(248px, 48vw);
+  padding: 8px 10px 8px;
+  background: rgba(10, 8, 14, 0.72);
+  border: 1px solid rgba(226, 188, 114, 0.28);
+  border-radius: 10px;
+  color: #f4efe4;
+  pointer-events: none;
+  text-shadow: 0 1px 2px #000;
+}
+
+.clan-ladder header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.clan-ladder header strong {
+  font-family: Cinzel, serif;
+  font-size: 13px;
+  color: #e2bc72;
+  letter-spacing: 0.04em;
+}
+
+.clan-ladder header span,
+.clan-king-line,
+.clan-skim,
+.clan-hint,
+.clan-ladder small {
+  font-size: 10px;
+  color: #cfc3ae;
+}
+
+.clan-king-line {
+  margin: 0 0 6px;
+  color: #f0d090;
+}
+
+.clan-ladder ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.clan-ladder li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  column-gap: 8px;
+  align-items: center;
+}
+
+.clan-ladder li em {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clan-ladder li.you em {
+  color: #ffe29a;
+}
+
+.clan-ladder li.king em {
+  color: #f0c14b;
+}
+
+.clan-xp {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.clan-bar {
+  grid-column: 1 / -1;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.clan-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #8a6a32, #f0d090);
+}
+
+.clan-ladder li.you .clan-bar i {
+  background: linear-gradient(90deg, #3a6fa8, #8ac8ff);
+}
+
+.clan-ladder li small {
+  grid-column: 1 / -1;
+  letter-spacing: 0.02em;
+}
+
+.clan-promote {
+  margin-top: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.clan-promote span {
+  font-size: 10px;
+  color: #e2bc72;
+}
+
+.clan-skim,
+.clan-hint {
+  margin: 6px 0 0;
+  line-height: 1.3;
+}
+
+.clan-moment {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  transform: translate(-50%, -50%);
+  z-index: 14;
+  min-width: min(320px, 78vw);
+  padding: 14px 18px 16px;
+  text-align: center;
+  background: rgba(12, 9, 16, 0.82);
+  border: 1px solid rgba(226, 188, 114, 0.55);
+  border-radius: 12px;
+  pointer-events: none;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.clan-moment strong {
+  display: block;
+  font-family: Cinzel, serif;
+  font-size: 28px;
+  color: #f0d090;
+  letter-spacing: 0.04em;
+}
+
+.clan-moment span {
+  display: block;
+  margin-top: 6px;
+  font-size: 14px;
+  color: #e6dcc8;
+}
+
+.clan-moment.dethroned strong {
+  color: #ff8a7a;
+}
+
+.clan-moment.promoted strong {
+  color: #9dffc0;
+}
+
+.is-phone .clan-ladder,
+.is-fps-touch .clan-ladder {
+  top: 50px;
+  left: 8px;
+  width: min(200px, 44vw);
+  padding: 6px 8px;
+}
+
+.is-phone .clan-ladder header strong,
+.is-fps-touch .clan-ladder header strong {
+  font-size: 11px;
+}
+
+.is-phone .clan-hint,
+.is-fps-touch .clan-hint {
+  display: none;
+}
+
+.is-phone .clan-moment strong,
+.is-fps-touch .clan-moment strong {
+  font-size: 22px;
+}
+
 .stage:has(.keep-tug) .leave-body {
   top: 58px;
 }
@@ -2406,6 +2641,13 @@ button:disabled {
   min-height: 40px;
   padding: 8px 12px;
   font-size: 14px;
+}
+
+.is-fps-touch .fps-hp,
+.is-phone .fps-hp {
+  bottom: calc(132px + var(--sab));
+  width: min(220px, 52%);
+  height: 16px;
 }
 
 .is-fps-touch .fps-banner {

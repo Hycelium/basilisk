@@ -1,7 +1,7 @@
 import { UNIT_DEFS, VILLAGER_HP, VILLAGER_SPEED, PEON_DAMAGE, WORLD_H } from "./balance";
 import { chokePoints, deerSpots, type WorkKind } from "./basiliskMap";
 import { getMap, keepPos } from "./map";
-import type { GameState, KingController, KingOrder, MapId, Team, Unit, UnitKind, Vec2, Villager, WaveSpec } from "./types";
+import type { ClanRankUi, GameState, KingController, KingOrder, MapId, Team, Unit, UnitKind, Vec2, Villager, WaveSpec } from "./types";
 import { farmPlots, wheatPatchAt } from "./wheat";
 
 export const BASILISK_START_EACH = 8;
@@ -14,12 +14,22 @@ export const BASILISK_CHOSEN_CAP = 3;
 export const BASILISK_JOIN_WAIT = 8;
 /** Share of each dump (and bounty) that goes in the coffer. 1 = the king gets all of it. */
 export const KING_TAX = 1;
+/** XP granted per keep dump before the fat-tail multiplier. */
+export const XP_DUMP = 10;
+/** XP granted per kill before the fat-tail multiplier. */
+export const XP_KILL = 24;
+/** Challenger must beat the crown XP by this factor to dethrone. */
+export const KING_STICKY = 1.2;
 export const LOAD_SIZE = 10;
 export const FILL_RATE = 4;
 /** Fast enough that walking across a grain patch fills a load. */
 export const WHEAT_FILL_RATE = 18;
 export const WORK_REACH = 16;
 export const KEEP_REACH = 26;
+/** Standing inside this radius of your own keep restores the body you possess. */
+export const KEEP_HEAL_RANGE = 42;
+/** Fraction of max hit points restored per second inside your keep. */
+export const KEEP_HEAL_RATE = 0.28;
 export const KING_KILL_NEED = 5;
 export const BASILISK_KEEP_HP = 400;
 export const BASILISK_START_COFFER = { gold: 150, wood: 125, food: 100 };
@@ -153,8 +163,171 @@ export function applyPeonBody(u: Unit) {
   u.trips = emptyTrips();
   u.kills = 0;
   u.deposited = 0;
+  u.xp = 0;
   u.siegePhase = undefined;
   u.chargeReady = false;
+}
+
+/** Preferential attachment so Chosen pull away and most peons stay a long tail. */
+export function awardXp(u: Unit, base: number) {
+  if (u.npcKing) return 0;
+  const wealth = 1 + Math.max(0, u.xp ?? 0) * 0.03;
+  const role = u.canPromote ? 1.55 : 0.55;
+  const gain = Math.max(1, Math.round(base * role * Math.sqrt(wealth)));
+  u.xp = (u.xp ?? 0) + gain;
+  return gain;
+}
+
+export function insideOwnKeep(u: Unit) {
+  return dist(u.pos, keepPos(u.team)) <= KEEP_HEAL_RANGE;
+}
+
+/** Restore the possessed body while it stands in its own keep. */
+export function healInKeep(u: Unit, dt: number) {
+  if (u.hp <= 0 || u.hp >= u.maxHp - 0.05) return false;
+  if (!insideOwnKeep(u)) return false;
+  u.hp = Math.min(u.maxHp, u.hp + u.maxHp * KEEP_HEAL_RATE * dt);
+  return true;
+}
+
+export function canTakeCrown(u: Unit) {
+  if (!u.canPromote || u.npcKing || u.hp <= 0) return false;
+  return jobReady(u) || isMilitary(u) || (u.kills ?? 0) >= KING_KILL_NEED;
+}
+
+export type HaulNote = {
+  dump: WorkKind;
+  xp: number;
+  promoted: string | null;
+};
+
+export function promotionPath(u: Unit): { label: string; have: number; need: number } {
+  if (!u.canPromote) return { label: "Labor", have: 0, need: 0 };
+  if (isMilitary(u)) return { label: "Crown", have: Math.floor(u.xp ?? 0), need: 0 };
+  const t = u.trips ?? emptyTrips();
+  const paths = [
+    { label: "Levy", have: t.farm, need: 5 },
+    { label: "Archer", have: t.hunt, need: 5 },
+    { label: "Ward", have: t.gold, need: 5 },
+    { label: "Ram", have: Math.min(t.wood, 5), need: 5 },
+    { label: "Runner", have: Math.min(t.farm, t.gold), need: 5 },
+    { label: "Trebuchet", have: t.wood, need: 10 },
+    { label: "Blood", have: u.kills ?? 0, need: KING_KILL_NEED },
+  ];
+  let best = paths[0]!;
+  let bestScore = -1;
+  for (const p of paths) {
+    if (p.have >= p.need) continue;
+    const score = p.have / p.need;
+    if (score > bestScore) {
+      bestScore = score;
+      best = p;
+    }
+  }
+  return best;
+}
+
+function soulRole(u: Unit, isKing: boolean) {
+  if (u.npcKing) return "Steward";
+  if (isKing) return "King";
+  if (u.lifeStage === "gatherer") return u.canPromote ? "Chosen" : "Peon";
+  return UNIT_DEFS[u.kind]?.label ?? "Soul";
+}
+
+function soulName(u: Unit, you: boolean, isKing: boolean) {
+  if (you) return "You";
+  return soulRole(u, isKing);
+}
+
+export function clanRanks(state: GameState, team: Team, youId: number | null): ClanRankUi[] {
+  const living = state.units.filter((u) => u.team === team && u.hp > 0 && (isClanSoul(u) || u.npcKing));
+  living.sort((a, b) => (b.xp ?? 0) - (a.xp ?? 0) || a.id - b.id);
+  const crown = living.find((u) => u.id === state.crownId[team]) ?? living.find((u) => u.npcKing);
+  const maxXp = Math.max(1, ...living.map((u) => u.xp ?? 0), state.kingScore[team] ?? 0);
+  const rows: ClanRankUi[] = living.map((u, i) => {
+    const king = crown?.id === u.id;
+    const you = youId != null && u.id === youId;
+    const path = promotionPath(u);
+    const nextPct = path.need > 0 ? Math.max(0, Math.min(1, path.have / path.need)) : king ? 1 : 0;
+    const nextLabel =
+      path.need > 0 ? `${path.label} ${path.have}/${path.need}` : king ? "Wears the crown" : path.label === "Labor" ? "Cannot promote" : "Contest the crown";
+    return {
+      id: u.id,
+      rank: i + 1,
+      name: soulName(u, you, king),
+      xp: Math.floor(u.xp ?? 0),
+      pct: (u.xp ?? 0) / maxXp,
+      you,
+      king,
+      chosen: !!u.canPromote && !u.npcKing,
+      role: soulRole(u, king),
+      nextLabel,
+      nextPct,
+    };
+  });
+  if (state.kingController[team] === "player" && youId != null && !rows.some((r) => r.you)) {
+    const xp = Math.floor(state.kingScore[team] ?? 0);
+    rows.unshift({
+      id: youId,
+      rank: 1,
+      name: "You",
+      xp,
+      pct: xp / maxXp,
+      you: true,
+      king: true,
+      chosen: true,
+      role: "King",
+      nextLabel: "Wears the crown",
+      nextPct: 1,
+    });
+    rows.forEach((r, i) => {
+      r.rank = i + 1;
+    });
+  }
+  const top = rows.slice(0, 5);
+  const extras = rows.filter((r) => (r.you || r.king) && !top.includes(r));
+  return [...top, ...extras];
+}
+
+export function clanPanel(state: GameState, team: Team, youId: number | null, soul: Unit | undefined) {
+  const ranks = clanRanks(state, team, youId);
+  const youRow = ranks.find((r) => r.you);
+  const kingRow = ranks.find((r) => r.king);
+  const path = soul ? promotionPath(soul) : { label: "Levy", have: 0, need: 5 };
+  const kingYou = state.kingController[team] === "player";
+  const kingName = kingRow?.name ?? (kingYou ? "You" : "Steward");
+  const kingXp = kingRow?.xp ?? Math.floor(state.kingScore[team] ?? 0);
+  const xp = youRow?.xp ?? Math.floor(soul?.xp ?? 0);
+  const needSticky = Math.ceil(Math.max(kingXp, 1) * KING_STICKY);
+  let crownHint: string;
+  if (kingYou) crownHint = `Your crown · ${xp} XP. Hold it past ${needSticky}.`;
+  else if (!soul?.canPromote) crownHint = "Labor only — you cannot take the crown.";
+  else if (!canTakeCrown(soul) && soul.lifeStage === "gatherer") {
+    crownHint = `${path.label} ${path.have}/${path.need} to promote, then beat ${kingName}'s ${kingXp} XP.`;
+  } else if (xp * KING_STICKY <= kingXp && xp < needSticky) {
+    crownHint = `${kingName} leads on ${kingXp} XP. You need ${needSticky} to take the crown.`;
+  } else {
+    crownHint = `Seizing the keep — ${xp} XP vs ${kingName} ${kingXp}.`;
+  }
+  const skim = state.lastSkim[team];
+  const lastSkim =
+    skim && skim.life > 0 ? `+${skim.amount} ${skim.kind} → coffer · +${skim.xp} XP` : null;
+  return {
+    ranks,
+    kingName,
+    kingXp,
+    xp,
+    xpRank: youRow?.rank ?? ranks.length,
+    clanSize: state.units.filter((u) => u.team === team && u.hp > 0 && (isClanSoul(u) || u.npcKing)).length,
+    promotionLabel: path.label,
+    promotionHave: path.have,
+    promotionNeed: path.need,
+    promotionPct: path.need > 0 ? Math.max(0, Math.min(1, path.have / path.need)) : kingYou ? 1 : 0,
+    crownHint,
+    skimLine: "King takes every haul into the coffer.",
+    lastSkim,
+    moment: state.clanMoment[team],
+  };
 }
 
 export function morphKind(u: Unit, kind: UnitKind) {
@@ -186,7 +359,7 @@ export function applyRank(u: Unit) {
 
 export function payDeposit(state: GameState, u: Unit) {
   const kind = u.carryKind;
-  if (!kind || (u.carry ?? 0) < LOAD_SIZE) return false;
+  if (!kind || (u.carry ?? 0) < LOAD_SIZE) return null;
   const amount = LOAD_SIZE;
   const cut = amount * KING_TAX;
   const rest = amount - cut;
@@ -207,11 +380,12 @@ export function payDeposit(state: GameState, u: Unit) {
   u.deposited = (u.deposited ?? 0) + amount;
   u.carry = 0;
   u.carryKind = null;
+  const xp = awardXp(u, XP_DUMP);
   if (kind === "wood") state.scars.trees += 1;
   if (kind === "farm") state.scars.fields += 1;
   if (kind === "gold") state.scars.pit += 1;
   if (kind === "hunt") state.scars.trails += 1;
-  return true;
+  return { kind, amount, xp };
 }
 
 export function nearestWork(team: Team, pos: Vec2, kind?: WorkKind | null, seed = 0) {
@@ -248,23 +422,20 @@ function wheatWantsFill(state: GameState, u: Unit) {
   return u.id === state.possessedId;
 }
 
-/** Fill at a node or dump at the keep. Returns a toast label on deposit or rank-up. */
-export function stepHaul(state: GameState, u: Unit, dt: number) {
+/** Fill at a node or dump at the keep. Returns XP/promotion when a load lands. */
+export function stepHaul(state: GameState, u: Unit, dt: number): HaulNote | null {
   if (u.lifeStage !== "gatherer") return null;
   const keep = keepPos(u.team);
   if ((u.carry ?? 0) >= LOAD_SIZE) {
     if (dist(u.pos, keep) <= KEEP_REACH) {
-      const kind = u.carryKind;
-      payDeposit(state, u);
+      const paid = payDeposit(state, u);
+      if (!paid) return null;
       const ranked = applyRank(u);
-      if (ranked) return `Promoted to ${UNIT_DEFS[u.kind].label}. The crown is yours.`;
-      if (u.canPromote) {
-        const t = u.trips ?? emptyTrips();
-        const next =
-          kind === "wood" ? `wood ${t.wood}/10` : kind ? `${kind} ${t[kind]}/5` : "five dumps";
-        return `Dumped ${kind ?? "load"}. ${next} takes the crown.`;
-      }
-      return `Dumped ${kind ?? "load"} at the keep.`;
+      return {
+        dump: paid.kind,
+        xp: paid.xp,
+        promoted: ranked ? UNIT_DEFS[u.kind].label : null,
+      };
     }
     return null;
   }

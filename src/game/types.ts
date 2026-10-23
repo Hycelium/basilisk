@@ -8,6 +8,35 @@ export type LifeStage = "gatherer" | "warrior" | "king";
 export type KingOrder = "gather" | "hold" | "hunt";
 export type KingController = "ai" | "player";
 export type WorkKind = "farm" | "hunt" | "gold" | "wood";
+export type ClanMomentKind = "promoted" | "crowned" | "dethroned";
+
+export interface ClanMoment {
+  kind: ClanMomentKind;
+  title: string;
+  detail: string;
+  life: number;
+}
+
+export interface ClanRankUi {
+  id: number;
+  rank: number;
+  name: string;
+  xp: number;
+  pct: number;
+  you: boolean;
+  king: boolean;
+  chosen: boolean;
+  role: string;
+  nextLabel: string;
+  nextPct: number;
+}
+
+export interface SkimPulse {
+  kind: WorkKind;
+  amount: number;
+  xp: number;
+  life: number;
+}
 export type Coffer = { gold: number; wood: number; food: number };
 export type TripCounts = { farm: number; hunt: number; gold: number; wood: number };
 export type BuildingKind = "watchtower" | "ballista" | "catapult" | "barracks" | "house" | "barricade";
@@ -101,6 +130,8 @@ export interface PossessedUi {
   label: string;
   hp: number;
   maxHp: number;
+  /** True while this body is standing in its own keep and still wounded. */
+  healing: boolean;
   /** Kills and keep/barricade hits while driving soldiers this match. */
   visionScore: number;
   visionMax: number;
@@ -135,6 +166,19 @@ export interface BasiliskUi {
   crownHint: string;
   /** Living gatherers on each job. */
   labor: TripCounts;
+  xp: number;
+  xpRank: number;
+  clanSize: number;
+  kingName: string;
+  kingXp: number;
+  promotionLabel: string;
+  promotionHave: number;
+  promotionNeed: number;
+  promotionPct: number;
+  ranks: ClanRankUi[];
+  skimLine: string;
+  lastSkim: string | null;
+  moment: ClanMoment | null;
 }
 
 export type WavePhase = "build" | "spawning" | "fighting";
@@ -335,6 +379,12 @@ export interface GameState {
   joinReady: Record<Team, boolean>;
   trickleTimer: number;
   kingId: Record<Team, number | null>;
+  /** Soul whose XP currently wears the crown (steward, chosen, or player). */
+  crownId: Record<Team, number | null>;
+  /** Sticky XP of the current crown, used so a tiny lead cannot flicker. */
+  kingScore: Record<Team, number>;
+  clanMoment: Record<Team, ClanMoment | null>;
+  lastSkim: Record<Team, SkimPulse | null>;
   kingController: Record<Team, KingController>;
   kingOrder: Record<Team, KingOrder>;
   kingTreasury: Record<Team, number>;

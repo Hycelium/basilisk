@@ -6,6 +6,7 @@ import type { BuildingKind, CombatEventKind, KingOrder, RectHit, Team, TrainKind
 import { BUILD_COST } from "./game/balance";
 import { Hud } from "./ui/Hud";
 import { KeepTugBar } from "./ui/KeepTugBar";
+import { ClanLadder } from "./ui/ClanLadder";
 import { LaborSteppers } from "./ui/LaborSteppers";
 import { BuildBar } from "./ui/BuildBar";
 import { DetailSheet } from "./ui/DetailSheet";
@@ -176,6 +177,7 @@ export default function App() {
     canvasRef.current?.requestPointerLock();
   }, []);
   const [clusterOpen, setClusterOpen] = useState(false);
+  const [clanXpOpen, setClanXpOpen] = useState(true);
   const [kingTables, setKingTables] = useState(() => {
     if (typeof window === "undefined") return true;
     const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
@@ -966,8 +968,10 @@ export default function App() {
   const compactBuild = layout.layout === "column" && layout.phone;
 
   const basiliskKing = !!ui.basilisk?.youAreKing && !ui.possessed;
-  const clusterActions: ClusterAction[] = [
-    {
+  const rtsCommands = !ui.basilisk || basiliskKing;
+  const clusterActions: ClusterAction[] = [];
+  if (rtsCommands) {
+    clusterActions.push({
       id: "recall",
       icon: "🔔",
       label: "Recall",
@@ -977,8 +981,18 @@ export default function App() {
         refreshUi();
         beep(620, 0.12);
       },
-    },
-  ];
+    });
+  }
+  if (ui.basilisk && ui.phase === "running") {
+    clusterActions.push({
+      id: "clan-xp",
+      icon: "♔",
+      label: clanXpOpen ? "Hide clan XP" : "Clan XP",
+      hint: "Show or hide the clan XP ranking",
+      active: clanXpOpen,
+      onPress: () => setClanXpOpen((open) => !open),
+    });
+  }
   if (basiliskKing) {
     clusterActions.push({
       id: "tables",
@@ -1003,43 +1017,45 @@ export default function App() {
       },
     });
   }
-  clusterActions.push(
-    {
-      id: "patrol",
-      icon: "⇄",
-      label: "Patrol",
-      hint: layout.touch
-        ? "Then tap a destination. They walk the route and fight nearby."
-        : "Then right-click a destination (P). They walk the route and fight nearby.",
-      disabled: ui.selectedPeonCount === 0,
-      active: patrolMode,
-      onPress: () => setPatrol(!patrolModeRef.current),
-    },
-    {
-      id: "barricade",
-      icon: "🪵",
-      label: "Barricade",
-      hint: "Build a barricade across a road",
-      active: ui.buildSelection === "barricade",
-      disabled: ui.phase !== "running",
-      onPress: () => {
-        if (sim.getState().buildSelection === "barricade") sim.cancelSelection();
-        else sim.selectBuild("barricade");
-        refreshUi();
-        beep(280);
+  if (rtsCommands) {
+    clusterActions.push(
+      {
+        id: "patrol",
+        icon: "⇄",
+        label: "Patrol",
+        hint: layout.touch
+          ? "Then tap a destination. They walk the route and fight nearby."
+          : "Then right-click a destination (P). They walk the route and fight nearby.",
+        disabled: ui.selectedPeonCount === 0,
+        active: patrolMode,
+        onPress: () => setPatrol(!patrolModeRef.current),
       },
-    },
-    {
-      id: "reset-cam",
-      icon: "⟲",
-      label: "Reset view",
-      hint: "Reset camera (R)",
-      onPress: () => {
-        rendererRef.current?.resetCamera();
-        setZoomT(rendererRef.current?.getZoomT() ?? 0.4);
+      {
+        id: "barricade",
+        icon: "🪵",
+        label: "Barricade",
+        hint: "Build a barricade across a road",
+        active: ui.buildSelection === "barricade",
+        disabled: ui.phase !== "running",
+        onPress: () => {
+          if (sim.getState().buildSelection === "barricade") sim.cancelSelection();
+          else sim.selectBuild("barricade");
+          refreshUi();
+          beep(280);
+        },
       },
+    );
+  }
+  clusterActions.push({
+    id: "reset-cam",
+    icon: "⟲",
+    label: "Reset view",
+    hint: "Reset camera (R)",
+    onPress: () => {
+      rendererRef.current?.resetCamera();
+      setZoomT(rendererRef.current?.getZoomT() ?? 0.4);
     },
-  );
+  });
   if (fsSupported) {
     clusterActions.push({
       id: "fullscreen",
@@ -1214,13 +1230,28 @@ export default function App() {
         <div className={sheetOpen ? "stage sheet-open" : "stage"} ref={stageRef}>
           <canvas ref={canvasRef} className={ui.possessed ? "battlefield possessed" : "battlefield"} />
           {ui.basilisk && ui.phase === "running" && <KeepTugBar ui={ui} />}
+          {ui.basilisk && ui.phase === "running" && <ClanLadder ui={ui} open={clanXpOpen} />}
           {ui.possessed && (
             <div className={`fps-hud${ui.possessed.kind === "trebuchet" ? " treb-hud" : ""}`}>
               <span className="fps-crosshair" aria-hidden />
+              <div
+                className={`fps-hp${ui.possessed.hp / Math.max(1, ui.possessed.maxHp) <= 0.35 ? " low" : ""}${ui.possessed.healing ? " healing" : ""}`}
+                role="meter"
+                aria-label="Hit points"
+                aria-valuemin={0}
+                aria-valuemax={Math.ceil(ui.possessed.maxHp)}
+                aria-valuenow={ui.possessed.hp}
+              >
+                <i style={{ width: `${Math.max(0, Math.min(1, ui.possessed.hp / Math.max(1, ui.possessed.maxHp))) * 100}%` }} />
+                <span>
+                  {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)}
+                  {ui.possessed.healing ? " · Healing" : ""}
+                </span>
+              </div>
               {ui.possessed.kind === "trebuchet" ? (
                 <>
                   <p className="fps-banner">
-                    {ui.possessed.label} · {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)}
+                    {ui.possessed.label}
                     {ui.possessed.aimLabel ? ` · ${ui.possessed.aimLabel}` : " · look at a tower, then click to wind"}
                   </p>
                   <div className="fps-charge">
@@ -1230,7 +1261,7 @@ export default function App() {
                 </>
               ) : (
                 <p className="fps-banner">
-                  {ui.possessed.label} · {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)} · vision{" "}
+                  {ui.possessed.label} · vision{" "}
                   {Math.min(ui.possessed.visionMax, Math.floor(ui.possessed.visionScore))}/{ui.possessed.visionMax}
                   {layout.fpsTouch
                     ? " · left stick · drag right to look"
@@ -1392,7 +1423,7 @@ export default function App() {
               onDismiss={dismissRadial}
             />
           )}
-          {ui.phase === "running" && (!ui.basilisk || basiliskKing) && (
+          {ui.phase === "running" && (
           <div className="banner-rail">
             {ui.idlePeonCount > 0 && (!ui.basilisk || basiliskKing) && (
               <button
