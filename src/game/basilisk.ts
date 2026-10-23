@@ -1,7 +1,7 @@
-import { UNIT_DEFS, VILLAGER_HP, VILLAGER_SPEED, PEON_DAMAGE } from "./balance";
-import { allWorkSites, BASILISK_SEED, chokePoints, type WorkKind } from "./basiliskMap";
-import { keepPos } from "./map";
-import type { GameState, KingController, KingOrder, Team, Unit, UnitKind, Vec2, Villager, WaveSpec } from "./types";
+import { UNIT_DEFS, VILLAGER_HP, VILLAGER_SPEED, PEON_DAMAGE, WORLD_H } from "./balance";
+import { chokePoints, deerSpots, type WorkKind } from "./basiliskMap";
+import { getMap, keepPos } from "./map";
+import type { GameState, KingController, KingOrder, MapId, Team, Unit, UnitKind, Vec2, Villager, WaveSpec } from "./types";
 import { farmPlots, wheatPatchAt } from "./wheat";
 
 export const BASILISK_START_EACH = 8;
@@ -214,17 +214,21 @@ export function payDeposit(state: GameState, u: Unit) {
   return true;
 }
 
-export function nearestWork(team: Team, pos: Vec2, kind?: WorkKind | null, seed = BASILISK_SEED) {
+export function nearestWork(team: Team, pos: Vec2, kind?: WorkKind | null, seed = 0) {
   const plots = farmPlots(seed, team);
-  const useWheat = plots.length > 0;
   const sites: { kind: WorkKind; pos: Vec2 }[] = [];
-  for (const site of allWorkSites(team)) {
-    if (kind && site.kind !== kind) continue;
-    if (site.kind === "farm" && useWheat) continue;
-    sites.push(site);
-  }
-  if (useWheat && (!kind || kind === "farm")) {
+  if (!kind || kind === "farm") {
     for (const p of plots) sites.push({ kind: "farm", pos: { x: p.x, y: p.y } });
+  }
+  if (!kind || kind === "hunt") {
+    for (const spot of deerSpots(team, seed)) sites.push({ kind: "hunt", pos: spot });
+  }
+  const map = getMap(`seed-${seed >>> 0}` as MapId);
+  const south = team === "you";
+  for (const n of map.nodes) {
+    const at = { x: n.x, y: south ? n.yourY : WORLD_H - n.yourY };
+    if (n.kind === "copper" && (!kind || kind === "gold")) sites.push({ kind: "gold", pos: at });
+    if (n.kind === "pine" && (!kind || kind === "wood")) sites.push({ kind: "wood", pos: at });
   }
   let best = sites[0] ?? null;
   let bestD = Infinity;
@@ -278,7 +282,7 @@ export function stepHaul(state: GameState, u: Unit, dt: number) {
   return null;
 }
 
-export function haulDestination(u: Unit, seed = BASILISK_SEED): Vec2 | null {
+export function haulDestination(u: Unit, seed = 0): Vec2 | null {
   if (u.lifeStage !== "gatherer") return null;
   if ((u.carry ?? 0) >= LOAD_SIZE) return keepPos(u.team);
   const onGrain =
@@ -294,9 +298,9 @@ export function orderTarget(state: GameState, u: Unit): Vec2 | null {
   if (u.lifeStage === "gatherer") return haulDestination(u, state.mapSeed);
   const order = state.kingOrder[u.team];
   if (order === "gather") return keepPos(u.team);
-  const chokes = chokePoints();
-  if (order === "hold") return chokes[u.id % chokes.length] ?? chokes[1]!;
-  let best = chokes[1]!;
+  const chokes = chokePoints(state.mapSeed);
+  if (order === "hold") return chokes[u.id % Math.max(1, chokes.length)] ?? chokes[0]!;
+  let best = chokes[0]!;
   let bestD = Infinity;
   for (const e of state.units) {
     if (e.team === u.team || e.hp <= 0) continue;

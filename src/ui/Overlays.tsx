@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { basiliskMap } from "../game/basiliskMap";
+import { laneCount } from "../game/map";
 import type { Team, UiSnapshot } from "../game/types";
 import { MapPreview } from "./MapPreview";
 
@@ -73,12 +73,14 @@ export function Overlays({
   onRestart,
   onReturnToMap,
   onMarchAgain,
+  onRerollMap,
   onPickJoinClan,
   onRejoin,
 }: OverlaysProps) {
   const [shareNote, setShareNote] = useState("");
   const [clan, setClan] = useState<Team>("you");
   const playerRecord = `Your record · ${ui.playerWins}W / ${ui.playerLosses}L`;
+  const roads = laneCount(ui.mapSeed);
 
   useEffect(() => {
     if (!shareNote) return;
@@ -103,10 +105,18 @@ export function Overlays({
           <p className="foe-brain-tease">{playerRecord}</p>
 
           <div className="map-card selected map-brief">
-            <strong>{basiliskMap().name}</strong>
-            <span>{basiliskMap().tagline}</span>
-            <MapPreview seed={basiliskMap().seed} />
+            <strong>{ui.mapName}</strong>
+            <span>{ui.mapTagline}</span>
+            <span className="map-meta">
+              {ui.scoutSalt > 0 ? `Scout ${ui.scoutSalt} · ` : ""}
+              {roads === 1 ? "1 road" : `${roads} roads`} · seed {ui.mapSeed}
+            </span>
+            <MapPreview seed={ui.mapSeed} />
           </div>
+
+          <button type="button" className="ghost reroll-btn" onClick={onRerollMap}>
+            Scout new terrain
+          </button>
 
           <div className="clan-pick" role="group" aria-label="Clan">
             <button type="button" className={clan === "you" ? "cta" : "ghost"} onClick={() => setClan("you")}>

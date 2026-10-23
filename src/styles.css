@@ -2145,72 +2145,127 @@ button:disabled {
 
 .keep-tug {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 14px;
+  top: 10px;
+  left: 18px;
+  right: 18px;
   z-index: 12;
   display: flex;
+  align-items: center;
+  gap: 10px;
   pointer-events: none;
-  overflow: hidden;
 }
 
-.keep-tug-half {
+.keep-tug-side {
   position: relative;
   flex: 1;
   display: flex;
-  align-items: stretch;
-  background: rgba(8, 6, 10, 0.45);
+  align-items: center;
+  min-width: 0;
+  height: 22px;
 }
 
-.keep-tug-half.you {
+.keep-tug-track {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(10, 8, 12, 0.62);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  display: flex;
+  overflow: hidden;
+}
+
+.keep-tug-side.you .keep-tug-track {
   justify-content: flex-end;
 }
 
-.keep-tug-half.foe {
+.keep-tug-side.foe .keep-tug-track {
   justify-content: flex-start;
 }
 
-.keep-tug-half i {
+.keep-tug-track i {
   display: block;
   height: 100%;
+  border-radius: 999px;
   transition: width 0.18s linear;
 }
 
-.keep-tug-half.you i {
-  background: linear-gradient(90deg, #1d5cb8, #5eb0ff);
-  box-shadow: 0 0 10px rgba(70, 150, 255, 0.45);
+.keep-tug-side.you i {
+  background: linear-gradient(90deg, #f0c14b, #ffe29a);
+  box-shadow: 0 0 10px rgba(240, 193, 75, 0.45);
 }
 
-.keep-tug-half.foe i {
-  background: linear-gradient(90deg, #ff6a58, #b41818);
+.keep-tug-side.foe i {
+  background: linear-gradient(90deg, #ff6a58, #c42222);
   box-shadow: 0 0 10px rgba(255, 70, 50, 0.4);
 }
 
-.keep-tug-half span {
+.keep-tug-side em,
+.keep-tug-side small {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
+  top: -13px;
+  font-style: normal;
   font-size: 10px;
-  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   color: #f4efe4;
-  text-shadow: 0 1px 2px #000;
-  pointer-events: none;
+  text-shadow: 0 1px 3px #000;
+  white-space: nowrap;
 }
 
-.keep-tug-half.you span {
-  left: 8px;
+.keep-tug-side.you em {
+  left: 2px;
 }
 
-.keep-tug-half.foe span {
-  right: 8px;
+.keep-tug-side.you small {
+  right: 4px;
+  letter-spacing: 0.08em;
+  color: #e2bc72;
+}
+
+.keep-tug-side.foe em {
+  right: 2px;
+}
+
+.keep-tug-badge {
+  flex: 0 0 46px;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #f3eee4;
+  color: #1b1510;
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  box-shadow:
+    0 0 0 3px rgba(18, 12, 10, 0.85),
+    0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
+.is-phone .keep-tug,
+.is-fps-touch .keep-tug {
+  top: 8px;
+  left: 10px;
+  right: 10px;
+  gap: 6px;
+}
+
+.is-phone .keep-tug-badge,
+.is-fps-touch .keep-tug-badge {
+  flex-basis: 38px;
+  width: 38px;
+  height: 38px;
+  font-size: 13px;
 }
 
 .stage:has(.keep-tug) .toasts,
 .stage:has(.keep-tug) .hint-toast {
-  top: 22px;
+  top: 54px;
+}
+
+.stage:has(.keep-tug) .leave-body {
+  top: 58px;
 }
 
 .king-orders strong {

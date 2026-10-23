@@ -1,5 +1,5 @@
 import { COPPER_REGEN, PINE_REGEN, ROAD_X, WORLD_H, WORLD_W } from "./balance";
-import { basiliskMap, isBasiliskSeed, SPINE_Y } from "./basiliskMap";
+import { isBasiliskSeed, SPINE_Y } from "./basiliskMap";
 import type { Lane, LaneCount, MapDef, MapId, Pad, ResourceNode, ResourceKind, Team } from "./types";
 
 /** Deterministic RNG (mulberry32). */
@@ -187,7 +187,6 @@ function tooClose(
 }
 
 export function generateMap(seed: number): MapDef {
-  if (isBasiliskSeed(seed)) return basiliskMap();
   const rng = rngFromSeed(seed);
   const adj = pick(rng, ADJECTIVES);
   const noun = pick(rng, NOUNS);

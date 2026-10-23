@@ -1189,7 +1189,7 @@ export class GameRenderer {
     }
     this.torchLights = [];
     const seed = this.hashMapSeed(state.mapId);
-    this.worldGroup.add(buildTerrain(seed));
+    this.worldGroup.add(buildTerrain(seed, state.basilisk));
     this.worldGroup.add(buildScenery(seed));
     this.scarTrees = [];
     this.scarFields = [];

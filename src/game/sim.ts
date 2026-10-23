@@ -82,6 +82,7 @@ import {
   buildNodes,
   buildPads,
   generateMap,
+  getMap,
   getOrCreateCampaignMap,
   keepPos,
   laneName,
@@ -123,6 +124,7 @@ import type {
   GameState,
   Lane,
   MapDef,
+  MapId,
   Pad,
   RectHit,
   ResourceNode,
@@ -169,7 +171,7 @@ import {
   stepHaul,
   visionFromLife,
 } from "./basilisk";
-import { allWorkSites, basiliskMap, isBasiliskSeed, WORK_LABEL } from "./basiliskMap";
+import { basiliskMap, deerSpots, isBasiliskSeed, setValleySeed, WORK_LABEL } from "./basiliskMap";
 import { wheatPatchAt } from "./wheat";
 
 function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
@@ -242,6 +244,7 @@ export class GameSim {
   constructor() {
     const meta = loadMeta();
     this.activeMap = getOrCreateCampaignMap(meta.level, meta.scoutSalt);
+    setValleySeed(this.activeMap.seed);
     this.state = this.makeFreshState(this.activeMap);
   }
 
@@ -450,7 +453,8 @@ export class GameSim {
     this.state.mapSeed = map.seed;
     this.state.pads = buildPads(map);
     this.state.nodes = buildNodes(map);
-    this.state.basilisk = isBasiliskSeed(map.seed);
+    this.state.basilisk = this.state.basilisk || isBasiliskSeed(map.seed);
+    setValleySeed(map.seed);
     this.shownMap = { id: map.id, name: map.name, tagline: map.tagline, seed: map.seed };
   }
 
@@ -622,6 +626,7 @@ export class GameSim {
   reloadCampaignMap() {
     const meta = loadMeta();
     this.activeMap = getOrCreateCampaignMap(meta.level, meta.scoutSalt);
+    setValleySeed(this.activeMap.seed);
     this.nextId = 1;
     this.aiTimer = 0;
     this.aiRushDeadline = 0;
@@ -737,8 +742,10 @@ export class GameSim {
     this.remoteKeys = { w: false, a: false, s: false, d: false };
     this.remoteYaw = Math.PI;
     this.remoteStrike = false;
-    const map = basiliskMap();
+    const meta = loadMeta();
+    const map = getOrCreateCampaignMap(meta.level, meta.scoutSalt);
     this.activeMap = map;
+    setValleySeed(map.seed);
     this.nextId = 1;
     this.aiTimer = 0;
     this.aiRushDeadline = 0;
@@ -1041,12 +1048,14 @@ export class GameSim {
     if (this.matchMode !== "pvp") return false;
     if (role === "guest" && this.localTeam !== "foe") return false;
     if (role === "host" && this.localTeam !== "you") return false;
-    const map = mapId === basiliskMap().id ? basiliskMap() : skirmishMap(mapId);
+    const map =
+      getMap(mapId as MapId) ??
+      (mapId === basiliskMap().id ? basiliskMap() : skirmishMap(mapId));
     if (!map) return false;
     const team = this.localTeam;
     const soundOn = this.state.soundOn;
     const audioUnlocked = this.state.audioUnlocked;
-    if (isBasiliskSeed(map.seed)) {
+    if (this.state.basilisk || isBasiliskSeed(map.seed)) {
       if (role === "host") {
         this.startBasilisk("you", "pvp");
         this.state.soundOn = soundOn;
@@ -1063,7 +1072,7 @@ export class GameSim {
       }
       this.localTeam = team;
       this.state.commandTeam = team;
-      this.addToast("Skirmish — Twin Valleys.");
+      this.addToast(`Skirmish — ${map.name}.`);
       return true;
     }
     this.activeMap = map;
@@ -5261,7 +5270,8 @@ export class GameSim {
     const mapChanged = snap.mapId !== s.mapId;
     if (mapChanged) {
       const layout =
-        snap.mapId === basiliskMap().id || isBasiliskSeed(snap.mapSeed) ? basiliskMap() : skirmishMap(snap.mapId);
+        getMap(snap.mapId) ??
+        (snap.mapId === basiliskMap().id || isBasiliskSeed(snap.mapSeed) ? basiliskMap() : skirmishMap(snap.mapId));
       if (layout) {
         this.activeMap = layout;
         s.nodes = buildNodes(layout);
@@ -5753,10 +5763,9 @@ export function hitTest(s: GameState, x: number, y: number): RectHit | null {
     if (wheatPatchAt(s.mapSeed, { x, y })) return { kind: "work", id: "farm" };
     let best: { kind: "farm" | "hunt" | "gold" | "wood"; d: number } | null = null;
     for (const team of ["you", "foe"] as const) {
-      for (const site of allWorkSites(team)) {
-        if (site.kind === "farm") continue;
-        const d = dist({ x, y }, site.pos);
-        if (d < 32 && (!best || d < best.d)) best = { kind: site.kind, d };
+      for (const spot of deerSpots(team, s.mapSeed)) {
+        const d = dist({ x, y }, spot);
+        if (d < 32 && (!best || d < best.d)) best = { kind: "hunt", d };
       }
     }
     if (best) return { kind: "work", id: best.kind };

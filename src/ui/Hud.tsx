@@ -82,7 +82,7 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
                 <span className="value">{realm.crownHint}</span>
               </div>
             )}
-            {!compact && (
+            {!compact && !realm && (
               <>
                 <div className="stat lives">
                   <span className="label">HP</span>

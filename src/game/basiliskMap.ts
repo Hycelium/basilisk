@@ -1,4 +1,5 @@
 import { WORLD_H, WORLD_W } from "./balance";
+import { mapBounds, mapLanes, riverSpec, roadCenterX } from "./map";
 import type { LaneCount, MapDef, MapId, Team, Vec2 } from "./types";
 
 export const BASILISK_SEED = 884410;
@@ -6,6 +7,16 @@ export const SPINE_Y = WORLD_H / 2;
 export const FORD_X = [118, 200, 282] as const;
 
 export type WorkKind = "farm" | "hunt" | "gold" | "wood";
+
+let valleySeed = BASILISK_SEED;
+
+export function currentValleySeed() {
+  return valleySeed;
+}
+
+export function setValleySeed(seed: number) {
+  valleySeed = seed >>> 0 || BASILISK_SEED;
+}
 
 export function isBasiliskSeed(seed: number) {
   return seed === BASILISK_SEED;
@@ -37,16 +48,19 @@ export function basiliskMap(): MapDef {
   };
 }
 
-export function chokePoints(): Vec2[] {
-  return FORD_X.map((x) => ({ x, y: SPINE_Y }));
+export function chokePoints(seed = currentValleySeed()): Vec2[] {
+  if (isBasiliskSeed(seed)) return FORD_X.map((x) => ({ x, y: SPINE_Y }));
+  const river = riverSpec(seed);
+  const y = river.enabled ? river.y : SPINE_Y;
+  return mapLanes(seed).map((lane) => ({ x: roadCenterX(seed, lane, y), y }));
 }
 
-export function deerSpots(team: Team): Vec2[] {
-  const south = team === "you";
-  const y = south ? 716 : 4;
+export function deerSpots(team: Team, seed = currentValleySeed()): Vec2[] {
+  const { minX, maxX } = mapBounds(seed);
+  const y = team === "you" ? 716 : 4;
   return [
-    { x: 22, y },
-    { x: 378, y },
+    { x: minX + 22, y },
+    { x: maxX - 22, y },
   ];
 }
 

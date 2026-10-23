@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { isBasiliskSeed } from "./basiliskMap";
 
 /** Ground styles rotated per map seed. Textures: Poly Haven (CC0). */
 export interface GroundLook {
@@ -15,11 +16,16 @@ export const GROUND_LOOKS: GroundLook[] = [
   { name: "Leafy meadow", ground: "leafy_grass", tint: false, road: "gravel_road", wheat: false },
 ];
 
-/** `?look=0|1|2` pins a style for previewing; otherwise it follows the map seed. */
+/** `?look=0|1|2` pins a style for previewing; otherwise it follows the map seed.
+ *  Hashed separately from road count (`seed % 3`) so 1- and 3-road maps are not stuck
+ *  on the textured looks that can upload black. */
 export function groundLookForSeed(seed: number) {
   const pinned = Number(new URLSearchParams(location.search).get("look"));
   if (Number.isInteger(pinned) && GROUND_LOOKS[pinned] && location.search.includes("look=")) return GROUND_LOOKS[pinned];
-  return GROUND_LOOKS[(seed >>> 0) % GROUND_LOOKS.length];
+  if (isBasiliskSeed(seed)) return GROUND_LOOKS[0];
+  let h = (seed >>> 0) ^ 0x5bd1e995;
+  h = Math.imul(h ^ (h >>> 13), 0x45d9f3b);
+  return GROUND_LOOKS[(h >>> 0) % GROUND_LOOKS.length];
 }
 
 const loader = new THREE.ImageLoader();
@@ -32,6 +38,9 @@ export function groundTexture(name: string) {
   if (t) return t;
   const c = document.createElement("canvas");
   c.width = c.height = 1024;
+  const g = c.getContext("2d")!;
+  g.fillStyle = name.includes("leaf") ? "#5a6a32" : name.includes("wither") ? "#8a7a38" : "#7a6a38";
+  g.fillRect(0, 0, 1024, 1024);
   t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;

@@ -102,7 +102,7 @@ function sampleGround(simX: number, simY: number, seed: number, river: ReturnTyp
 }
 
 /** High-poly displaced battlefield; ground look (painted / textured, wheat patches) rotates per seed. */
-export function buildTerrain(seed: number) {
+export function buildTerrain(seed: number, alwaysWheat = false) {
   const g = new THREE.Group();
   const river = riverSpec(seed);
   const look = groundLookForSeed(seed);
@@ -170,7 +170,7 @@ export function buildTerrain(seed: number) {
   ground.castShadow = false;
   g.add(ground);
 
-  if (look.wheat || isBasiliskSeed(seed)) g.add(buildWheatPatches(seed, river));
+  if (look.wheat || alwaysWheat || isBasiliskSeed(seed)) g.add(buildWheatPatches(seed, river));
   if (isBasiliskSeed(seed)) g.add(buildBasiliskFords(seed, river));
 
   // River ribbon first; roads cross it on timber/stone bridges.
@@ -286,7 +286,7 @@ function buildBasiliskFords(seed: number, river: ReturnType<typeof riverSpec>) {
   const hide = new THREE.MeshStandardMaterial({ color: 0x6b4a28, roughness: 0.9 });
   const antler = new THREE.MeshStandardMaterial({ color: 0xd8c49a, roughness: 0.7 });
   for (const team of ["you", "foe"] as const) {
-    for (const spot of deerSpots(team)) {
+    for (const spot of deerSpots(team, seed)) {
       const deer = new THREE.Group();
       const body = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.2, 5.4), hide);
       body.position.y = 2.4;

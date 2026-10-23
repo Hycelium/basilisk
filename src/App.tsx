@@ -1213,9 +1213,7 @@ export default function App() {
 
         <div className={sheetOpen ? "stage sheet-open" : "stage"} ref={stageRef}>
           <canvas ref={canvasRef} className={ui.possessed ? "battlefield possessed" : "battlefield"} />
-          {ui.basilisk && ui.phase === "running" && (compactHud || layout.fpsTouch) && (
-            <KeepTugBar ui={ui} />
-          )}
+          {ui.basilisk && ui.phase === "running" && <KeepTugBar ui={ui} />}
           {ui.possessed && (
             <div className={`fps-hud${ui.possessed.kind === "trebuchet" ? " treb-hud" : ""}`}>
               <span className="fps-crosshair" aria-hidden />
