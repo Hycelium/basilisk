@@ -3806,7 +3806,6 @@ export class GameSim {
     const hall = [...bars].sort((a, b) => a.queue.length - b.queue.length)[0];
     if (!hall) return false;
     for (const kind of candidates) {
-      const def = UNIT_DEFS[kind];
       const cost = trainResCost(kind);
       if (this.canAfford(team, cost)) return this.enqueueTrainAt(team, kind, hall.id);
     }
