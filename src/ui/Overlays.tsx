@@ -104,6 +104,7 @@ export function Overlays({
           <h1>Basilisk</h1>
           <p className="keep-lvl">Twin valleys · one life at a time</p>
           <p>Most peons only haul. A few chosen can promote. An AI king already holds the keep.</p>
+          <p className="phone-controls-tip">On a phone: left stick walks, drag the right side to look, Fire to strike.</p>
 
           <div className="clan-pick" role="group" aria-label="Clan">
             <button type="button" className={clan === "you" ? "cta" : "ghost"} onClick={() => setClan("you")}>

@@ -156,6 +156,33 @@ button:disabled {
   border-top: 1px solid var(--panel-edge);
 }
 
+/* First-person on a phone: the valley fills the screen; HUD floats over it. */
+.layout-column.is-fps-touch:has(.touch-fps) .hud {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 7;
+  max-height: 34%;
+  overflow: auto;
+  background: linear-gradient(180deg, rgba(12, 10, 8, 0.82), rgba(12, 10, 8, 0.2));
+  pointer-events: none;
+}
+
+.layout-column.is-fps-touch:has(.touch-fps) .hud-controls {
+  pointer-events: auto;
+}
+
+.layout-column.is-fps-touch:has(.touch-fps) .stage {
+  order: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.layout-column.is-fps-touch:has(.touch-fps) .build-wrap {
+  display: none;
+}
+
 .layout-column .battlefield {
   border-radius: 0;
   border-left: 0;
@@ -1994,6 +2021,129 @@ button:disabled {
   padding: 6px 10px;
   font-size: 13px;
   pointer-events: auto;
+}
+
+.phone-controls-tip {
+  display: none;
+  color: #e2bc72;
+  font-size: 14px;
+  margin: 8px 0 0;
+}
+
+.is-phone .phone-controls-tip,
+.is-android .phone-controls-tip,
+.is-fps-touch .phone-controls-tip {
+  display: block;
+}
+
+.touch-fps {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.touch-look {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 58%;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch-move {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 42%;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch-stick {
+  position: absolute;
+  left: calc(28px + var(--sal));
+  bottom: calc(36px + var(--sab));
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  border: 2px solid rgba(226, 188, 114, 0.55);
+  background: rgba(12, 8, 6, 0.38);
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+.touch-stick.live {
+  bottom: auto;
+  background: rgba(12, 8, 6, 0.55);
+  border-color: rgba(255, 220, 150, 0.9);
+}
+
+.touch-stick-nub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  margin: -27px 0 0 -27px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f0d9a0, #8a6230 70%);
+  border: 2px solid rgba(255, 236, 190, 0.85);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+}
+
+.touch-stick-hint {
+  position: absolute;
+  left: calc(28px + var(--sal));
+  bottom: calc(8px + var(--sab));
+  color: rgba(243, 226, 192, 0.7);
+  font: 600 11px/1 "Trebuchet MS", sans-serif;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.touch-fire {
+  position: absolute;
+  right: calc(22px + var(--sar));
+  bottom: calc(36px + var(--sab));
+  width: 86px;
+  height: 86px;
+  border-radius: 50%;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 9;
+  background: radial-gradient(circle at 35% 30%, #c45a4a, #6a2218 72%);
+  border: 3px solid rgba(255, 210, 170, 0.85);
+  color: #fff4e4;
+  font: 700 14px/1 Cinzel, Palatino, serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.5);
+}
+
+.touch-fire:active {
+  transform: scale(0.94);
+}
+
+.touch-leave {
+  top: calc(12px + var(--sat));
+  right: calc(12px + var(--sar));
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.is-fps-touch .fps-banner {
+  top: calc(10px + var(--sat));
+  max-width: min(70%, 420px);
+  left: 12px;
+  transform: none;
+  white-space: normal;
+  font-size: 11px;
 }
 
 .king-orders button.active {

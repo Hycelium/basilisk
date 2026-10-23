@@ -9,13 +9,37 @@ export interface LayoutInfo {
   phone: boolean;
   /** Primary pointer is coarse (finger) or the device reports touch points. */
   touch: boolean;
+  /** Android phone or tablet (user agent). */
+  android: boolean;
+  /** Show PUBG-style walk/look/fire instead of WASD + mouse lock. */
+  fpsTouch: boolean;
   width: number;
   height: number;
 }
 
+function detectAndroid() {
+  if (typeof navigator === "undefined") return false;
+  if (/Android/i.test(navigator.userAgent)) return true;
+  const data = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
+  return !!data?.platform && /android/i.test(data.platform);
+}
+
+function detectIphone() {
+  if (typeof navigator === "undefined") return false;
+  return /iPhone|iPod/i.test(navigator.userAgent);
+}
+
 function compute(): LayoutInfo {
   if (typeof window === "undefined") {
-    return { layout: "column", phone: false, touch: false, width: 480, height: 800 };
+    return {
+      layout: "column",
+      phone: false,
+      touch: false,
+      android: false,
+      fpsTouch: false,
+      width: 480,
+      height: 800,
+    };
   }
   const width = window.innerWidth;
   const height = window.innerHeight;
@@ -23,7 +47,9 @@ function compute(): LayoutInfo {
   const layout: LayoutMode = landscape && width >= 640 ? "side" : "column";
   const phone = Math.min(width, height) < 600;
   const touch = (window.matchMedia?.("(pointer: coarse)").matches ?? false) || navigator.maxTouchPoints > 0;
-  return { layout, phone, touch, width, height };
+  const android = detectAndroid();
+  const fpsTouch = android || detectIphone() || (phone && touch);
+  return { layout, phone, touch, android, fpsTouch, width, height };
 }
 
 /** Viewport-driven layout + input-capability info, re-evaluated on resize/orientation/pointer changes. */
@@ -36,6 +62,8 @@ export function useLayout(): LayoutInfo {
         prev.layout === next.layout &&
         prev.phone === next.phone &&
         prev.touch === next.touch &&
+        prev.android === next.android &&
+        prev.fpsTouch === next.fpsTouch &&
         prev.width === next.width &&
         prev.height === next.height
           ? prev

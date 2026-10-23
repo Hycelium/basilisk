@@ -1049,6 +1049,11 @@ export class GameSim {
     this.sendDrive(true);
   }
 
+  setPossessMove(keys: { w: boolean; a: boolean; s: boolean; d: boolean }) {
+    this.possessKeys = { ...keys };
+    this.sendDrive(true);
+  }
+
   private sendDrive(force: boolean) {
     if (!this.orderSink || this.applyingRemote) return;
     if (!this.state.basilisk || this.state.possessedId == null) return;

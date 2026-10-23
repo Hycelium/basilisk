@@ -522,9 +522,14 @@ export class GameRenderer {
     this.applyCamera();
   }
 
-  lookBy(dx: number, dy: number) {
-    this.fpsYaw -= dx * 0.0024;
-    this.fpsPitch = THREE.MathUtils.clamp(this.fpsPitch - dy * 0.0022, -1.15, 1.1);
+  lookBy(dx: number, dy: number, scale = 1) {
+    this.fpsYaw -= dx * 0.0024 * scale;
+    this.fpsPitch = THREE.MathUtils.clamp(this.fpsPitch - dy * 0.0022 * scale, -1.15, 1.1);
+  }
+
+  ensurePossess(yaw: number, siege = false) {
+    if (this.fpsLive) return;
+    this.enterPossess(yaw, siege);
   }
 
   getFpsYaw() {

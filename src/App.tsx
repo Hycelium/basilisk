@@ -13,6 +13,7 @@ import { ControlCluster, type ClusterAction } from "./ui/ControlCluster";
 import { RadialMenu, type RadialItem } from "./ui/RadialMenu";
 import { useHints } from "./ui/hints";
 import { useLayout } from "./ui/useLayout";
+import { TouchFpsPad } from "./ui/TouchFpsPad";
 import { basiliskMap } from "./game/basiliskMap";
 import { useSkirmish } from "./net/useSkirmish";
 import { SkirmishEnd, SkirmishLobby } from "./ui/SkirmishLobby";
@@ -158,6 +159,15 @@ export default function App() {
   const layout = useLayout();
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+  const lockWantedRef = useRef(false);
+  const grabPointerLock = useCallback(() => {
+    if (layoutRef.current.fpsTouch) {
+      lockWantedRef.current = false;
+      return;
+    }
+    lockWantedRef.current = true;
+    canvasRef.current?.requestPointerLock();
+  }, []);
   const [clusterOpen, setClusterOpen] = useState(false);
   const [touchDrag, setTouchDrag] = useState<TouchDragMode>(() => {
     try {
@@ -373,9 +383,13 @@ export default function App() {
       else if (hosting && document.hidden) sim.stepMatch(elapsed, true);
       else sim.update(Math.min(0.05, elapsed));
       const gameState = sim.getState();
-      if (!gameState.possessedId && document.pointerLockElement === canvas) document.exitPointerLock();
-      if (gameState.basilisk && gameState.possessedId != null && document.pointerLockElement !== canvas) {
-        renderer.enterPossess(sim.getPossessYaw(), false);
+      if (!gameState.possessedId && document.pointerLockElement === canvas) {
+        lockWantedRef.current = false;
+        document.exitPointerLock();
+      }
+      if (gameState.possessedId != null) {
+        const body = gameState.units.find((u) => u.id === gameState.possessedId);
+        renderer.ensurePossess(sim.getPossessYaw(), body?.kind === "trebuchet");
       }
       const home = sim.getLocalTeam();
       if (renderer.getHomeSide() !== home) renderer.setHomeSide(home);
@@ -425,6 +439,10 @@ export default function App() {
       const r = rendererRef.current;
       if (!r) return;
       if (document.pointerLockElement === canvas) {
+        ev.preventDefault();
+        return;
+      }
+      if (sim.getState().possessedId != null && layoutRef.current.fpsTouch) {
         ev.preventDefault();
         return;
       }
@@ -568,7 +586,7 @@ export default function App() {
         if (!kingPickingPeon && sim.tryPossess(Number(hit.id))) {
           const body = sim.getState().units.find((u) => u.id === Number(hit.id));
           r.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
-          canvas.requestPointerLock();
+          grabPointerLock();
           refreshUi();
           beep(360, 0.08);
           return;
@@ -720,6 +738,7 @@ export default function App() {
       }
       if (possessed && ev.key === "Escape") {
         ev.preventDefault();
+        lockWantedRef.current = false;
         sim.releasePossess("esc");
         document.exitPointerLock();
         refreshUi();
@@ -802,6 +821,8 @@ export default function App() {
     };
     const onLock = () => {
       if (document.pointerLockElement != null) return;
+      if (!lockWantedRef.current) return;
+      lockWantedRef.current = false;
       if (!sim.getState().basilisk || sim.getState().possessedId == null) return;
       sim.releasePossess("esc");
       refreshUi();
@@ -827,6 +848,8 @@ export default function App() {
     };
     const onLockChange = () => {
       if (document.pointerLockElement === canvasRef.current) return;
+      if (!lockWantedRef.current) return;
+      lockWantedRef.current = false;
       if (sim.getState().possessedId == null) return;
       sim.releasePossess("esc");
       setUi(sim.getUiSnapshot());
@@ -857,11 +880,13 @@ export default function App() {
     if (prev.phase !== "running") {
       showHint(
         touch ? "touch-start" : "mouse-start",
-        touch
-          ? "Tap your keep to train peons. Two fingers: drag to pan, pinch to zoom, twist to rotate."
-          : ui.pvp
-            ? "Click your keep to train peons. Right-drag orbits, Shift-drag pans, wheel zooms."
-            : "Click a trained soldier to take the field. WASD move, mouse look, click to strike. Kills let you scroll the wheel out. Esc returns.",
+        layoutRef.current.fpsTouch
+          ? "Left stick walks. Drag the right side to look. Fire on the right. Haul 5 farm to take the crown."
+          : touch
+            ? "Tap your keep to train peons. Two fingers: drag to pan, pinch to zoom, twist to rotate."
+            : ui.pvp
+              ? "Click your keep to train peons. Right-drag orbits, Shift-drag pans, wheel zooms."
+              : "Click a trained soldier to take the field. WASD move, mouse look, click to strike. Kills let you scroll the wheel out. Esc returns.",
       );
     }
     if (ui.selectedPeonCount > 0 && prev.selectedPeonCount === 0) {
@@ -1071,6 +1096,8 @@ export default function App() {
     `layout-${layout.layout}`,
     layout.phone ? "is-phone" : "is-large",
     layout.touch ? "is-touch" : "is-pointer",
+    layout.android ? "is-android" : "",
+    layout.fpsTouch ? "is-fps-touch" : "",
     isFullscreen ? "is-fullscreen" : "",
   ]
     .filter(Boolean)
@@ -1114,8 +1141,8 @@ export default function App() {
         <div className={sheetOpen ? "stage sheet-open" : "stage"} ref={stageRef}>
           <canvas ref={canvasRef} className={ui.possessed ? "battlefield possessed" : "battlefield"} />
           {ui.possessed && (
-            <div className={`fps-hud${ui.possessed.kind === "trebuchet" ? " treb-hud" : ""}`} aria-hidden>
-              <span className="fps-crosshair" />
+            <div className={`fps-hud${ui.possessed.kind === "trebuchet" ? " treb-hud" : ""}`}>
+              <span className="fps-crosshair" aria-hidden />
               {ui.possessed.kind === "trebuchet" ? (
                 <>
                   <p className="fps-banner">
@@ -1128,24 +1155,49 @@ export default function App() {
                   </div>
                 </>
               ) : (
-                <>
                 <p className="fps-banner">
                   {ui.possessed.label} · {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)} · vision{" "}
                   {Math.min(ui.possessed.visionMax, Math.floor(ui.possessed.visionScore))}/{ui.possessed.visionMax}
-                  {ui.basilisk
-                    ? ui.possessed.visionScore < 1
-                      ? " · haul to look out"
-                      : " · wheel looks out"
-                    : ui.possessed.visionScore <= 0
-                      ? " · kill to scroll out"
-                      : " · wheel looks out"}
+                  {layout.fpsTouch
+                    ? " · left stick · drag right to look"
+                    : ui.basilisk
+                      ? ui.possessed.visionScore < 1
+                        ? " · haul to look out"
+                        : " · wheel looks out"
+                      : ui.possessed.visionScore <= 0
+                        ? " · kill to scroll out"
+                        : " · wheel looks out"}
                   {ui.possessed.isKing ? " · KING" : ""}
                 </p>
-                {ui.basilisk && (
+              )}
+              {layout.fpsTouch ? (
+                <TouchFpsPad
+                  fireLabel={ui.possessed.kind === "trebuchet" ? (ui.possessed.charge >= 1 ? "Loose" : "Wind") : "Fire"}
+                  onMove={(keys) => sim.setPossessMove(keys)}
+                  onLook={(dx, dy) => {
+                    const r = rendererRef.current;
+                    if (!r) return;
+                    r.lookBy(dx, dy, 1.7);
+                    sim.setPossessYaw(r.getFpsYaw());
+                  }}
+                  onFire={() => {
+                    sim.possessAttack();
+                    rendererRef.current?.kickSwing();
+                  }}
+                  onLeave={() => {
+                    lockWantedRef.current = false;
+                    sim.releasePossess("esc");
+                    document.exitPointerLock();
+                    refreshUi();
+                  }}
+                />
+              ) : (
+                ui.basilisk && (
                   <button
                     type="button"
                     className="ghost leave-body"
                     onClick={() => {
+                      lockWantedRef.current = false;
                       sim.releasePossess("esc");
                       document.exitPointerLock();
                       refreshUi();
@@ -1153,8 +1205,7 @@ export default function App() {
                   >
                     Leave body
                   </button>
-                )}
-                </>
+                )
               )}
             </div>
           )}
@@ -1300,7 +1351,7 @@ export default function App() {
           {!layout.touch && ui.basilisk?.youAreKing && ui.possessed && ui.phase === "running" && (
             <p className="cam-hint">WASD walk · Esc returns to the keep · only barracks soldiers</p>
           )}
-          {ui.basilisk?.youAreKing && ui.phase === "running" && (
+          {ui.basilisk?.youAreKing && ui.phase === "running" && !(layout.fpsTouch && ui.possessed) && (
             <div className="king-panel">
               {!ui.possessed && (
                 <div className="king-orders labor-orders" role="toolbar" aria-label="Peon labor">
@@ -1429,7 +1480,7 @@ export default function App() {
               if (!sim.rejoinBasilisk(clan)) return;
               const r = rendererRef.current;
               r?.enterPossess(sim.getPossessYaw(), false);
-              canvasRef.current?.requestPointerLock();
+              grabPointerLock();
               refreshUi();
               beep(520);
             }}
@@ -1442,7 +1493,7 @@ export default function App() {
                 sim.startBasilisk(clan);
                 const r = rendererRef.current;
                 r?.enterPossess(sim.getPossessYaw(), false);
-                canvasRef.current?.requestPointerLock();
+                grabPointerLock();
                 refreshUi();
                 beep(520);
               });
@@ -1518,7 +1569,7 @@ export default function App() {
                   skirmish.startSkirmish();
                   const r = rendererRef.current;
                   r?.enterPossess(sim.getPossessYaw(), false);
-                  canvasRef.current?.requestPointerLock();
+                  grabPointerLock();
                   refreshUi();
                   beep(520);
                 });
