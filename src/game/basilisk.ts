@@ -12,7 +12,8 @@ export const BASILISK_CHOSEN_START = 2;
 /** Soft cap on living chosen souls per clan, not counting the player rejoin. */
 export const BASILISK_CHOSEN_CAP = 3;
 export const BASILISK_JOIN_WAIT = 8;
-export const KING_TAX = 0.15;
+/** Share of each dump (and bounty) that goes in the coffer. 1 = the king gets all of it. */
+export const KING_TAX = 1;
 export const LOAD_SIZE = 10;
 export const FILL_RATE = 4;
 /** Fast enough that walking across a grain patch fills a load. */
