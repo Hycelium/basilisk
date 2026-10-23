@@ -261,6 +261,31 @@ button:disabled {
   border-right: 0;
 }
 
+.layout-side.is-phone .side-col .hud.king-view {
+  flex: none;
+  max-height: none;
+  overflow: visible;
+}
+
+.hud.king-view .stat.coffer {
+  order: -1;
+}
+
+.hud.king-view .hud-top {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.hud.king-view .stat.coffer .value {
+  font-size: 22px;
+  color: #f0d090;
+}
+
+.hud.king-view .stat.coffer .label {
+  color: #e2bc72;
+  letter-spacing: 0.12em;
+}
+
 .layout-side.is-phone .panel-dock {
   display: flex;
   flex-direction: column;
@@ -306,7 +331,7 @@ button:disabled {
 }
 
 .is-phone .fps-charge {
-  top: 64px;
+  top: 16px;
 }
 
 @media (max-width: 700px) {
@@ -2221,7 +2246,8 @@ button:disabled {
 
 .keep-tug {
   position: absolute;
-  top: 10px;
+  top: auto;
+  bottom: 12px;
   left: 18px;
   right: 18px;
   z-index: 12;
@@ -2321,7 +2347,8 @@ button:disabled {
 
 .is-phone .keep-tug,
 .is-fps-touch .keep-tug {
-  top: 8px;
+  top: auto;
+  bottom: calc(8px + var(--sab));
   left: 10px;
   right: 10px;
   gap: 6px;
@@ -2335,13 +2362,21 @@ button:disabled {
   font-size: 13px;
 }
 
-.stage:has(.keep-tug) .toasts,
-.stage:has(.keep-tug) .hint-toast {
-  top: 54px;
+.stage:has(.keep-tug) .unit-command-bar,
+.stage:has(.keep-tug) .cam-hint {
+  bottom: 68px;
 }
 
-.stage:has(.keep-tug) .leave-body {
-  top: 58px;
+.stage:has(.keep-tug) .touch-fire {
+  bottom: calc(78px + var(--sab));
+}
+
+.stage:has(.keep-tug) .touch-stick:not(.live) {
+  bottom: calc(84px + var(--sab));
+}
+
+.stage:has(.keep-tug) .touch-stick-hint {
+  bottom: calc(58px + var(--sab));
 }
 
 .king-orders strong {
@@ -2981,6 +3016,35 @@ button,
   gap: 6px;
   width: min(220px, 42vw);
   pointer-events: none;
+}
+
+.stage:has(.keep-tug) .banner-rail {
+  top: 8px;
+  bottom: 72px;
+}
+
+.layout-side.is-phone .stage .banner-rail {
+  width: min(156px, 72%);
+}
+
+.stage .banner-rail .king-panel,
+.stage:has(.unit-command-bar) .banner-rail .king-panel {
+  position: static;
+  inset: auto;
+  transform: none;
+  width: 100%;
+  max-width: none;
+  pointer-events: none;
+}
+
+.stage .banner-rail .king-orders {
+  justify-content: flex-start;
+}
+
+.banner-rail .command-banners.open {
+  flex: 0 1 auto;
+  max-height: 46%;
+  overflow: auto;
 }
 
 .command-banners {

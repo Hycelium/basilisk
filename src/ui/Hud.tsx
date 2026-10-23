@@ -29,9 +29,10 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
   const huntPct = realm ? realm.trips.hunt / 5 : 0;
   const goldPct = realm ? realm.trips.gold / 5 : 0;
   const woodPct = realm ? realm.trips.wood / 10 : 0;
+  const kingView = !!(realm?.youAreKing && !ui.possessed);
 
   return (
-    <div className={compact ? "hud compact" : "hud"}>
+    <div className={`${compact ? "hud compact" : "hud"}${kingView ? " king-view" : ""}`}>
       <div className="hud-top">
         {realm ? (
           <>
@@ -50,15 +51,15 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
                 </div>
               </>
             )}
-            <div className="stat">
+            <div className="stat coffer">
               <span className="label">FOOD</span>
               <span className="value">{realm.cofferFood}</span>
             </div>
-            <div className="stat">
+            <div className="stat coffer">
               <span className="label">GOLD</span>
               <span className="value">{realm.cofferGold}</span>
             </div>
-            <div className="stat">
+            <div className="stat coffer">
               <span className="label">WOOD</span>
               <span className="value wood">{realm.cofferWood}</span>
             </div>

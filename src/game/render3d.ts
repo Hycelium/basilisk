@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import {
   BUILD_RANGE,
+  UNIT_DEFS,
   dogRange,
   POSSESS_FOV_TIGHT,
   POSSESS_FOV_WIDE,
@@ -1670,8 +1671,10 @@ export class GameRenderer {
         obj.add(selection);
         obj.userData.selection = selection;
       }
-      selection.visible = state.selectedVillagerIds.includes(u.id);
-      if (state.possessedId === u.id) {
+      const possessed = state.possessedId === u.id;
+      selection.visible = state.selectedVillagerIds.includes(u.id) && !possessed;
+      this.syncPossessMark(obj, u, possessed);
+      if (possessed) {
         obj.rotation.y = Math.PI - this.fpsYaw;
       } else {
         obj.rotation.y = u.team === "you" ? Math.PI : 0;
@@ -1698,6 +1701,117 @@ export class GameRenderer {
       }
     }
     this.prune("unit-", live);
+  }
+
+  /** Team ring, screen name, and a thin bar while this body is being driven. */
+  private syncPossessMark(obj: THREE.Object3D, u: Unit, on: boolean) {
+    let plate = obj.userData.possessPlate as THREE.Group | undefined;
+    if (!on) {
+      if (plate) plate.visible = false;
+      return;
+    }
+    const color = u.team === "you" ? 0x2f6dff : 0xe23b32;
+    if (!plate) {
+      plate = new THREE.Group();
+      plate.name = "possess-plate";
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(6.2, 7.5, 40),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.92,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          depthTest: false,
+        }),
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.35;
+      ring.renderOrder = 3;
+      const name = new THREE.Sprite(
+        new THREE.SpriteMaterial({ transparent: true, depthTest: false }),
+      );
+      name.position.y = 16.2;
+      name.scale.set(16, 4.2, 1);
+      name.renderOrder = 6;
+      name.center.set(0.5, 0);
+      const bar = new THREE.Sprite(
+        new THREE.SpriteMaterial({ transparent: true, depthTest: false }),
+      );
+      bar.position.y = 15.2;
+      bar.scale.set(10, 0.7, 1);
+      bar.renderOrder = 6;
+      bar.center.set(0.5, 1);
+      plate.add(ring, name, bar);
+      obj.add(plate);
+      obj.userData.possessPlate = plate;
+      obj.userData.possessName = name;
+      obj.userData.possessBar = bar;
+      obj.userData.possessNameText = "";
+    }
+    plate.visible = true;
+    const ring = plate.children[0] as THREE.Mesh;
+    (ring.material as THREE.MeshBasicMaterial).color.set(color);
+    const label = this.possessScreenName(u);
+    const name = obj.userData.possessName as THREE.Sprite;
+    if (obj.userData.possessNameText !== label) {
+      obj.userData.possessNameText = label;
+      this.paintNameSprite(name, label, color);
+    }
+    this.paintHpSprite(obj.userData.possessBar as THREE.Sprite, u.hp / Math.max(1, u.maxHp), color);
+  }
+
+  private possessScreenName(u: Unit) {
+    if (u.lifeStage === "gatherer") return u.canPromote ? "You · Chosen" : "You · Peon";
+    const label = UNIT_DEFS[u.kind]?.label;
+    return label ? `You · ${label}` : "You";
+  }
+
+  private paintNameSprite(sprite: THREE.Sprite, label: string, color: number) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, 256, 64);
+    ctx.font = "700 36px Cinzel, Palatino, serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "rgba(8, 6, 8, 0.9)";
+    ctx.strokeText(label, 128, 34);
+    ctx.fillStyle = color === 0x2f6dff ? "#d6e6ff" : "#ffd0c8";
+    ctx.fillText(label, 128, 34);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.needsUpdate = true;
+    const mat = sprite.material as THREE.SpriteMaterial;
+    mat.map?.dispose();
+    mat.map = tex;
+    mat.needsUpdate = true;
+  }
+
+  private paintHpSprite(sprite: THREE.Sprite, pct: number, color: number) {
+    let canvas = sprite.userData.canvas as HTMLCanvasElement | undefined;
+    if (!canvas) {
+      canvas = document.createElement("canvas");
+      canvas.width = 128;
+      canvas.height = 12;
+      sprite.userData.canvas = canvas;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const filled = Math.max(0, Math.min(1, pct));
+    ctx.clearRect(0, 0, 128, 12);
+    ctx.fillStyle = "rgba(8, 6, 8, 0.72)";
+    ctx.fillRect(0, 2, 128, 8);
+    ctx.fillStyle = color === 0x2f6dff ? "#6aa4ff" : "#ff5a4a";
+    ctx.fillRect(1, 3, Math.max(0, (128 - 2) * filled), 6);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.needsUpdate = true;
+    const mat = sprite.material as THREE.SpriteMaterial;
+    mat.map?.dispose();
+    mat.map = tex;
+    mat.needsUpdate = true;
   }
 
   private syncVillagers(state: GameState) {

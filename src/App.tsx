@@ -1176,20 +1176,8 @@ export default function App() {
     .filter(Boolean)
     .join(" ");
 
-  const fieldChrome = (
-    <>
-      {patrolMode && ui.selectedPeonCount > 0 && (
-        <div className="mode-banner" role="status">
-          Patrol: {layout.touch ? "tap" : "right-click"} the destination
-        </div>
-      )}
-      {hint && (
-        <button type="button" className="hint-toast" onClick={dismissHint} aria-live="polite">
-          {hint.text}
-        </button>
-      )}
-      {ui.phase === "running" && (!ui.basilisk || basiliskKing) && (
-        <div className="banner-rail">
+  const mapBanners = ui.phase === "running" && (!ui.basilisk || basiliskKing) && (
+    <div className="banner-rail">
           {ui.idlePeonCount > 0 && (!ui.basilisk || basiliskKing) && (
             <button
               type="button"
@@ -1231,9 +1219,7 @@ export default function App() {
               setZoomT(t);
             }}
           />
-        </div>
-      )}
-      {basiliskKing && ui.phase === "running" && kingTables && (
+          {basiliskKing && kingTables && (
         <div className="king-panel">
           {!ui.possessed && (
             <div className="king-orders labor-orders" role="toolbar" aria-label="Peon labor">
@@ -1273,6 +1259,21 @@ export default function App() {
             ))}
           </div>
         </div>
+          )}
+    </div>
+  );
+
+  const fieldChrome = (
+    <>
+      {patrolMode && ui.selectedPeonCount > 0 && (
+        <div className="mode-banner" role="status">
+          Patrol: {layout.touch ? "tap" : "right-click"} the destination
+        </div>
+      )}
+      {hint && (
+        <button type="button" className="hint-toast" onClick={dismissHint} aria-live="polite">
+          {hint.text}
+        </button>
       )}
     </>
   );
@@ -1361,6 +1362,7 @@ export default function App() {
         <div className={sheetOpen ? "stage sheet-open" : "stage"} ref={stageRef}>
           <canvas ref={canvasRef} className={ui.possessed ? "battlefield possessed" : "battlefield"} />
           {ui.basilisk && ui.phase === "running" && <KeepTugBar ui={ui} />}
+          {mapBanners}
           {ui.possessed && (
             <div className={`fps-hud${ui.possessed.kind === "trebuchet" ? " treb-hud" : ""}`}>
               <span className="fps-crosshair" aria-hidden />
