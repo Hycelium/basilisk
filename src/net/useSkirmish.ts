@@ -4,6 +4,7 @@ import { skirmishMap } from "../game/map";
 import type { GameRenderer } from "../game/render3d";
 import type { GameSim } from "../game/sim";
 import { createRoomId, inviteLink, parseRoomInput, type NetMsg } from "./protocol";
+import { RELAY_STATUS } from "./ice";
 import { SkirmishLink } from "./skirmish";
 
 const DEFAULT_MAP = basiliskMap().id;
@@ -192,7 +193,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
             ...s,
             roomId: id,
             invite: inviteLink(id),
-            status: s.status === "Connecting through relay" ? s.status : "Connecting",
+            status: s.status === RELAY_STATUS || s.status === "Connecting through relay" ? s.status : "Connecting",
           }));
         },
         onConnected: () => {

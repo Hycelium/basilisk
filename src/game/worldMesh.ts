@@ -299,7 +299,8 @@ function buildBasiliskFords(seed: number, river: ReturnType<typeof riverSpec>) {
       const hornR = hornL.clone();
       hornR.position.x = 0.6;
       deer.add(body, neck, head, hornL, hornR);
-      deer.position.set(spot.x - WORLD_W / 2, 0, spot.y - WORLD_H / 2);
+      const gy = sampleGround(spot.x, spot.y, seed, river).h;
+      deer.position.set(spot.x - WORLD_W / 2, gy, spot.y - WORLD_H / 2);
       deer.rotation.y = team === "you" ? 0.4 : Math.PI - 0.4;
       g.add(deer);
     }

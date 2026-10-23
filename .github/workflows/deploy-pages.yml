@@ -31,6 +31,8 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          VITE_TURN_MINT: ${{ secrets.VITE_TURN_MINT }}
         run: npm run build
 
       - name: Configure Pages

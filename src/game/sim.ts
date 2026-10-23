@@ -1495,10 +1495,9 @@ export class GameSim {
       return;
     }
     if (hit.kind === "keep" && hit.id === this.localTeam) {
-      // Select keep for peon training (double-purpose: also home call via button later)
       this.state.selectedKeepTeam = this.localTeam;
       this.state.selectedBuildingId = null;
-      this.state.selectedVillagerIds = [];
+      if (!this.state.basilisk) this.state.selectedVillagerIds = [];
       this.state.buildSelection = null;
       return;
     }
@@ -2466,6 +2465,18 @@ export class GameSim {
 
   /** Assigns free peons and returns their ids. Peons already on a node stay there. */
   private assignIdlePeons(team: Team) {
+    if (this.state.basilisk) {
+      const idle = this.basiliskGatherers(team).filter((u) => !u.workKind && !u.kingPatrol);
+      if (idle.length === 0) {
+        this.tell(team, "Peons are already at work.");
+        return [];
+      }
+      const coffer = this.state.kingCoffer[team];
+      const kind: WorkKind = coffer.wood <= coffer.gold ? "wood" : "gold";
+      this.applyBasiliskWork(team, kind, idle.map((u) => u.id));
+      this.tell(team, `${idle.length} peon${idle.length === 1 ? "" : "s"} sent back to work.`);
+      return idle.map((u) => u.id);
+    }
     const peons = this.state.villagers.filter((v) => v.team === team && v.hp > 0);
     const free = peons.filter((v) => this.peonReadyForWork(v));
     for (const node of this.state.nodes) {
@@ -5520,7 +5531,7 @@ export class GameSim {
       yourWood: Math.floor(s.basilisk ? s.kingCoffer[view].wood : s.wood[view]),
       foeGold: Math.floor(s.gold[other]),
       foeWood: Math.floor(s.wood[other]),
-      waveLabel: `${Math.min(this.waveCap(), Math.max(1, s.waveIndex || 1))}/${this.waveCap()}`,
+      waveLabel: `${Math.max(1, s.waveIndex || 1)}`,
       wavePhase: s.wavePhase,
       buildTimer: Math.max(0, s.buildTimer),
       canRush:
@@ -5559,9 +5570,11 @@ export class GameSim {
         ? this.basiliskGatherers(view).length
         : s.villagers.filter((v) => v.team === view).length,
       peonCap: this.peonCap(view),
-      idlePeonCount: s.villagers.filter(
-        (v) => v.team === view && v.hp > 0 && (v.state === "idle" || v.state === "home"),
-      ).length,
+      idlePeonCount: s.basilisk
+        ? this.basiliskGatherers(view).filter((u) => !u.workKind && !u.kingPatrol).length
+        : s.villagers.filter(
+            (v) => v.team === view && v.hp > 0 && (v.state === "idle" || v.state === "home"),
+          ).length,
       keepGarrisoned: s.villagers.filter((v) => v.team === view && v.state === "garrisoned").length,
       keepGarrisonMax: KEEP_GARRISON_MAX,
       canTrainPeon: keepSelected && this.peonSlotsUsed(view) < this.peonCap(view),
@@ -5582,6 +5595,8 @@ export class GameSim {
       },
       foeIntellect: brain.intellect,
       foeGames: brain.games,
+      playerWins: meta.wins,
+      playerLosses: Math.max(0, meta.matches - meta.wins),
       foeWins: brain.wins,
       foeExplore: brain.epsilon,
       foeLastAction: brain.lastAction,
@@ -5677,11 +5692,17 @@ export function hitTest(s: GameState, x: number, y: number): RectHit | null {
     }
     if (best) return { kind: "work", id: best.kind };
   }
+  const inKeepFoot = (keep: { x: number; y: number }) =>
+    Math.abs(x - keep.x) < 22 && Math.abs(y - keep.y) < 22;
+  if (inKeepFoot(s.keeps.you.pos)) return { kind: "keep", id: "you" };
+  if (inKeepFoot(s.keeps.foe.pos)) return { kind: "keep", id: "foe" };
   for (const p of s.pads) {
     if (dist({ x, y }, p.pos) < 26) return { kind: "pad", id: p.id };
   }
-  if (dist({ x, y }, s.keeps.you.pos) < 40) return { kind: "keep", id: "you" };
-  if (dist({ x, y }, s.keeps.foe.pos) < 40) return { kind: "keep", id: "foe" };
+  const keepYou = dist({ x, y }, s.keeps.you.pos);
+  const keepFoe = dist({ x, y }, s.keeps.foe.pos);
+  if (keepYou < 40) return { kind: "keep", id: "you" };
+  if (keepFoe < 40) return { kind: "keep", id: "foe" };
   return null;
 }
 

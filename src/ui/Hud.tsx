@@ -23,7 +23,6 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
       : ui.wavePhase === "spawning"
         ? "Spawning"
         : "Fighting";
-  const explorePct = Math.round(ui.foeExplore * 100);
   const qualityLabel =
     quality.setting === "auto" ? `Auto · ${quality.tier}` : quality.setting[0].toUpperCase() + quality.setting.slice(1);
   const farmPct = realm ? realm.trips.farm / 5 : 0;
@@ -90,11 +89,14 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
               </div>
             )}
             <div className="stat lives">
-              <span className="label">KEEP</span>
+              <span className="label">HP</span>
               <span className={ui.yourHp <= 80 ? "value danger" : "value"}>{ui.yourHp}</span>
+              <div className="bar">
+                <div className="fill" style={{ width: `${hpPct * 100}%` }} />
+              </div>
             </div>
             <div className="stat">
-              <span className="label">FOE</span>
+              <span className="label">ENEMY HP</span>
               <span className="value">{ui.foeHp}</span>
             </div>
             <div className="stat">
@@ -112,7 +114,7 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
         ) : (
           <>
             <div className="stat lives">
-              <span className="label">LIVES</span>
+              <span className="label">HP</span>
               <span className={ui.yourHp <= 80 ? "value danger" : "value"}>{ui.yourHp}</span>
               <div className="bar">
                 <div className="fill" style={{ width: `${hpPct * 100}%` }} />
@@ -138,18 +140,13 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
               <span className="phase-tag">{phaseLabel}</span>
             </div>
             <div className="stat">
-              <span className="label">FOE HP</span>
+              <span className="label">ENEMY HP</span>
               <span className="value">{ui.foeHp}</span>
             </div>
-            {!ui.pvp && (
-              <div className="stat intellect">
-                <span className="label">FOE IQ</span>
-                <span className="value">{ui.foeIntellect}</span>
-                <span className="phase-tag muted">
-                  {ui.foeWins}W/{ui.foeGames}G · ε{explorePct}%
-                </span>
-              </div>
-            )}
+            <div className="stat">
+              <span className="label">KEEP LV</span>
+              <span className="value">{ui.keepLevel}</span>
+            </div>
           </>
         )}
       </div>
@@ -183,8 +180,14 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
       ) : !realm ? (
         <div className="hud-xp-row">
           <div className="stat keep-xp-stat">
-            <span className="label">KEEP LV {ui.keepLevel}</span>
-            <div className="bar xp">
+            <div
+              className="bar xp"
+              role="progressbar"
+              aria-label="Keep XP"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(ui.keepXpPct * 100)}
+            >
               <div className="fill" style={{ width: `${ui.keepXpPct * 100}%` }} />
             </div>
           </div>

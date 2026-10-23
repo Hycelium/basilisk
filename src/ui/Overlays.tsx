@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
+import { basiliskMap } from "../game/basiliskMap";
 import type { Team, UiSnapshot } from "../game/types";
+import { MapPreview } from "./MapPreview";
 
-const ITCH_PAGE = "https://ka9krew.itch.io/roadkeep";
 const DISCORD_INVITE = "https://discord.gg/FGbUfaxy8v";
 
-function shareText(url: string) {
-  return `Play Basilisk with me: ${url} — walk a job, promote, take the crown. Discord: ${DISCORD_INVITE}`;
+function gameUrl() {
+  return new URL(import.meta.env.BASE_URL, window.location.origin).href;
 }
 
 function copyWithSelection(text: string) {
@@ -77,6 +78,7 @@ export function Overlays({
 }: OverlaysProps) {
   const [shareNote, setShareNote] = useState("");
   const [clan, setClan] = useState<Team>("you");
+  const playerRecord = `Your record · ${ui.playerWins}W / ${ui.playerLosses}L`;
 
   useEffect(() => {
     if (!shareNote) return;
@@ -85,15 +87,8 @@ export function Overlays({
   }, [shareNote]);
 
   const copyLink = async () => {
-    const ok = await copyText(ITCH_PAGE);
+    const ok = await copyText(gameUrl());
     if (ok) setShareNote("Link copied");
-  };
-
-  const shareOnX = () => {
-    const intent = new URL("https://twitter.com/intent/tweet");
-    intent.searchParams.set("text", shareText(ITCH_PAGE));
-    intent.searchParams.set("url", ITCH_PAGE);
-    openExternal(intent.href);
   };
 
   return (
@@ -103,8 +98,15 @@ export function Overlays({
           <img className="menu-logo" src={`${import.meta.env.BASE_URL}icons/icon-512.png`} alt="" />
           <h1>Basilisk</h1>
           <p className="keep-lvl">Twin valleys · one life at a time</p>
-          <p>Most peons only haul. A few chosen can promote. An AI king already holds the keep.</p>
+          <p className="menu-lead">Most peons only haul. A few chosen can promote. An AI king already holds the keep.</p>
           <p className="phone-controls-tip">On a phone: left stick walks, drag the right side to look, Fire to strike.</p>
+          <p className="foe-brain-tease">{playerRecord}</p>
+
+          <div className="map-card selected map-brief">
+            <strong>{basiliskMap().name}</strong>
+            <span>{basiliskMap().tagline}</span>
+            <MapPreview seed={basiliskMap().seed} />
+          </div>
 
           <div className="clan-pick" role="group" aria-label="Clan">
             <button type="button" className={clan === "you" ? "cta" : "ghost"} onClick={() => setClan("you")}>
@@ -134,14 +136,8 @@ export function Overlays({
             <button type="button" onClick={() => void copyLink()}>
               Copy link
             </button>
-            <button type="button" onClick={() => openExternal(ITCH_PAGE)}>
-              itch.io
-            </button>
             <button type="button" onClick={() => openExternal(DISCORD_INVITE)}>
               Discord
-            </button>
-            <button type="button" onClick={shareOnX}>
-              X
             </button>
           </div>
           {shareNote ? (
@@ -216,9 +212,7 @@ export function Overlays({
             <p className="xp-gain">{ui.freshUnlock} unlocked.</p>
           ) : null}
           <p className="keep-lvl">Keep Level {ui.keepLevel}</p>
-          <p className="foe-brain-tease">
-            Foe intellect {ui.foeIntellect} · remembered {ui.foeGames} sieges
-          </p>
+          <p className="foe-brain-tease">{playerRecord}</p>
           {ui.missionId != null ? (
             <>
               <p className="map-next-hint">

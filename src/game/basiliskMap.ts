@@ -1,10 +1,6 @@
 import { WORLD_H, WORLD_W } from "./balance";
 import type { LaneCount, MapDef, MapId, Team, Vec2 } from "./types";
 
-function keepOf(team: Team) {
-  return team === "you" ? { x: 200, y: 664 } : { x: 200, y: 56 };
-}
-
 export const BASILISK_SEED = 884410;
 export const SPINE_Y = WORLD_H / 2;
 export const FORD_X = [118, 200, 282] as const;
@@ -46,9 +42,12 @@ export function chokePoints(): Vec2[] {
 }
 
 export function deerSpots(team: Team): Vec2[] {
-  const keep = keepOf(team);
-  const behind = team === "you" ? 52 : -52;
-  return [-36, 0, 36].map((dx) => ({ x: keep.x + dx, y: keep.y + behind }));
+  const south = team === "you";
+  const y = south ? 716 : 4;
+  return [
+    { x: 22, y },
+    { x: 378, y },
+  ];
 }
 
 export function workSites(team: Team, kind: WorkKind): Vec2[] {

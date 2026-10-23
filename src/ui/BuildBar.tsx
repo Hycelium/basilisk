@@ -10,13 +10,13 @@ interface BuildBarProps {
   onCancel: () => void;
 }
 
-const builds: { kind: BuildingKind; label: string; blurb: string }[] = [
-  { kind: "watchtower", label: "Watch", blurb: "Fast arrows · best vs light troops" },
-  { kind: "ballista", label: "Ballista", blurb: "Armor-piercing · upgrade dogs vs spies" },
-  { kind: "catapult", label: "Catapult", blurb: "Splash at the gate · breaks barricades" },
-  { kind: "barracks", label: "Barracks", blurb: "Trains the counter army" },
-  { kind: "house", label: "House", blurb: "+3 peon pop · eco pad" },
-  { kind: "barricade", label: "Barricade", blurb: "Holds the road · rams crush it" },
+const builds: { kind: BuildingKind; label: string }[] = [
+  { kind: "watchtower", label: "Watch" },
+  { kind: "ballista", label: "Ballista" },
+  { kind: "catapult", label: "Catapult" },
+  { kind: "barracks", label: "Barracks" },
+  { kind: "house", label: "House" },
+  { kind: "barricade", label: "Barricade" },
 ];
 
 export function BuildBar({ ui, compact = false, getCost, onSelect, onCancel }: BuildBarProps) {
@@ -40,10 +40,11 @@ export function BuildBar({ ui, compact = false, getCost, onSelect, onCancel }: B
         </div>
       )}
       <div className="buildbar" role="toolbar" aria-label="Build">
-        {builds.map(({ kind, label, blurb }, i) => {
+        {builds.map(({ kind, label }, i) => {
           const selected = ui.buildSelection === kind;
           const cost = getCost(kind);
           const afford = ui.yourGold >= cost.gold && ui.yourWood >= cost.wood;
+          const price = formatCost(cost);
           return (
             <button
               key={kind}
@@ -51,15 +52,14 @@ export function BuildBar({ ui, compact = false, getCost, onSelect, onCancel }: B
               className={`build-btn${selected ? " selected" : ""}${afford ? " afford" : ""}`}
               onClick={() => (selected ? onCancel() : onSelect(kind))}
               aria-pressed={selected}
-              aria-label={`${label} — ${blurb} — ${formatCost(cost)}`}
-              title={`${label} (${i + 1}) · ${blurb}`}
+              aria-label={`${label}, ${price}`}
+              title={`${label} (${i + 1})`}
             >
               <span className="build-icon" data-kind={kind} aria-hidden />
               <span className="build-copy">
                 <strong>{label}</strong>
-                <small>{blurb}</small>
+                <span className={afford ? "cost" : "cost broke"}>{price}</span>
               </span>
-              <span className={afford ? "cost" : "cost broke"}>{formatCost(cost)}</span>
             </button>
           );
         })}

@@ -78,7 +78,7 @@ export function loadQualitySetting(): QualitySetting {
   } catch {
     /* ignore */
   }
-  return "auto";
+  return "high";
 }
 
 export function isTouchDevice() {

@@ -1752,16 +1752,44 @@ button:disabled {
 .title-overlay {
   overflow-y: auto;
   justify-content: flex-start !important;
-  padding-top: 18px !important;
   overscroll-behavior: contain;
+  top: 12px;
+  right: auto;
+  bottom: auto;
+  left: 12px;
+  width: min(400px, calc(100% - 24px));
+  height: auto;
+  max-height: calc(100% - 24px);
+  padding: 14px 14px 10px !important;
+  gap: 6px;
 }
 
-.layout-side .title-overlay,
+.title-overlay > * {
+  flex: 0 0 auto;
+}
+
 .layout-side .overlay {
   max-width: 520px;
   margin: 0 auto;
   left: 12px;
   right: 12px;
+}
+
+.layout-side .title-overlay {
+  margin: 0;
+  left: 12px;
+  right: auto;
+  width: min(380px, 44%);
+  max-width: 400px;
+  max-height: calc(100% - 24px);
+}
+
+.layout-column .title-overlay {
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  width: auto;
+  max-height: calc(100% - 112px);
 }
 
 .layout-side.is-phone .title-overlay {
@@ -1811,6 +1839,34 @@ button:disabled {
 .map-card.selected {
   border-color: #e2c27a;
   box-shadow: inset 0 0 0 1px rgba(226, 194, 122, 0.45);
+}
+
+.map-seed-preview {
+  align-self: stretch;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.map-seed-preview svg {
+  display: block;
+  width: 100%;
+  height: 180px;
+}
+
+.title-overlay .map-brief {
+  flex: 0 0 auto;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+  cursor: default;
+  background: #3a4a2e;
+  border: 1px solid #e2c27a;
+  box-shadow: inset 0 0 0 1px rgba(226, 194, 122, 0.35);
+}
+
+.title-overlay .map-brief strong {
+  color: #f6ecd4;
 }
 
 .map-card span {

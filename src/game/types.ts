@@ -467,6 +467,8 @@ export interface UiSnapshot {
     yourKeep: number;
     foeKeep: number;
   };
+  playerWins: number;
+  playerLosses: number;
   /** Persistent Q-learning foe — climbs as it plays you. */
   foeIntellect: number;
   foeGames: number;

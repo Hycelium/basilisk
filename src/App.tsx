@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
-import { GameRenderer, type QualityInfo, type QualitySetting, type TouchDragMode } from "./game/render3d";
+import { GameRenderer, loadQualitySetting, type QualityInfo, type QualitySetting, type TouchDragMode } from "./game/render3d";
 import { GameSim, hitTest } from "./game/sim";
 import type { BuildingKind, CombatEventKind, KingOrder, RectHit, Team, TrainKind, UiSnapshot, WorkKind } from "./game/types";
 import { BUILD_COST } from "./game/balance";
@@ -37,7 +37,7 @@ const defaultUi: UiSnapshot = {
   yourWood: 80,
   foeGold: 90,
   foeWood: 80,
-  waveLabel: "1/16",
+  waveLabel: "1",
   wavePhase: "build",
   buildTimer: 20,
   canRush: false,
@@ -76,6 +76,8 @@ const defaultUi: UiSnapshot = {
   endReason: "",
   lastXpGain: 0,
   stats: { slain: 0, goldEarned: 0, waves: 0, yourKeep: 100, foeKeep: 100 },
+  playerWins: 0,
+  playerLosses: 0,
   foeIntellect: 8,
   foeGames: 0,
   foeWins: 0,
@@ -184,7 +186,10 @@ export default function App() {
       return "select";
     }
   });
-  const [quality, setQuality] = useState<QualityInfo>({ setting: "auto", tier: "high", fps: 60 });
+  const [quality, setQuality] = useState<QualityInfo>(() => {
+    const setting = loadQualitySetting();
+    return { setting, tier: setting === "low" || setting === "medium" ? setting : "high", fps: 60 };
+  });
   const [zoomT, setZoomT] = useState(0.54);
   const [tapMarkers, setTapMarkers] = useState<TapMarker[]>([]);
   const tapIdRef = useRef(0);
@@ -927,7 +932,12 @@ export default function App() {
       );
     }
     if (ui.selectedKeepTeam === ui.localTeam && prev.selectedKeepTeam !== ui.localTeam) {
-      showHint("keep-panel", "Queue peons here. Build Houses on eco pads to raise the cap.");
+      showHint(
+        "keep-panel",
+        ui.basilisk
+          ? "Train peons from the coffer. Send selected workers to wood, gold, farm, or hunt — or tap those spots on the map."
+          : "Queue peons here. Build Houses on eco pads to raise the cap.",
+      );
     }
   }, [ui, showHint]);
 
@@ -1379,7 +1389,7 @@ export default function App() {
           )}
           {ui.phase === "running" && (!ui.basilisk || basiliskKing) && (
           <div className="banner-rail">
-            {!ui.basilisk && ui.idlePeonCount > 0 && (
+            {ui.idlePeonCount > 0 && (!ui.basilisk || basiliskKing) && (
               <button
                 type="button"
                 className="pennant work-pennant"
@@ -1530,6 +1540,11 @@ export default function App() {
               sim.enqueuePeon(sim.getLocalTeam());
               refreshUi();
               beep(300);
+            }}
+            onAssignWork={(kind) => {
+              sim.assignBasiliskWork(kind);
+              refreshUi();
+              beep(400);
             }}
             onCallHome={() => {
               sim.callVillagersHome(sim.getLocalTeam());

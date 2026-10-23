@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { isEnemyStructure } from "../game/ownership";
 import { buildingName } from "../game/sim";
-import type { BuildingKind, TrainKind, UiSnapshot } from "../game/types";
+import type { BuildingKind, TrainKind, UiSnapshot, WorkKind } from "../game/types";
 
 interface DetailSheetProps {
   ui: UiSnapshot;
@@ -15,6 +15,7 @@ interface DetailSheetProps {
   onCallHome: () => void;
   onGarrison: () => void;
   onUngarrison: () => void;
+  onAssignWork?: (kind: WorkKind) => void;
 }
 
 const STRUCTURE_ROLE: Partial<Record<BuildingKind, string>> = {
@@ -43,6 +44,7 @@ export function DetailSheet({
   onCallHome,
   onGarrison,
   onUngarrison,
+  onAssignWork,
 }: DetailSheetProps) {
   const keepPanel = ui.selectedKeepTeam === ui.localTeam;
   const subject = keepPanel ? "keep" : ui.selectedBuildingId ? `b${ui.selectedBuildingId}` : "";
@@ -78,7 +80,10 @@ export function DetailSheet({
           <div>
             <div className="detail-title">Your Keep</div>
             <div className="detail-sub">
-              Peons {ui.peonCount}/{ui.peonCap} · Garrison {ui.keepGarrisoned}/{ui.keepGarrisonMax}
+              Peons {ui.peonCount}/{ui.peonCap}
+              {ui.basilisk
+                ? ` · Coffer ${ui.yourGold}g ${ui.yourWood}w`
+                : ` · Garrison ${ui.keepGarrisoned}/${ui.keepGarrisonMax}`}
             </div>
           </div>
           {headControls}
@@ -87,7 +92,7 @@ export function DetailSheet({
         <div className="detail-body">
         <p className="detail-note">
           {ui.basilisk
-            ? "Queue peons from the coffer. Each House raises the cap by 3."
+            ? "Queue peons from the coffer. Select peons, then send them to a job here or tap a field, grove, mine, or deer. Houses raise the cap by 3."
             : "Queue peons here. Cap starts at 2 — build Houses on green pads behind the keep."}
         </p>
         <div className="train-options">
@@ -106,26 +111,55 @@ export function DetailSheet({
             <small>Recall peons to the keep</small>
             <em>—</em>
           </button>
-          <button
-            type="button"
-            className="train-opt"
-            onClick={onGarrison}
-            disabled={ui.keepGarrisoned >= ui.keepGarrisonMax}
-          >
-            <strong>Garrison peons</strong>
-            <small>Up to {ui.keepGarrisonMax}; occupants fire defensive arrows</small>
-            <em>🏰</em>
-          </button>
-          <button
-            type="button"
-            className="train-opt"
-            onClick={onUngarrison}
-            disabled={ui.keepGarrisoned === 0}
-          >
-            <strong>Ungarrison all</strong>
-            <small>Return occupants to work</small>
-            <em>↗</em>
-          </button>
+          {ui.basilisk && onAssignWork && (
+            <>
+              {(["wood", "gold", "farm", "hunt"] as WorkKind[]).map((kind) => {
+                const count = ui.basilisk?.labor[kind] ?? 0;
+                return (
+                  <button
+                    key={kind}
+                    type="button"
+                    className="train-opt"
+                    onClick={() => onAssignWork(kind)}
+                  >
+                    <strong>{kind === "wood" ? "Wood" : kind === "gold" ? "Gold" : kind === "farm" ? "Farm" : "Hunt"}</strong>
+                    <small>
+                      {ui.selectedPeonCount > 0
+                        ? `Send ${ui.selectedPeonCount} selected`
+                        : count > 0
+                          ? `${count} on this job`
+                          : "Send idle peons"}
+                    </small>
+                    <em>{count > 0 ? String(count) : "—"}</em>
+                  </button>
+                );
+              })}
+            </>
+          )}
+          {!ui.basilisk && (
+            <>
+              <button
+                type="button"
+                className="train-opt"
+                onClick={onGarrison}
+                disabled={ui.keepGarrisoned >= ui.keepGarrisonMax}
+              >
+                <strong>Garrison peons</strong>
+                <small>Up to {ui.keepGarrisonMax}; occupants fire defensive arrows</small>
+                <em>🏰</em>
+              </button>
+              <button
+                type="button"
+                className="train-opt"
+                onClick={onUngarrison}
+                disabled={ui.keepGarrisoned === 0}
+              >
+                <strong>Ungarrison all</strong>
+                <small>Return occupants to work</small>
+                <em>↗</em>
+              </button>
+            </>
+          )}
         </div>
         <div className="queue-row">
           <span className="queue-label">Peon queue</span>

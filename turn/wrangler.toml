@@ -1,0 +1,9 @@
+name = "basilisk-turn"
+main = "src/index.js"
+compatibility_date = "2026-10-21"
+
+# Secrets, set with wrangler (never commit them):
+#   npx wrangler secret put TURN_KEY_ID
+#   npx wrangler secret put TURN_KEY_API_TOKEN
+# TURN_KEY_ID is the Cloudflare Realtime TURN key id.
+# TURN_KEY_API_TOKEN is that key's API token, not a credential the browser uses.
