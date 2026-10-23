@@ -169,6 +169,7 @@ import {
   visionFromLife,
 } from "./basilisk";
 import { allWorkSites, basiliskMap, isBasiliskSeed, WORK_LABEL } from "./basiliskMap";
+import { wheatPatchAt } from "./wheat";
 
 function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -318,6 +319,7 @@ export class GameSim {
       possessAimBuildingId: null,
       possessAimBarricadeId: null,
       mapId: map.id,
+      mapSeed: map.seed,
       time: 0,
       paused: false,
       speed: 1,
@@ -444,6 +446,7 @@ export class GameSim {
   adoptMap(map: MapDef) {
     this.activeMap = map;
     this.state.mapId = map.id;
+    this.state.mapSeed = map.seed;
     this.state.pads = buildPads(map);
     this.state.nodes = buildNodes(map);
     this.state.basilisk = isBasiliskSeed(map.seed);
@@ -811,7 +814,8 @@ export class GameSim {
       if (node?.kind === "copper") return "gold";
     }
     if (this.state.basilisk && world) {
-      const site = nearestWork(this.localTeam, world);
+      if (wheatPatchAt(this.state.mapSeed, world)) return "farm";
+      const site = nearestWork(this.localTeam, world, undefined, this.state.mapSeed);
       if (site && site.dist < 40) return site.kind;
     }
     return null;
@@ -825,10 +829,25 @@ export class GameSim {
 
   private setPeonJob(u: Unit, kind: WorkKind) {
     u.workKind = kind;
+    u.rallyPoint = undefined;
+    u.engageFrom = undefined;
+    u.kingHeld = false;
+    u.kingPatrol = false;
     if (u.carryKind && u.carryKind !== kind) {
       u.carry = 0;
       u.carryKind = null;
     }
+  }
+
+  private basiliskCommandables(team: Team) {
+    return this.state.units.filter(
+      (u) =>
+        u.team === team &&
+        u.hp > 0 &&
+        !u.npcKing &&
+        u.id !== this.state.possessedId &&
+        (u.lifeStage === "gatherer" || u.fromBarracks),
+    );
   }
 
   private applyBasiliskWork(team: Team, kind: WorkKind, ids: number[]) {
@@ -838,7 +857,7 @@ export class GameSim {
     const picked = ids.length > 0 ? gatherers.filter((u) => want.has(u.id)) : gatherers;
     const targets = picked.length > 0 ? picked : gatherers;
     for (const u of targets) this.setPeonJob(u, kind);
-    const mark = nearestWork(team, keepPos(team), kind);
+    const mark = nearestWork(team, keepPos(team), kind, this.state.mapSeed);
     if (mark) {
       this.state.commandMarkers.push({ id: this.next(), kind: "gather", pos: { ...mark.pos }, life: 1.2 });
     }
@@ -1433,15 +1452,22 @@ export class GameSim {
       (hit.kind === "node" || hit.kind === "work")
     ) {
       const job = this.gatherJobFromHit(hit, world);
-      if (job) this.assignBasiliskWork(job);
+      if (job) {
+        const picked = this.state.selectedVillagerIds;
+        if (picked.length > 0) this.assignBasiliskWork(job);
+        else {
+          const near = [...this.basiliskGatherers(this.localTeam)].sort(
+            (a, b) => dist(a.pos, world ?? keepPos(this.localTeam)) - dist(b.pos, world ?? keepPos(this.localTeam)),
+          )[0];
+          if (near) this.applyBasiliskWork(this.localTeam, job, [near.id]);
+        }
+      }
       return;
     }
     if (hit.kind === "unit" && this.state.basilisk && this.isLocalKing()) {
       const id = Number(hit.id);
-      const peon = this.state.units.find(
-        (u) => u.id === id && u.team === this.localTeam && u.hp > 0 && u.lifeStage === "gatherer" && !u.npcKing,
-      );
-      this.state.selectedVillagerIds = peon ? [peon.id] : [];
+      const body = this.basiliskCommandables(this.localTeam).find((u) => u.id === id);
+      this.state.selectedVillagerIds = body ? [body.id] : [];
       this.state.selectedBuildingId = null;
       this.state.selectedKeepTeam = null;
       this.state.buildSelection = null;
@@ -1497,7 +1523,7 @@ export class GameSim {
     const inBox = (pos: { x: number; y: number }) =>
       pos.x >= minX && pos.x <= maxX && pos.y >= minY && pos.y <= maxY;
     const ids = this.state.basilisk
-      ? this.basiliskGatherers(this.localTeam)
+      ? this.basiliskCommandables(this.localTeam)
           .filter((u) => inBox(u.pos))
           .map((u) => u.id)
       : this.state.villagers
@@ -1524,7 +1550,7 @@ export class GameSim {
     }
     const alive = new Set(
       this.state.basilisk
-        ? this.basiliskGatherers(this.localTeam).map((u) => u.id)
+        ? this.basiliskCommandables(this.localTeam).map((u) => u.id)
         : this.state.villagers.filter((v) => v.team === this.localTeam && v.hp > 0).map((v) => v.id),
     );
     const ids = (this.controlGroups.get(slot) ?? []).filter((id) => alive.has(id));
@@ -1583,8 +1609,42 @@ export class GameSim {
   commandSelected(world: { x: number; y: number }, hit: RectHit | null, patrol = false) {
     if (this.state.basilisk) {
       if (!this.isLocalKing()) return;
+      const ids = [...this.state.selectedVillagerIds];
       const kind = this.gatherJobFromHit(hit, world);
-      if (kind) this.assignBasiliskWork(kind);
+      const gatherers = this.basiliskGatherers(this.localTeam).filter((u) => ids.includes(u.id));
+      if (gatherers.length > 0 && kind) {
+        if (this.redirect({ t: "labor", team: this.localTeam, kind, ids: gatherers.map((u) => u.id) })) return;
+        this.applyBasiliskWork(this.localTeam, kind, gatherers.map((u) => u.id));
+        return;
+      }
+      if (ids.length > 0) {
+        if (hit?.kind === "unit") {
+          const enemy = this.state.units.find(
+            (u) => u.id === Number(hit.id) && u.team !== this.localTeam && u.hp > 0,
+          );
+          if (enemy) {
+            if (this.redirect({ t: "attack", team: this.localTeam, ids, targetId: enemy.id })) return;
+            this.orderBasiliskIds(this.localTeam, ids, world, hit, false);
+            return;
+          }
+        }
+        if (this.redirect({ t: patrol ? "patrol" : "move", team: this.localTeam, ids, x: world.x, y: world.y })) return;
+        this.orderBasiliskIds(this.localTeam, ids, world, hit, patrol);
+        return;
+      }
+      const barracks = this.state.buildings.find(
+        (b) => b.id === this.state.selectedBuildingId && b.team === this.localTeam && b.kind === "barracks",
+      );
+      if (barracks) {
+        this.setRally(this.localTeam, barracks.id, world);
+        return;
+      }
+      if (kind) {
+        const near = [...this.basiliskGatherers(this.localTeam)].sort(
+          (a, b) => dist(a.pos, world) - dist(b.pos, world),
+        )[0];
+        if (near) this.applyBasiliskWork(this.localTeam, kind, [near.id]);
+      }
       return;
     }
     const team = this.localTeam;
@@ -1629,6 +1689,55 @@ export class GameSim {
     );
   }
 
+  private orderBasiliskIds(
+    team: Team,
+    ids: number[],
+    world: { x: number; y: number },
+    hit: RectHit | null,
+    patrol: boolean,
+  ) {
+    const want = new Set(ids);
+    const units = this.state.units.filter((u) => u.team === team && u.hp > 0 && !u.npcKing && want.has(u.id));
+    if (units.length === 0) return;
+    if (hit?.kind === "unit") {
+      const enemy = this.state.units.find((u) => u.id === Number(hit.id) && u.team !== team && u.hp > 0);
+      if (enemy) {
+        for (const u of units) {
+          u.rallyPoint = { ...enemy.pos };
+          u.targetUnitId = enemy.id;
+          u.kingHeld = false;
+          u.kingPatrol = false;
+          u.engageFrom = undefined;
+        }
+        this.state.commandMarkers.push({ id: this.next(), kind: "attack", pos: { ...enemy.pos }, life: 1.1 });
+        return;
+      }
+    }
+    units.forEach((u, index) => {
+      const spread = {
+        x: world.x + ((index % 3) - 1) * 7,
+        y: world.y + (Math.floor(index / 3) % 3) * 7,
+      };
+      u.kingHeld = false;
+      u.targetUnitId = undefined;
+      if (patrol) {
+        u.engageFrom = { ...u.pos };
+        u.rallyPoint = spread;
+        u.kingPatrol = true;
+      } else {
+        u.rallyPoint = spread;
+        u.kingPatrol = false;
+        u.engageFrom = undefined;
+      }
+    });
+    this.state.commandMarkers.push({
+      id: this.next(),
+      kind: patrol ? "patrol" : "move",
+      pos: { ...world },
+      life: 1.1,
+    });
+  }
+
   private commandIds(
     team: Team,
     ids: number[],
@@ -1636,6 +1745,10 @@ export class GameSim {
     hit: RectHit | null,
     patrol: boolean,
   ) {
+    if (this.state.basilisk) {
+      this.orderBasiliskIds(team, ids, world, hit, patrol);
+      return;
+    }
     const selected = this.peonsById(team, ids);
     if (selected.length === 0) return;
     const enemyTeam: Team = team === "you" ? "foe" : "you";
@@ -1715,6 +1828,20 @@ export class GameSim {
 
   private stopIds(team: Team, ids: number[]) {
     const want = new Set(ids);
+    if (this.state.basilisk) {
+      let held = 0;
+      for (const u of this.state.units) {
+        if (u.team !== team || !want.has(u.id) || u.hp <= 0 || u.npcKing) continue;
+        u.kingHeld = true;
+        u.kingPatrol = false;
+        u.rallyPoint = { ...u.pos };
+        u.engageFrom = undefined;
+        u.targetUnitId = undefined;
+        held += 1;
+      }
+      if (held > 0) this.tell(team, "Selected troops hold.");
+      return;
+    }
     let held = 0;
     for (const v of this.state.villagers) {
       if (v.team !== team || !want.has(v.id) || v.hp <= 0) continue;
@@ -2268,6 +2395,17 @@ export class GameSim {
 
   callVillagersHome(team: Team) {
     if (team === this.localTeam && this.redirect({ t: "recall", team })) return;
+    if (this.state.basilisk) {
+      const keep = keepPos(team);
+      for (const u of this.basiliskGatherers(team)) {
+        u.rallyPoint = { ...keep };
+        u.kingHeld = false;
+        u.kingPatrol = false;
+        u.engageFrom = undefined;
+      }
+      this.tell(team, "🔔 Recall! Peons return to the keep.");
+      return;
+    }
     for (const v of this.state.villagers.filter((a) => a.team === team)) {
       if (v.state === "garrisoned") continue;
       if (v.targetBarricadeId) {
@@ -3413,6 +3551,26 @@ export class GameSim {
       this.fightMilitary(u, nearest, u.team, dt);
       return;
     }
+    if (u.kingHeld) {
+      const holdNote = stepHaul(s, u, dt);
+      if (holdNote && u.team === this.localTeam) this.addToast(holdNote);
+      return;
+    }
+    if (u.rallyPoint) {
+      moveTowards(u.pos, u.rallyPoint, u.speed, dt);
+      if (dist(u.pos, u.rallyPoint) < 8) {
+        if (u.kingPatrol && u.engageFrom) {
+          const next = u.engageFrom;
+          u.engageFrom = u.rallyPoint;
+          u.rallyPoint = next;
+        } else {
+          u.rallyPoint = undefined;
+        }
+      }
+      const walkNote = stepHaul(s, u, dt);
+      if (walkNote && u.team === this.localTeam) this.addToast(walkNote);
+      return;
+    }
     const dest = orderTarget(s, u);
     if (dest) moveTowards(u.pos, dest, u.speed, dt);
     const note = stepHaul(s, u, dt);
@@ -3637,7 +3795,15 @@ export class GameSim {
         }
         if (u.rallyPoint) {
           moveTowards(u.pos, u.rallyPoint, u.speed, dt);
-          if (dist(u.pos, u.rallyPoint) < 5) u.rallyPoint = undefined;
+          if (dist(u.pos, u.rallyPoint) < 5) {
+            if (u.kingPatrol && u.engageFrom) {
+              const next = u.engageFrom;
+              u.engageFrom = u.rallyPoint;
+              u.rallyPoint = next;
+            } else {
+              u.rallyPoint = undefined;
+            }
+          }
           continue;
         }
       }
@@ -4235,7 +4401,7 @@ export class GameSim {
       this.cleanupDeaths();
       this.tickBasilisk(dt);
       this.tickPeonQueues(dt);
-      const livingPeons = new Set(this.basiliskGatherers(this.localTeam).map((u) => u.id));
+      const livingPeons = new Set(this.basiliskCommandables(this.localTeam).map((u) => u.id));
       s.selectedVillagerIds = s.selectedVillagerIds.filter((id) => livingPeons.has(id));
       if (s.keeps.you.hp <= 0 && s.keeps.foe.hp <= 0) {
         this.finishMatch("Stalemate. Both keeps are broken.", null);
@@ -5052,6 +5218,7 @@ export class GameSim {
       seed: snap.mapSeed,
     };
     s.mapId = snap.mapId;
+    s.mapSeed = snap.mapSeed;
     s.time = Math.max(s.time, snap.time);
     s.phase = snap.phase;
     s.paused = this.linkDown ? true : snap.paused;
@@ -5370,6 +5537,12 @@ export class GameSim {
       selectedBuildingKind: selected?.kind ?? null,
       selectedKeepTeam: s.selectedKeepTeam,
       selectedPeonCount: s.selectedVillagerIds.length,
+      selectedCanPossess: (() => {
+        if (!s.basilisk || s.kingController[this.localTeam] !== "player") return false;
+        if (s.selectedVillagerIds.length !== 1) return false;
+        const body = s.units.find((u) => u.id === s.selectedVillagerIds[0]);
+        return !!body && body.fromBarracks && body.hp > 0 && body.team === this.localTeam && !body.npcKing;
+      })(),
       selectedRanks: selected ? { damage: selected.damageRank + 1, rate: selected.rateRank + 1 } : null,
       selectedCanUpgradeDamage: canUpgradeStructure && selected!.damageRank < 2,
       selectedCanUpgradeRate: canUpgradeStructure && selected!.rateRank < 2,
@@ -5493,9 +5666,11 @@ export function hitTest(s: GameState, x: number, y: number): RectHit | null {
     if (dist({ x, y }, n.pos) < 36) return { kind: "node", id: n.id };
   }
   if (s.basilisk) {
+    if (wheatPatchAt(s.mapSeed, { x, y })) return { kind: "work", id: "farm" };
     let best: { kind: "farm" | "hunt" | "gold" | "wood"; d: number } | null = null;
     for (const team of ["you", "foe"] as const) {
       for (const site of allWorkSites(team)) {
+        if (site.kind === "farm") continue;
         const d = dist({ x, y }, site.pos);
         if (d < 32 && (!best || d < best.d)) best = { kind: site.kind, d };
       }

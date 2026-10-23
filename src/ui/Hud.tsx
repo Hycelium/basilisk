@@ -36,17 +36,21 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
       <div className="hud-top">
         {realm ? (
           <>
-            <div className="stat">
-              <span className="label">RANK</span>
-              <span className="value">{realm.rankLabel}</span>
-            </div>
-            <div className="stat">
-              <span className="label">CARRY</span>
-              <span className="value">
-                {Math.floor(realm.carry)}/{LOAD_SIZE}
-                {realm.carryKind ? ` ${WORK_LABEL[realm.carryKind]}` : ""}
-              </span>
-            </div>
+            {!(realm.youAreKing && !ui.possessed) && (
+              <>
+                <div className="stat">
+                  <span className="label">RANK</span>
+                  <span className="value">{realm.rankLabel}</span>
+                </div>
+                <div className="stat">
+                  <span className="label">CARRY</span>
+                  <span className="value">
+                    {Math.floor(realm.carry)}/{LOAD_SIZE}
+                    {realm.carryKind ? ` ${WORK_LABEL[realm.carryKind]}` : ""}
+                  </span>
+                </div>
+              </>
+            )}
             <div className="stat">
               <span className="label">FOOD</span>
               <span className="value">{realm.food}</span>
@@ -71,12 +75,14 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
                 {ui.peonCount}/{ui.peonCap}
               </span>
             </div>
-            <div className="stat">
-              <span className="label">KILLS</span>
-              <span className="value">
-                {realm.youAreKing ? realm.kills : `${realm.kills}/${KING_KILL_NEED}`}
-              </span>
-            </div>
+            {!(realm.youAreKing && !ui.possessed) && (
+              <div className="stat">
+                <span className="label">KILLS</span>
+                <span className="value">
+                  {realm.youAreKing ? realm.kills : `${realm.kills}/${KING_KILL_NEED}`}
+                </span>
+              </div>
+            )}
             {!realm.youAreKing && (
               <div className="stat crown-hint">
                 <span className="label">CROWN</span>

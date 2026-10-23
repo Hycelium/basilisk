@@ -1,7 +1,8 @@
 import { UNIT_DEFS, VILLAGER_HP, VILLAGER_SPEED, PEON_DAMAGE } from "./balance";
-import { allWorkSites, chokePoints, type WorkKind } from "./basiliskMap";
+import { allWorkSites, BASILISK_SEED, chokePoints, type WorkKind } from "./basiliskMap";
 import { keepPos } from "./map";
 import type { GameState, KingController, KingOrder, Team, Unit, UnitKind, Vec2, Villager, WaveSpec } from "./types";
+import { farmPlots, wheatPatchAt } from "./wheat";
 
 export const BASILISK_START_EACH = 8;
 export const BASILISK_SOFT_CAP = 15;
@@ -14,6 +15,8 @@ export const BASILISK_JOIN_WAIT = 8;
 export const KING_TAX = 0.15;
 export const LOAD_SIZE = 10;
 export const FILL_RATE = 4;
+/** Fast enough that walking across a grain patch fills a load. */
+export const WHEAT_FILL_RATE = 18;
 export const WORK_REACH = 16;
 export const KEEP_REACH = 26;
 export const KING_KILL_NEED = 5;
@@ -210,8 +213,18 @@ export function payDeposit(state: GameState, u: Unit) {
   return true;
 }
 
-export function nearestWork(team: Team, pos: Vec2, kind?: WorkKind | null) {
-  const sites = kind ? allWorkSites(team).filter((s) => s.kind === kind) : allWorkSites(team);
+export function nearestWork(team: Team, pos: Vec2, kind?: WorkKind | null, seed = BASILISK_SEED) {
+  const plots = farmPlots(seed, team);
+  const useWheat = plots.length > 0;
+  const sites: { kind: WorkKind; pos: Vec2 }[] = [];
+  for (const site of allWorkSites(team)) {
+    if (kind && site.kind !== kind) continue;
+    if (site.kind === "farm" && useWheat) continue;
+    sites.push(site);
+  }
+  if (useWheat && (!kind || kind === "farm")) {
+    for (const p of plots) sites.push({ kind: "farm", pos: { x: p.x, y: p.y } });
+  }
   let best = sites[0] ?? null;
   let bestD = Infinity;
   for (const site of sites) {
@@ -222,6 +235,12 @@ export function nearestWork(team: Team, pos: Vec2, kind?: WorkKind | null) {
     }
   }
   return best ? { ...best, dist: bestD } : null;
+}
+
+function wheatWantsFill(state: GameState, u: Unit) {
+  if (u.carryKind && u.carryKind !== "farm") return false;
+  if (u.workKind === "farm" || u.workKind == null) return true;
+  return u.id === state.possessedId;
 }
 
 /** Fill at a node or dump at the keep. Returns a toast label on deposit or rank-up. */
@@ -244,8 +263,13 @@ export function stepHaul(state: GameState, u: Unit, dt: number) {
     }
     return null;
   }
+  if (wheatWantsFill(state, u) && wheatPatchAt(state.mapSeed, u.pos)) {
+    u.carryKind = "farm";
+    u.carry = Math.min(LOAD_SIZE, (u.carry ?? 0) + WHEAT_FILL_RATE * dt);
+    return null;
+  }
   const want = u.carryKind ?? u.workKind;
-  const near = nearestWork(u.team, u.pos, want);
+  const near = nearestWork(u.team, u.pos, want, state.mapSeed);
   if (!near || near.dist > WORK_REACH) return null;
   if (!u.carryKind) u.carryKind = near.kind;
   if (u.carryKind !== near.kind) return null;
@@ -253,15 +277,20 @@ export function stepHaul(state: GameState, u: Unit, dt: number) {
   return null;
 }
 
-export function haulDestination(u: Unit): Vec2 | null {
+export function haulDestination(u: Unit, seed = BASILISK_SEED): Vec2 | null {
   if (u.lifeStage !== "gatherer") return null;
   if ((u.carry ?? 0) >= LOAD_SIZE) return keepPos(u.team);
-  const site = nearestWork(u.team, u.pos, u.workKind ?? u.carryKind);
-  return site?.pos ?? null;
+  const onGrain =
+    (u.carryKind === "farm" || u.workKind === "farm" || u.workKind == null) && wheatPatchAt(seed, u.pos);
+  if (onGrain) return { x: u.pos.x, y: u.pos.y };
+  if (u.carryKind && (u.carry ?? 0) > 0) {
+    return nearestWork(u.team, u.pos, u.carryKind, seed)?.pos ?? null;
+  }
+  return nearestWork(u.team, u.pos, u.workKind, seed)?.pos ?? null;
 }
 
 export function orderTarget(state: GameState, u: Unit): Vec2 | null {
-  if (u.lifeStage === "gatherer") return haulDestination(u);
+  if (u.lifeStage === "gatherer") return haulDestination(u, state.mapSeed);
   const order = state.kingOrder[u.team];
   if (order === "gather") return keepPos(u.team);
   const chokes = chokePoints();

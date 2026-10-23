@@ -96,6 +96,11 @@ export function lanePathX(seed: number, team: Team, lane: Lane, y: number) {
   return roadCenterX(seed, lane, y) + (team === "you" ? -13 : 13);
 }
 
+/** Distance from x to the nearest road centerline at y. */
+export function roadGap(seed: number, x: number, y: number) {
+  return Math.min(...mapLanes(seed).map((lane) => Math.abs(x - roadCenterX(seed, lane, y))));
+}
+
 /** Some generated worlds have a cross-map river; location/shape is deterministic. */
 export function riverSpec(seed: number) {
   if (isBasiliskSeed(seed)) {

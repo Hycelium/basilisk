@@ -49,6 +49,7 @@ const defaultUi: UiSnapshot = {
   selectedBuildingKind: null,
   selectedKeepTeam: null,
   selectedPeonCount: 0,
+  selectedCanPossess: false,
   selectedRanks: null,
   selectedCanUpgradeDamage: false,
   selectedCanUpgradeRate: false,
@@ -169,6 +170,13 @@ export default function App() {
     canvasRef.current?.requestPointerLock();
   }, []);
   const [clusterOpen, setClusterOpen] = useState(false);
+  const [kingTables, setKingTables] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+    const phone = Math.min(window.innerWidth, window.innerHeight) < 600;
+    const mobileUa = /Android|iPhone|iPod/i.test(navigator.userAgent);
+    return !(coarse || phone || mobileUa);
+  });
   const [touchDrag, setTouchDrag] = useState<TouchDragMode>(() => {
     try {
       return localStorage.getItem(DRAG_MODE_KEY) === "camera" ? "camera" : "select";
@@ -564,7 +572,11 @@ export default function App() {
           (hit?.kind === "unit" &&
             state.basilisk &&
             state.units.some(
-              (u) => u.id === Number(hit.id) && u.team === side && u.lifeStage === "gatherer" && !u.npcKing,
+              (u) =>
+                u.id === Number(hit.id) &&
+                u.team === side &&
+                !u.npcKing &&
+                (u.lifeStage === "gatherer" || (sim.isLocalKing() && u.fromBarracks)),
             ));
         const ownStructure =
           (hit?.kind === "building" && state.buildings.some((b) => b.id === Number(hit.id) && b.team === side)) ||
@@ -581,9 +593,10 @@ export default function App() {
         (sim.getState().basilisk || (sim.getMatchMode() !== "pvp" && !touch && ev.button === 0))
       ) {
         const target = sim.getState().units.find((u) => u.id === Number(hit.id));
-        const kingPickingPeon =
-          sim.isLocalKing() && !sim.getState().possessedId && target?.lifeStage === "gatherer";
-        if (!kingPickingPeon && sim.tryPossess(Number(hit.id))) {
+        const kingRts = sim.isLocalKing() && sim.getState().possessedId == null;
+        const kingPickingPeon = kingRts && target?.lifeStage === "gatherer";
+        const kingPickingTroop = kingRts && !!target?.fromBarracks;
+        if (!kingPickingPeon && !kingPickingTroop && sim.tryPossess(Number(hit.id))) {
           const body = sim.getState().units.find((u) => u.id === Number(hit.id));
           r.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
           grabPointerLock();
@@ -889,6 +902,14 @@ export default function App() {
               : "Click a trained soldier to take the field. WASD move, mouse look, click to strike. Kills let you scroll the wheel out. Esc returns.",
       );
     }
+    if (ui.basilisk?.youAreKing && !prev.basilisk?.youAreKing) {
+      showHint(
+        "king-rts",
+        touch
+          ? "You hold the keep. Drag-select peons or barracks troops, then tap a field, grove, or the ground. Tables hides the labor strip."
+          : "You hold the keep. Select peons or barracks troops, then right-click orders. Hide Tables for a clear field.",
+      );
+    }
     if (ui.selectedPeonCount > 0 && prev.selectedPeonCount === 0) {
       showHint(
         touch ? "touch-order" : "mouse-order",
@@ -930,6 +951,7 @@ export default function App() {
   const compactHud = layout.layout === "column" || layout.phone;
   const compactBuild = layout.layout === "column" && layout.phone;
 
+  const basiliskKing = !!ui.basilisk?.youAreKing && !ui.possessed;
   const clusterActions: ClusterAction[] = [
     {
       id: "recall",
@@ -942,7 +964,19 @@ export default function App() {
         beep(620, 0.12);
       },
     },
-    {
+  ];
+  if (basiliskKing) {
+    clusterActions.push({
+      id: "tables",
+      icon: "☰",
+      label: kingTables ? "Hide tables" : "Tables",
+      hint: "Show or hide the labor and crown strips",
+      active: kingTables,
+      onPress: () => setKingTables((open) => !open),
+    });
+  }
+  if (!ui.basilisk) {
+    clusterActions.push({
       id: "garrison",
       icon: "🏰",
       label: "Garrison",
@@ -953,7 +987,9 @@ export default function App() {
         refreshUi();
         beep(560);
       },
-    },
+    });
+  }
+  clusterActions.push(
     {
       id: "patrol",
       icon: "⇄",
@@ -989,7 +1025,7 @@ export default function App() {
         setZoomT(rendererRef.current?.getZoomT() ?? 0.4);
       },
     },
-  ];
+  );
   if (fsSupported) {
     clusterActions.push({
       id: "fullscreen",
@@ -1050,7 +1086,7 @@ export default function App() {
           },
         });
       }
-    } else if (hit?.kind === "node") {
+    } else if (hit?.kind === "node" || hit?.kind === "work") {
       radialItems.push({
         id: "gather",
         icon: "⛏",
@@ -1060,6 +1096,29 @@ export default function App() {
           sim.click(hit, world);
           pushTapMarker(x, y, "gather", "Gather");
           refreshUi();
+        },
+      });
+    }
+    if (
+      basiliskKing &&
+      hit?.kind === "unit" &&
+      state.units.some(
+        (u) => u.id === Number(hit.id) && u.team === sim.getLocalTeam() && u.fromBarracks && !u.npcKing,
+      )
+    ) {
+      radialItems.unshift({
+        id: "possess",
+        icon: "👁",
+        label: "Enter body",
+        tone: "move",
+        onPress: () => {
+          const id = Number(hit.id);
+          if (!sim.tryPossess(id)) return;
+          const body = sim.getState().units.find((u) => u.id === id);
+          rendererRef.current?.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
+          grabPointerLock();
+          refreshUi();
+          beep(360, 0.08);
         },
       });
     }
@@ -1225,10 +1284,10 @@ export default function App() {
               {m.label && <em>{m.label}</em>}
             </span>
           ))}
-          {ui.selectedPeonCount > 0 && ui.phase === "running" && !sheetOpen && !ui.basilisk && (
+          {ui.selectedPeonCount > 0 && ui.phase === "running" && !sheetOpen && (!ui.basilisk || basiliskKing) && (
             <div className="unit-command-bar" role="toolbar" aria-label="Peon orders">
               <strong>
-                {ui.selectedPeonCount} peon{ui.selectedPeonCount === 1 ? "" : "s"}
+                {ui.selectedPeonCount} selected
               </strong>
               <button
                 type="button"
@@ -1253,18 +1312,37 @@ export default function App() {
               >
                 Stop
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  sim.garrisonVillagers(sim.getLocalTeam());
-                  refreshUi();
-                  beep(560);
-                }}
-                disabled={ui.keepGarrisoned >= ui.keepGarrisonMax}
-                title="Garrison peons in the keep"
-              >
-                Garrison
-              </button>
+              {ui.selectedCanPossess && (
+                <button
+                  type="button"
+                  title="Drive this barracks soldier in first person"
+                  onClick={() => {
+                    const id = sim.getState().selectedVillagerIds[0];
+                    if (id == null || !sim.tryPossess(id)) return;
+                    const body = sim.getState().units.find((u) => u.id === id);
+                    rendererRef.current?.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
+                    grabPointerLock();
+                    refreshUi();
+                    beep(360, 0.08);
+                  }}
+                >
+                  Enter body
+                </button>
+              )}
+              {!ui.basilisk && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    sim.garrisonVillagers(sim.getLocalTeam());
+                    refreshUi();
+                    beep(560);
+                  }}
+                  disabled={ui.keepGarrisoned >= ui.keepGarrisonMax}
+                  title="Garrison peons in the keep"
+                >
+                  Garrison
+                </button>
+              )}
               <button
                 type="button"
                 className="ghost dismiss"
@@ -1299,9 +1377,9 @@ export default function App() {
               onDismiss={dismissRadial}
             />
           )}
-          {ui.phase === "running" && !ui.basilisk && (
+          {ui.phase === "running" && (!ui.basilisk || basiliskKing) && (
           <div className="banner-rail">
-            {ui.idlePeonCount > 0 && (
+            {!ui.basilisk && ui.idlePeonCount > 0 && (
               <button
                 type="button"
                 className="pennant work-pennant"
@@ -1315,6 +1393,17 @@ export default function App() {
               >
                 To work
                 <span>{ui.idlePeonCount}</span>
+              </button>
+            )}
+            {basiliskKing && (
+              <button
+                type="button"
+                className={`pennant${kingTables ? " active" : ""}`}
+                aria-pressed={kingTables}
+                onClick={() => setKingTables((open) => !open)}
+                title="Show or hide the labor and crown strips"
+              >
+                {kingTables ? "Hide tables" : "Tables"}
               </button>
             )}
             <ControlCluster
@@ -1333,10 +1422,10 @@ export default function App() {
             />
           </div>
           )}
-          {!layout.touch && (!ui.basilisk || (ui.basilisk.youAreKing && !ui.possessed)) && (
+          {!layout.touch && (!ui.basilisk || basiliskKing) && (
             <p className="cam-hint">
-              {ui.basilisk?.youAreKing
-                ? "Select peons, then Wood/Gold/Farm/Hunt — or click the grove, mine, field, or deer"
+              {basiliskKing
+                ? "Select peons or barracks troops, then right-click a field, grove, mine, or the ground"
                 : "Drag-select · right-click orders · right-drag orbit · Shift-drag pan · wheel zoom"}
             </p>
           )}
@@ -1351,11 +1440,14 @@ export default function App() {
           {!layout.touch && ui.basilisk?.youAreKing && ui.possessed && ui.phase === "running" && (
             <p className="cam-hint">WASD walk · Esc returns to the keep · only barracks soldiers</p>
           )}
-          {ui.basilisk?.youAreKing && ui.phase === "running" && !(layout.fpsTouch && ui.possessed) && (
+          {basiliskKing && ui.phase === "running" && kingTables && (
             <div className="king-panel">
               {!ui.possessed && (
                 <div className="king-orders labor-orders" role="toolbar" aria-label="Peon labor">
                   <strong>Labor{ui.selectedPeonCount > 0 ? ` · ${ui.selectedPeonCount}` : " · all"}</strong>
+                  <button type="button" className="ghost" onClick={() => setKingTables(false)}>
+                    Hide
+                  </button>
                   {(["wood", "gold", "farm", "hunt"] as WorkKind[]).map((kind) => {
                     const count = ui.basilisk?.labor[kind] ?? 0;
                     const top =

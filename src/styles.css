@@ -1980,6 +1980,16 @@ button:disabled {
   max-width: calc(100% - 16px);
 }
 
+.stage:has(.unit-command-bar) .king-panel {
+  bottom: 58px;
+}
+
+.is-phone .king-panel,
+.is-touch .king-panel {
+  bottom: 56px;
+  width: calc(100% - 16px);
+}
+
 .king-orders {
   display: flex;
   flex-wrap: wrap;

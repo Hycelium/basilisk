@@ -523,7 +523,7 @@ export class GameRenderer {
   }
 
   lookBy(dx: number, dy: number, scale = 1) {
-    this.fpsYaw -= dx * 0.0024 * scale;
+    this.fpsYaw += dx * 0.0024 * scale;
     this.fpsPitch = THREE.MathUtils.clamp(this.fpsPitch - dy * 0.0022 * scale, -1.15, 1.1);
   }
 
@@ -1668,7 +1668,7 @@ export class GameRenderer {
         obj.add(selection);
         obj.userData.selection = selection;
       }
-      selection.visible = peonLook && state.selectedVillagerIds.includes(u.id);
+      selection.visible = state.selectedVillagerIds.includes(u.id);
       if (state.possessedId === u.id) {
         obj.rotation.y = Math.PI - this.fpsYaw;
       } else {

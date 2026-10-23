@@ -67,6 +67,10 @@ export interface Unit {
   rallyPoint?: Vec2;
   /** Spot where auto-engage broke off. The unit returns here before chasing again. */
   engageFrom?: Vec2;
+  /** King told this soul to hold. They stay put until given a new order. */
+  kingHeld?: boolean;
+  /** King patrol: walk rallyPoint ↔ engageFrom. */
+  kingPatrol?: boolean;
   aiHeldForRush?: boolean;
   aiStagingPoint?: Vec2;
   /** Trebuchet only. Packed to roll; unpacked and ready to throw. */
@@ -314,6 +318,7 @@ export interface MapDef {
 export interface GameState {
   phase: GamePhase;
   mapId: MapId;
+  mapSeed: number;
   time: number;
   paused: boolean;
   speed: 1 | 2;
@@ -427,6 +432,8 @@ export interface UiSnapshot {
   selectedBuildingKind: BuildingKind | null;
   selectedKeepTeam: Team | null;
   selectedPeonCount: number;
+  /** One selected barracks soldier the king can possess. */
+  selectedCanPossess: boolean;
   selectedRanks: { damage: number; rate: number } | null;
   selectedCanUpgradeDamage: boolean;
   selectedCanUpgradeRate: boolean;

@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { WORLD_H, WORLD_W } from "./balance";
 import { groundLookForSeed, groundTexture, wheatTexture } from "./groundLooks";
 import { buildRockPile, buildTree, SCENERY_TREES } from "./models/nature";
-import { BACK_FIELD, MAP_CX, mapBounds, mapLanes, riverSpec, rngFromSeed, roadCenterX } from "./map";
+import { BACK_FIELD, MAP_CX, mapBounds, mapLanes, riverSpec, rngFromSeed, roadCenterX, roadGap } from "./map";
+import { wheatPatches } from "./wheat";
 import { deerSpots, FORD_X, isBasiliskSeed, SPINE_Y } from "./basiliskMap";
 import { buildBackdrop, buildCliffs, buildValleyLakes, canyonCenterX, fbm, valleyLakeT } from "./landscape";
 import type { Team } from "./types";
@@ -49,11 +50,6 @@ function makeRibbon(points: THREE.Vector3[], width: number, material: THREE.Mate
   const mesh = new THREE.Mesh(geo, material);
   mesh.receiveShadow = true;
   return mesh;
-}
-
-/** Distance from x to the nearest road centerline at y. */
-function roadGap(seed: number, x: number, y: number) {
-  return Math.min(...mapLanes(seed).map((lane) => Math.abs(x - roadCenterX(seed, lane, y))));
 }
 
 function sampleGround(simX: number, simY: number, seed: number, river: ReturnType<typeof riverSpec>) {
@@ -314,7 +310,6 @@ function buildBasiliskFords(seed: number, river: ReturnType<typeof riverSpec>) {
 /** Striped crop fields draped on the terrain, kept clear of roads and the river. */
 function buildWheatPatches(seed: number, river: ReturnType<typeof riverSpec>) {
   const g = new THREE.Group();
-  const rng = rngFromSeed(seed ^ 0x3c3c);
   const tex = wheatTexture();
   const mat = new THREE.MeshStandardMaterial({
     map: tex,
@@ -323,19 +318,9 @@ function buildWheatPatches(seed: number, river: ReturnType<typeof riverSpec>) {
     polygonOffset: true,
     polygonOffsetFactor: -1,
   });
-  const { minX, width } = mapBounds(seed);
-  const patches = Math.round((14 * width) / WORLD_W);
-  for (let tries = 0, placed = 0; tries < patches * 4 && placed < patches; tries++) {
-    const cx = minX + 30 + rng() * (width - 60);
-    const cy = 70 + rng() * (WORLD_H - 120);
-    const w = 30 + rng() * 30;
-    const d = 22 + rng() * 22;
-    const r = Math.hypot(w, d) / 2;
-    const riverY = river.y + Math.sin((cx / WORLD_W) * Math.PI * 2 + river.phase) * river.amplitude;
-    if (roadGap(seed, cx, cy) < r + 18) continue;
-    if (river.enabled && Math.abs(cy - riverY) < r + river.width) continue;
-
-    const geo = new THREE.PlaneGeometry(w, d, 12, 12).rotateX(-Math.PI / 2).rotateY(rng() * Math.PI);
+  for (const patch of wheatPatches(seed)) {
+    const { x: cx, y: cy, w, d, rot } = patch;
+    const geo = new THREE.PlaneGeometry(w, d, 12, 12).rotateX(-Math.PI / 2).rotateY(rot);
     const p = geo.attributes.position as THREE.BufferAttribute;
     const puv = geo.attributes.uv as THREE.BufferAttribute;
     for (let j = 0; j < p.count; j++) {
@@ -348,7 +333,6 @@ function buildWheatPatches(seed: number, river: ReturnType<typeof riverSpec>) {
     m.receiveShadow = true;
     m.userData.scarField = true;
     g.add(m);
-    placed++;
   }
   return g;
 }
