@@ -62,6 +62,8 @@ interface OverlaysProps {
   onRerollMap: () => void;
   onPickJoinClan?: (team: Team) => void;
   onRejoin?: (team: Team) => void;
+  /** Phone side panel draws haul notes so they do not sit on the keep bar. */
+  hideToasts?: boolean;
 }
 
 export function Overlays({
@@ -76,6 +78,7 @@ export function Overlays({
   onRerollMap,
   onPickJoinClan,
   onRejoin,
+  hideToasts,
 }: OverlaysProps) {
   const [shareNote, setShareNote] = useState("");
   const [clan, setClan] = useState<Team>("you");
@@ -100,7 +103,7 @@ export function Overlays({
           <img className="menu-logo" src={`${import.meta.env.BASE_URL}icons/icon-512.png`} alt="" />
           <h1>Basilisk</h1>
           <p className="keep-lvl">Twin valleys · one life at a time</p>
-          <p className="menu-lead">Hauls earn XP. Most peons stay a long tail. A few Chosen promote, and the highest XP wears the sticky crown and skims every dump.</p>
+          <p className="menu-lead">Most peons only haul. A few chosen can promote. An AI king already holds the keep.</p>
           <p className="phone-controls-tip">On a phone: left stick walks, drag the right side to look, Fire to strike.</p>
           <p className="foe-brain-tease">{playerRecord}</p>
 
@@ -259,7 +262,7 @@ export function Overlays({
         </div>
       )}
 
-      {ui.phase === "running" && ui.toasts.length > 0 && (
+      {ui.phase === "running" && !hideToasts && ui.toasts.length > 0 && (
         <div className="toasts">
           {ui.toasts.slice(-2).map((t, i) => (
             <div key={`${t}-${i}`} className="toast">

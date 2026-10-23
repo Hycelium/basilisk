@@ -44,8 +44,9 @@ function compute(): LayoutInfo {
   const width = window.innerWidth;
   const height = window.innerHeight;
   const landscape = width > height;
-  const layout: LayoutMode = landscape && width >= 640 ? "side" : "column";
   const phone = Math.min(width, height) < 600;
+  // Phones keep the valley clear for the keep bar. Stats and orders live in the side panel.
+  const layout: LayoutMode = phone || (landscape && width >= 640) ? "side" : "column";
   const touch = (window.matchMedia?.("(pointer: coarse)").matches ?? false) || navigator.maxTouchPoints > 0;
   const android = detectAndroid();
   const fpsTouch = android || detectIphone() || (phone && touch);

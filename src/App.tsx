@@ -6,7 +6,6 @@ import type { BuildingKind, CombatEventKind, KingOrder, RectHit, Team, TrainKind
 import { BUILD_COST } from "./game/balance";
 import { Hud } from "./ui/Hud";
 import { KeepTugBar } from "./ui/KeepTugBar";
-import { ClanLadder } from "./ui/ClanLadder";
 import { LaborSteppers } from "./ui/LaborSteppers";
 import { BuildBar } from "./ui/BuildBar";
 import { DetailSheet } from "./ui/DetailSheet";
@@ -177,7 +176,6 @@ export default function App() {
     canvasRef.current?.requestPointerLock();
   }, []);
   const [clusterOpen, setClusterOpen] = useState(false);
-  const [clanXpOpen, setClanXpOpen] = useState(true);
   const [kingTables, setKingTables] = useState(() => {
     if (typeof window === "undefined") return true;
     const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
@@ -964,14 +962,12 @@ export default function App() {
   };
 
   const sheetOpen = ui.selectedKeepTeam === ui.localTeam || Boolean(ui.selectedBuildingId && ui.selectedBuildingKind);
-  const compactHud = layout.layout === "column" || layout.phone;
+  const compactHud = layout.layout === "column";
   const compactBuild = layout.layout === "column" && layout.phone;
 
   const basiliskKing = !!ui.basilisk?.youAreKing && !ui.possessed;
-  const rtsCommands = !ui.basilisk || basiliskKing;
-  const clusterActions: ClusterAction[] = [];
-  if (rtsCommands) {
-    clusterActions.push({
+  const clusterActions: ClusterAction[] = [
+    {
       id: "recall",
       icon: "🔔",
       label: "Recall",
@@ -981,18 +977,8 @@ export default function App() {
         refreshUi();
         beep(620, 0.12);
       },
-    });
-  }
-  if (ui.basilisk && ui.phase === "running") {
-    clusterActions.push({
-      id: "clan-xp",
-      icon: "♔",
-      label: clanXpOpen ? "Hide clan XP" : "Clan XP",
-      hint: "Show or hide the clan XP ranking",
-      active: clanXpOpen,
-      onPress: () => setClanXpOpen((open) => !open),
-    });
-  }
+    },
+  ];
   if (basiliskKing) {
     clusterActions.push({
       id: "tables",
@@ -1017,45 +1003,43 @@ export default function App() {
       },
     });
   }
-  if (rtsCommands) {
-    clusterActions.push(
-      {
-        id: "patrol",
-        icon: "⇄",
-        label: "Patrol",
-        hint: layout.touch
-          ? "Then tap a destination. They walk the route and fight nearby."
-          : "Then right-click a destination (P). They walk the route and fight nearby.",
-        disabled: ui.selectedPeonCount === 0,
-        active: patrolMode,
-        onPress: () => setPatrol(!patrolModeRef.current),
-      },
-      {
-        id: "barricade",
-        icon: "🪵",
-        label: "Barricade",
-        hint: "Build a barricade across a road",
-        active: ui.buildSelection === "barricade",
-        disabled: ui.phase !== "running",
-        onPress: () => {
-          if (sim.getState().buildSelection === "barricade") sim.cancelSelection();
-          else sim.selectBuild("barricade");
-          refreshUi();
-          beep(280);
-        },
-      },
-    );
-  }
-  clusterActions.push({
-    id: "reset-cam",
-    icon: "⟲",
-    label: "Reset view",
-    hint: "Reset camera (R)",
-    onPress: () => {
-      rendererRef.current?.resetCamera();
-      setZoomT(rendererRef.current?.getZoomT() ?? 0.4);
+  clusterActions.push(
+    {
+      id: "patrol",
+      icon: "⇄",
+      label: "Patrol",
+      hint: layout.touch
+        ? "Then tap a destination. They walk the route and fight nearby."
+        : "Then right-click a destination (P). They walk the route and fight nearby.",
+      disabled: ui.selectedPeonCount === 0,
+      active: patrolMode,
+      onPress: () => setPatrol(!patrolModeRef.current),
     },
-  });
+    {
+      id: "barricade",
+      icon: "🪵",
+      label: "Barricade",
+      hint: "Build a barricade across a road",
+      active: ui.buildSelection === "barricade",
+      disabled: ui.phase !== "running",
+      onPress: () => {
+        if (sim.getState().buildSelection === "barricade") sim.cancelSelection();
+        else sim.selectBuild("barricade");
+        refreshUi();
+        beep(280);
+      },
+    },
+    {
+      id: "reset-cam",
+      icon: "⟲",
+      label: "Reset view",
+      hint: "Reset camera (R)",
+      onPress: () => {
+        rendererRef.current?.resetCamera();
+        setZoomT(rendererRef.current?.getZoomT() ?? 0.4);
+      },
+    },
+  );
   if (fsSupported) {
     clusterActions.push({
       id: "fullscreen",
@@ -1192,14 +1176,108 @@ export default function App() {
     .filter(Boolean)
     .join(" ");
 
-  return (
-    <div className={pageClass} ref={pageRef}>
-      <div className="phone shell">
-        <header className="brand">
-          <span className="brand-mark">Basilisk</span>
-          <span className="brand-sub">three.js siege · dusk valley</span>
-        </header>
+  const fieldChrome = (
+    <>
+      {patrolMode && ui.selectedPeonCount > 0 && (
+        <div className="mode-banner" role="status">
+          Patrol: {layout.touch ? "tap" : "right-click"} the destination
+        </div>
+      )}
+      {hint && (
+        <button type="button" className="hint-toast" onClick={dismissHint} aria-live="polite">
+          {hint.text}
+        </button>
+      )}
+      {ui.phase === "running" && (!ui.basilisk || basiliskKing) && (
+        <div className="banner-rail">
+          {ui.idlePeonCount > 0 && (!ui.basilisk || basiliskKing) && (
+            <button
+              type="button"
+              className="pennant work-pennant"
+              aria-label={`Send ${ui.idlePeonCount} idle peon${ui.idlePeonCount === 1 ? "" : "s"} back to work`}
+              title={`Send ${ui.idlePeonCount} idle peon${ui.idlePeonCount === 1 ? "" : "s"} back to work`}
+              onClick={() => {
+                sim.sendPeonsToWork(sim.getLocalTeam());
+                refreshUi();
+                beep(340);
+              }}
+            >
+              To work
+              <span>{ui.idlePeonCount}</span>
+            </button>
+          )}
+          {basiliskKing && (
+            <button
+              type="button"
+              className={`pennant${kingTables ? " active" : ""}`}
+              aria-pressed={kingTables}
+              onClick={() => setKingTables((open) => !open)}
+              title="Show or hide the labor and crown strips"
+            >
+              {kingTables ? "Hide tables" : "Tables"}
+            </button>
+          )}
+          <ControlCluster
+            expanded={clusterOpen}
+            onToggle={setClusterOpen}
+            actions={clusterActions}
+            touch={layout.touch}
+            flip={sheetOpen}
+            dragMode={touchDrag}
+            onDragMode={setTouchDrag}
+            zoom={zoomT}
+            onZoom={(t) => {
+              rendererRef.current?.setZoomT(t);
+              setZoomT(t);
+            }}
+          />
+        </div>
+      )}
+      {basiliskKing && ui.phase === "running" && kingTables && (
+        <div className="king-panel">
+          {!ui.possessed && (
+            <div className="king-orders labor-orders" role="toolbar" aria-label="Peon labor">
+              <div className="labor-head">
+                <strong>Labor</strong>
+                <button type="button" className="ghost" onClick={() => setKingTables(false)}>
+                  Hide
+                </button>
+              </div>
+              <LaborSteppers
+                labor={ui.basilisk?.labor ?? { wood: 0, gold: 0, farm: 0, hunt: 0 }}
+                idle={ui.idlePeonCount}
+                peonCount={ui.peonCount}
+                onAdjust={(kind, delta) => {
+                  sim.adjustBasiliskLabor(kind, delta);
+                  refreshUi();
+                  beep(delta > 0 ? 400 : 280);
+                }}
+              />
+            </div>
+          )}
+          <div className="king-orders" role="toolbar" aria-label="King orders">
+            <strong>Crown</strong>
+            {(["gather", "hold", "hunt"] as KingOrder[]).map((order) => (
+              <button
+                key={order}
+                type="button"
+                className={ui.basilisk?.kingOrder === order ? "active" : ""}
+                onClick={() => {
+                  sim.setKingOrder(order);
+                  refreshUi();
+                  beep(400);
+                }}
+              >
+                {order === "gather" ? "Gather" : order === "hold" ? "Hold fords" : "Hunt"}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
 
+  const hud = (
         <Hud
           ui={ui}
           compact={compactHud}
@@ -1226,42 +1304,83 @@ export default function App() {
             beep(500);
           }}
         />
+  );
+
+  return (
+    <div className={pageClass} ref={pageRef}>
+      <div className="phone shell">
+        <header className="brand">
+          <span className="brand-mark">Basilisk</span>
+          <span className="brand-sub">three.js siege · dusk valley</span>
+        </header>
+
+        {layout.phone ? (
+          <div className="side-col">
+            {hud}
+            <div className="panel-dock">
+              {ui.possessed && ui.phase === "running" && (
+                <p className="panel-status">
+                  {ui.possessed.label} · {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)}
+                  {ui.possessed.kind === "trebuchet"
+                    ? ui.possessed.aimLabel
+                      ? ` · ${ui.possessed.aimLabel}`
+                      : ""
+                    : ` · vision ${Math.min(ui.possessed.visionMax, Math.floor(ui.possessed.visionScore))}/${ui.possessed.visionMax}`}
+                </p>
+              )}
+              {ui.possessed && (
+                <button
+                  type="button"
+                  className="ghost panel-leave"
+                  onClick={() => {
+                    lockWantedRef.current = false;
+                    sim.releasePossess("esc");
+                    document.exitPointerLock();
+                    refreshUi();
+                  }}
+                >
+                  Leave body
+                </button>
+              )}
+              {ui.phase === "running" && ui.toasts.length > 0 && (
+                <div className="toasts">
+                  {ui.toasts.slice(-3).map((t, i) => (
+                    <div key={`${t}-${i}`} className="toast">
+                      {t}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {fieldChrome}
+            </div>
+          </div>
+        ) : (
+          hud
+        )}
 
         <div className={sheetOpen ? "stage sheet-open" : "stage"} ref={stageRef}>
           <canvas ref={canvasRef} className={ui.possessed ? "battlefield possessed" : "battlefield"} />
           {ui.basilisk && ui.phase === "running" && <KeepTugBar ui={ui} />}
-          {ui.basilisk && ui.phase === "running" && <ClanLadder ui={ui} open={clanXpOpen} />}
           {ui.possessed && (
             <div className={`fps-hud${ui.possessed.kind === "trebuchet" ? " treb-hud" : ""}`}>
               <span className="fps-crosshair" aria-hidden />
-              <div
-                className={`fps-hp${ui.possessed.hp / Math.max(1, ui.possessed.maxHp) <= 0.35 ? " low" : ""}${ui.possessed.healing ? " healing" : ""}`}
-                role="meter"
-                aria-label="Hit points"
-                aria-valuemin={0}
-                aria-valuemax={Math.ceil(ui.possessed.maxHp)}
-                aria-valuenow={ui.possessed.hp}
-              >
-                <i style={{ width: `${Math.max(0, Math.min(1, ui.possessed.hp / Math.max(1, ui.possessed.maxHp))) * 100}%` }} />
-                <span>
-                  {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)}
-                  {ui.possessed.healing ? " · Healing" : ""}
-                </span>
-              </div>
               {ui.possessed.kind === "trebuchet" ? (
                 <>
-                  <p className="fps-banner">
-                    {ui.possessed.label}
-                    {ui.possessed.aimLabel ? ` · ${ui.possessed.aimLabel}` : " · look at a tower, then click to wind"}
-                  </p>
+                  {!layout.phone && (
+                    <p className="fps-banner">
+                      {ui.possessed.label} · {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)}
+                      {ui.possessed.aimLabel ? ` · ${ui.possessed.aimLabel}` : " · look at a tower, then click to wind"}
+                    </p>
+                  )}
                   <div className="fps-charge">
                     <i style={{ width: `${Math.round(Math.min(1, ui.possessed.charge) * 100)}%` }} />
                     <span>{ui.possessed.charge >= 1 ? "Loose!" : "Click to wind"}</span>
                   </div>
                 </>
               ) : (
+                !layout.phone && (
                 <p className="fps-banner">
-                  {ui.possessed.label} · vision{" "}
+                  {ui.possessed.label} · {ui.possessed.hp}/{Math.ceil(ui.possessed.maxHp)} · vision{" "}
                   {Math.min(ui.possessed.visionMax, Math.floor(ui.possessed.visionScore))}/{ui.possessed.visionMax}
                   {layout.fpsTouch
                     ? " · left stick · drag right to look"
@@ -1274,6 +1393,7 @@ export default function App() {
                         : " · wheel looks out"}
                   {ui.possessed.isKing ? " · KING" : ""}
                 </p>
+                )
               )}
               {layout.fpsTouch ? (
                 <TouchFpsPad
@@ -1403,16 +1523,7 @@ export default function App() {
               </button>
             </div>
           )}
-          {patrolMode && ui.selectedPeonCount > 0 && (
-            <div className="mode-banner" role="status">
-              Patrol: {layout.touch ? "tap" : "right-click"} the destination
-            </div>
-          )}
-          {hint && (
-            <button type="button" className="hint-toast" onClick={dismissHint} aria-live="polite">
-              {hint.text}
-            </button>
-          )}
+          {!layout.phone && fieldChrome}
           {radial && radialItems.length > 0 && (
             <RadialMenu
               x={radial.x}
@@ -1422,51 +1533,6 @@ export default function App() {
               items={radialItems}
               onDismiss={dismissRadial}
             />
-          )}
-          {ui.phase === "running" && (
-          <div className="banner-rail">
-            {ui.idlePeonCount > 0 && (!ui.basilisk || basiliskKing) && (
-              <button
-                type="button"
-                className="pennant work-pennant"
-                aria-label={`Send ${ui.idlePeonCount} idle peon${ui.idlePeonCount === 1 ? "" : "s"} back to work`}
-                title={`Send ${ui.idlePeonCount} idle peon${ui.idlePeonCount === 1 ? "" : "s"} back to work`}
-                onClick={() => {
-                  sim.sendPeonsToWork(sim.getLocalTeam());
-                  refreshUi();
-                  beep(340);
-                }}
-              >
-                To work
-                <span>{ui.idlePeonCount}</span>
-              </button>
-            )}
-            {basiliskKing && (
-              <button
-                type="button"
-                className={`pennant${kingTables ? " active" : ""}`}
-                aria-pressed={kingTables}
-                onClick={() => setKingTables((open) => !open)}
-                title="Show or hide the labor and crown strips"
-              >
-                {kingTables ? "Hide tables" : "Tables"}
-              </button>
-            )}
-            <ControlCluster
-              expanded={clusterOpen}
-              onToggle={setClusterOpen}
-              actions={clusterActions}
-              touch={layout.touch}
-              flip={sheetOpen}
-              dragMode={touchDrag}
-              onDragMode={setTouchDrag}
-              zoom={zoomT}
-              onZoom={(t) => {
-                rendererRef.current?.setZoomT(t);
-                setZoomT(t);
-              }}
-            />
-          </div>
           )}
           {!layout.touch && (!ui.basilisk || basiliskKing) && (
             <p className="cam-hint">
@@ -1485,47 +1551,6 @@ export default function App() {
           )}
           {!layout.touch && ui.basilisk?.youAreKing && ui.possessed && ui.phase === "running" && (
             <p className="cam-hint">WASD walk · Esc returns to the keep · only barracks soldiers</p>
-          )}
-          {basiliskKing && ui.phase === "running" && kingTables && (
-            <div className="king-panel">
-              {!ui.possessed && (
-                <div className="king-orders labor-orders" role="toolbar" aria-label="Peon labor">
-                  <div className="labor-head">
-                    <strong>Labor</strong>
-                    <button type="button" className="ghost" onClick={() => setKingTables(false)}>
-                      Hide
-                    </button>
-                  </div>
-                  <LaborSteppers
-                    labor={ui.basilisk?.labor ?? { wood: 0, gold: 0, farm: 0, hunt: 0 }}
-                    idle={ui.idlePeonCount}
-                    peonCount={ui.peonCount}
-                    onAdjust={(kind, delta) => {
-                      sim.adjustBasiliskLabor(kind, delta);
-                      refreshUi();
-                      beep(delta > 0 ? 400 : 280);
-                    }}
-                  />
-                </div>
-              )}
-              <div className="king-orders" role="toolbar" aria-label="King orders">
-                <strong>Crown</strong>
-                {(["gather", "hold", "hunt"] as KingOrder[]).map((order) => (
-                  <button
-                    key={order}
-                    type="button"
-                    className={ui.basilisk?.kingOrder === order ? "active" : ""}
-                    onClick={() => {
-                      sim.setKingOrder(order);
-                      refreshUi();
-                      beep(400);
-                    }}
-                  >
-                    {order === "gather" ? "Gather" : order === "hold" ? "Hold fords" : "Hunt"}
-                  </button>
-                ))}
-              </div>
-            </div>
           )}
           <div className="sheet-dock">
             <div className="sheet-slot">
@@ -1589,6 +1614,7 @@ export default function App() {
           <Overlays
             ui={ui}
             hideTitle={skirmish.lobby.open || skirmish.lobby.live || campaignOpen}
+            hideToasts={layout.phone}
             skirmishLive={skirmish.lobby.live}
             onRerollMap={() => {
               sim.rerollMap();

@@ -1,5 +1,5 @@
 import type { QualityInfo, QualitySetting } from "../game/render3d";
-import { LOAD_SIZE } from "../game/basilisk";
+import { KING_KILL_NEED, LOAD_SIZE } from "../game/basilisk";
 import { WORK_LABEL } from "../game/basiliskMap";
 import type { UiSnapshot } from "../game/types";
 
@@ -25,24 +25,30 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
         : "Fighting";
   const qualityLabel =
     quality.setting === "auto" ? `Auto · ${quality.tier}` : quality.setting[0].toUpperCase() + quality.setting.slice(1);
+  const farmPct = realm ? realm.trips.farm / 5 : 0;
+  const huntPct = realm ? realm.trips.hunt / 5 : 0;
+  const goldPct = realm ? realm.trips.gold / 5 : 0;
+  const woodPct = realm ? realm.trips.wood / 10 : 0;
 
   return (
     <div className={compact ? "hud compact" : "hud"}>
       <div className="hud-top">
         {realm ? (
           <>
-            <div className="stat">
-              <span className="label">{realm.rankLabel}</span>
-              <span className="value">#{realm.xpRank}</span>
-            </div>
             {!(realm.youAreKing && !ui.possessed) && (
-              <div className="stat">
-                <span className="label">CARRY</span>
-                <span className="value">
-                  {Math.floor(realm.carry)}/{LOAD_SIZE}
-                  {realm.carryKind ? ` ${WORK_LABEL[realm.carryKind]}` : ""}
-                </span>
-              </div>
+              <>
+                <div className="stat">
+                  <span className="label">RANK</span>
+                  <span className="value">{realm.rankLabel}</span>
+                </div>
+                <div className="stat">
+                  <span className="label">CARRY</span>
+                  <span className="value">
+                    {Math.floor(realm.carry)}/{LOAD_SIZE}
+                    {realm.carryKind ? ` ${WORK_LABEL[realm.carryKind]}` : ""}
+                  </span>
+                </div>
+              </>
             )}
             <div className="stat">
               <span className="label">FOOD</span>
@@ -62,10 +68,20 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
                 {ui.peonCount}/{ui.peonCap}
               </span>
             </div>
-            <div className="stat">
-              <span className="label">XP</span>
-              <span className="value">{realm.xp}</span>
-            </div>
+            {!(realm.youAreKing && !ui.possessed) && (
+              <div className="stat">
+                <span className="label">KILLS</span>
+                <span className="value">
+                  {realm.youAreKing ? realm.kills : `${realm.kills}/${KING_KILL_NEED}`}
+                </span>
+              </div>
+            )}
+            {!realm.youAreKing && (
+              <div className="stat crown-hint">
+                <span className="label">CROWN</span>
+                <span className="value">{realm.crownHint}</span>
+              </div>
+            )}
             {!compact && !realm && (
               <>
                 <div className="stat lives">
@@ -132,7 +148,34 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
           </>
         )}
       </div>
-      {realm ? null : (
+      {realm && !(realm.youAreKing && !ui.possessed) ? (
+        <div className="hud-xp-row trip-row">
+          <div className="stat keep-xp-stat">
+            <span className="label">FARM {realm.trips.farm}/5</span>
+            <div className="bar xp">
+              <div className="fill" style={{ width: `${Math.min(1, farmPct) * 100}%` }} />
+            </div>
+          </div>
+          <div className="stat keep-xp-stat">
+            <span className="label">HUNT {realm.trips.hunt}/5</span>
+            <div className="bar xp">
+              <div className="fill" style={{ width: `${Math.min(1, huntPct) * 100}%` }} />
+            </div>
+          </div>
+          <div className="stat keep-xp-stat">
+            <span className="label">GOLD {realm.trips.gold}/5</span>
+            <div className="bar xp">
+              <div className="fill" style={{ width: `${Math.min(1, goldPct) * 100}%` }} />
+            </div>
+          </div>
+          <div className="stat keep-xp-stat">
+            <span className="label">WOOD {realm.trips.wood}/10</span>
+            <div className="bar xp">
+              <div className="fill" style={{ width: `${Math.min(1, woodPct) * 100}%` }} />
+            </div>
+          </div>
+        </div>
+      ) : !realm ? (
         <div className="hud-xp-row">
           <div className="stat keep-xp-stat">
             <div
@@ -147,7 +190,7 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
             </div>
           </div>
         </div>
-      )}
+      ) : null}
       <div className="hud-controls">
         <button type="button" onClick={onPause} aria-label={ui.paused ? "Resume" : "Pause"} title="Space">
           <span className="full">{ui.paused ? "Resume" : "Pause"}</span>

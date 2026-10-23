@@ -2,7 +2,6 @@ import { basiliskMap } from "../game/basiliskMap";
 import { skirmishMap } from "../game/map";
 import type {
   BuildingKind,
-  ClanMoment,
   Coffer,
   GamePhase,
   KingController,
@@ -10,7 +9,6 @@ import type {
   Lane,
   LifeStage,
   MapDef,
-  SkimPulse,
   Team,
   SiegePhase,
   TrainKind,
@@ -197,10 +195,6 @@ export interface MatchSnapshot {
   kingController?: Record<Team, KingController>;
   kingOrder?: Record<Team, KingOrder>;
   kingId?: Record<Team, number | null>;
-  crownId?: Record<Team, number | null>;
-  kingScore?: Record<Team, number>;
-  clanMoment?: Record<Team, ClanMoment | null>;
-  lastSkim?: Record<Team, SkimPulse | null>;
   playerUnitId?: Record<Team, number | null>;
   driven?: Record<Team, number | null>;
   joinTimer?: Record<Team, number>;
