@@ -279,7 +279,7 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
   levy: {
     hp: 58, speed: 34, damage: 8, cooldown: 0.65, bounty: 11,
     towerResist: 0.05, keepMult: 0.9, siegeGap: 0.25,
-    cost: 35, woodCost: 0, foodCost: 0, trainTime: 3.8,
+    cost: 0, woodCost: 0, foodCost: 35, trainTime: 3.8,
     label: "Levy", blurb: "Cheap line · bonus vs wards",
   },
   runner: {
