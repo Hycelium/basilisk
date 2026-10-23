@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { GameRenderer, loadQualitySetting, type QualityInfo, type QualitySetting, type TouchDragMode } from "./game/render3d";
 import { GameSim, hitTest } from "./game/sim";
-import type { BuildingKind, CombatEventKind, KingOrder, RectHit, Team, TrainKind, UiSnapshot, WorkKind } from "./game/types";
+import type { BuildingKind, CombatEventKind, KingOrder, RectHit, Team, TrainKind, UiSnapshot } from "./game/types";
 import { BUILD_COST } from "./game/balance";
 import { Hud } from "./ui/Hud";
+import { KeepTugBar } from "./ui/KeepTugBar";
+import { LaborSteppers } from "./ui/LaborSteppers";
 import { BuildBar } from "./ui/BuildBar";
 import { DetailSheet } from "./ui/DetailSheet";
 import { Overlays } from "./ui/Overlays";
@@ -33,8 +35,10 @@ const defaultUi: UiSnapshot = {
   yourHp: 100,
   foeHp: 100,
   yourMaxHp: 100,
+  foeMaxHp: 100,
   yourGold: 90,
   yourWood: 80,
+  yourFood: 0,
   foeGold: 90,
   foeWood: 80,
   waveLabel: "1",
@@ -67,7 +71,7 @@ const defaultUi: UiSnapshot = {
   keepGarrisoned: 0,
   keepGarrisonMax: 5,
   canTrainPeon: false,
-  peonTrainCost: { gold: 18, wood: 0 },
+  peonTrainCost: { gold: 0, wood: 0, food: 25 },
   buildCosts: BUILD_COST,
   keepLevel: 1,
   keepXp: 0,
@@ -1209,6 +1213,9 @@ export default function App() {
 
         <div className={sheetOpen ? "stage sheet-open" : "stage"} ref={stageRef}>
           <canvas ref={canvasRef} className={ui.possessed ? "battlefield possessed" : "battlefield"} />
+          {ui.basilisk && ui.phase === "running" && (compactHud || layout.fpsTouch) && (
+            <KeepTugBar ui={ui} />
+          )}
           {ui.possessed && (
             <div className={`fps-hud${ui.possessed.kind === "trebuchet" ? " treb-hud" : ""}`}>
               <span className="fps-crosshair" aria-hidden />
@@ -1454,37 +1461,22 @@ export default function App() {
             <div className="king-panel">
               {!ui.possessed && (
                 <div className="king-orders labor-orders" role="toolbar" aria-label="Peon labor">
-                  <strong>Labor{ui.selectedPeonCount > 0 ? ` · ${ui.selectedPeonCount}` : " · all"}</strong>
-                  <button type="button" className="ghost" onClick={() => setKingTables(false)}>
-                    Hide
-                  </button>
-                  {(["wood", "gold", "farm", "hunt"] as WorkKind[]).map((kind) => {
-                    const count = ui.basilisk?.labor[kind] ?? 0;
-                    const top =
-                      count > 0 &&
-                      count ===
-                        Math.max(
-                          ui.basilisk?.labor.wood ?? 0,
-                          ui.basilisk?.labor.gold ?? 0,
-                          ui.basilisk?.labor.farm ?? 0,
-                          ui.basilisk?.labor.hunt ?? 0,
-                        );
-                    return (
-                      <button
-                        key={kind}
-                        type="button"
-                        className={top ? "active" : ""}
-                        onClick={() => {
-                          sim.assignBasiliskWork(kind);
-                          refreshUi();
-                          beep(400);
-                        }}
-                      >
-                        {kind === "wood" ? "Wood" : kind === "gold" ? "Gold" : kind === "farm" ? "Farm" : "Hunt"}
-                        {count > 0 ? ` ${count}` : ""}
-                      </button>
-                    );
-                  })}
+                  <div className="labor-head">
+                    <strong>Labor</strong>
+                    <button type="button" className="ghost" onClick={() => setKingTables(false)}>
+                      Hide
+                    </button>
+                  </div>
+                  <LaborSteppers
+                    labor={ui.basilisk?.labor ?? { wood: 0, gold: 0, farm: 0, hunt: 0 }}
+                    idle={ui.idlePeonCount}
+                    peonCount={ui.peonCount}
+                    onAdjust={(kind, delta) => {
+                      sim.adjustBasiliskLabor(kind, delta);
+                      refreshUi();
+                      beep(delta > 0 ? 400 : 280);
+                    }}
+                  />
                 </div>
               )}
               <div className="king-orders" role="toolbar" aria-label="King orders">
@@ -1541,10 +1533,10 @@ export default function App() {
               refreshUi();
               beep(300);
             }}
-            onAssignWork={(kind) => {
-              sim.assignBasiliskWork(kind);
+            onAdjustLabor={(kind, delta) => {
+              sim.adjustBasiliskLabor(kind, delta);
               refreshUi();
-              beep(400);
+              beep(delta > 0 ? 400 : 280);
             }}
             onCallHome={() => {
               sim.callVillagersHome(sim.getLocalTeam());

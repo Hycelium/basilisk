@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { isEnemyStructure } from "../game/ownership";
 import { buildingName } from "../game/sim";
 import type { BuildingKind, TrainKind, UiSnapshot, WorkKind } from "../game/types";
+import { LaborSteppers } from "./LaborSteppers";
 
 interface DetailSheetProps {
   ui: UiSnapshot;
@@ -15,7 +16,7 @@ interface DetailSheetProps {
   onCallHome: () => void;
   onGarrison: () => void;
   onUngarrison: () => void;
-  onAssignWork?: (kind: WorkKind) => void;
+  onAdjustLabor?: (kind: WorkKind, delta: number) => void;
 }
 
 const STRUCTURE_ROLE: Partial<Record<BuildingKind, string>> = {
@@ -25,10 +26,11 @@ const STRUCTURE_ROLE: Partial<Record<BuildingKind, string>> = {
   barricade: "A peon blocks one road. Melee has to chop it. A ram smashes it.",
 };
 
-function costLabel(gold: number, wood: number) {
+function costLabel(gold: number, wood: number, food = 0) {
   const parts: string[] = [];
   if (gold > 0) parts.push(`${gold}g`);
   if (wood > 0) parts.push(`${wood}w`);
+  if (food > 0) parts.push(`${food}f`);
   return parts.join(" · ") || "0";
 }
 
@@ -44,7 +46,7 @@ export function DetailSheet({
   onCallHome,
   onGarrison,
   onUngarrison,
-  onAssignWork,
+  onAdjustLabor,
 }: DetailSheetProps) {
   const keepPanel = ui.selectedKeepTeam === ui.localTeam;
   const subject = keepPanel ? "keep" : ui.selectedBuildingId ? `b${ui.selectedBuildingId}` : "";
@@ -73,7 +75,9 @@ export function DetailSheet({
 
   if (keepPanel) {
     const canPay =
-      ui.yourGold >= ui.peonTrainCost.gold && ui.yourWood >= ui.peonTrainCost.wood;
+      ui.yourGold >= ui.peonTrainCost.gold &&
+      ui.yourWood >= ui.peonTrainCost.wood &&
+      ui.yourFood >= (ui.peonTrainCost.food ?? 0);
     return (
       <div className={sheetClass}>
         <div className="detail-head">
@@ -82,7 +86,7 @@ export function DetailSheet({
             <div className="detail-sub">
               Peons {ui.peonCount}/{ui.peonCap}
               {ui.basilisk
-                ? ` · Coffer ${ui.yourGold}g ${ui.yourWood}w`
+                ? ` · Coffer ${ui.yourGold}g ${ui.yourWood}w ${ui.yourFood}f`
                 : ` · Garrison ${ui.keepGarrisoned}/${ui.keepGarrisonMax}`}
             </div>
           </div>
@@ -92,7 +96,7 @@ export function DetailSheet({
         <div className="detail-body">
         <p className="detail-note">
           {ui.basilisk
-            ? "Queue peons from the coffer. Select peons, then send them to a job here or tap a field, grove, mine, or deer. Houses raise the cap by 3."
+            ? "Queue peons from the coffer. Use +/− to set how many haul each resource. Tap a field, grove, mine, or deer to send selected peons. Houses raise the cap by 3."
             : "Queue peons here. Cap starts at 2 — build Houses on green pads behind the keep."}
         </p>
         <div className="train-options">
@@ -103,38 +107,21 @@ export function DetailSheet({
             onClick={onEnqueuePeon}
           >
             <strong>Train Peon</strong>
-            <small>{ui.canTrainPeon ? "Gather wood & gold" : "Pop cap reached — build a House"}</small>
-            <em>{costLabel(ui.peonTrainCost.gold, ui.peonTrainCost.wood)}</em>
+            <small>{ui.canTrainPeon ? (ui.basilisk ? "25 food from the coffer" : "Gather wood & gold") : "Pop cap reached — build a House"}</small>
+            <em>{costLabel(ui.peonTrainCost.gold, ui.peonTrainCost.wood, ui.peonTrainCost.food)}</em>
           </button>
           <button type="button" className="train-opt" onClick={onCallHome}>
             <strong>Call home</strong>
             <small>Recall peons to the keep</small>
             <em>—</em>
           </button>
-          {ui.basilisk && onAssignWork && (
-            <>
-              {(["wood", "gold", "farm", "hunt"] as WorkKind[]).map((kind) => {
-                const count = ui.basilisk?.labor[kind] ?? 0;
-                return (
-                  <button
-                    key={kind}
-                    type="button"
-                    className="train-opt"
-                    onClick={() => onAssignWork(kind)}
-                  >
-                    <strong>{kind === "wood" ? "Wood" : kind === "gold" ? "Gold" : kind === "farm" ? "Farm" : "Hunt"}</strong>
-                    <small>
-                      {ui.selectedPeonCount > 0
-                        ? `Send ${ui.selectedPeonCount} selected`
-                        : count > 0
-                          ? `${count} on this job`
-                          : "Send idle peons"}
-                    </small>
-                    <em>{count > 0 ? String(count) : "—"}</em>
-                  </button>
-                );
-              })}
-            </>
+          {ui.basilisk && onAdjustLabor && (
+            <LaborSteppers
+              labor={ui.basilisk.labor}
+              idle={ui.idlePeonCount}
+              peonCount={ui.peonCount}
+              onAdjust={onAdjustLabor}
+            />
           )}
           {!ui.basilisk && (
             <>
@@ -246,7 +233,8 @@ export function DetailSheet({
 
           <div className="train-options">
             {ui.trainOptions.map((opt) => {
-              const afford = ui.yourGold >= opt.cost && ui.yourWood >= opt.woodCost;
+              const afford =
+                ui.yourGold >= opt.cost && ui.yourWood >= opt.woodCost && ui.yourFood >= (opt.foodCost ?? 0);
               return (
                 <button
                   key={opt.kind}
@@ -258,7 +246,7 @@ export function DetailSheet({
                 >
                   <strong>{opt.label}</strong>
                   <small>{opt.unlocked ? opt.blurb : opt.lockHint}</small>
-                  <em>{costLabel(opt.cost, opt.woodCost)}</em>
+                  <em>{costLabel(opt.cost, opt.woodCost, opt.foodCost)}</em>
                 </button>
               );
             })}

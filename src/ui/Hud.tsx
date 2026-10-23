@@ -52,21 +52,15 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
             )}
             <div className="stat">
               <span className="label">FOOD</span>
-              <span className="value">{realm.food}</span>
+              <span className="value">{realm.cofferFood}</span>
             </div>
             <div className="stat">
               <span className="label">GOLD</span>
-              <span className="value">{realm.clanGold}</span>
+              <span className="value">{realm.cofferGold}</span>
             </div>
             <div className="stat">
               <span className="label">WOOD</span>
-              <span className="value wood">{realm.clanWood}</span>
-            </div>
-            <div className="stat">
-              <span className="label">COFFER</span>
-              <span className="value">
-                {realm.cofferGold}g {realm.cofferWood}w
-              </span>
+              <span className="value wood">{realm.cofferWood}</span>
             </div>
             <div className="stat">
               <span className="label">POP</span>
@@ -88,17 +82,21 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
                 <span className="value">{realm.crownHint}</span>
               </div>
             )}
-            <div className="stat lives">
-              <span className="label">HP</span>
-              <span className={ui.yourHp <= 80 ? "value danger" : "value"}>{ui.yourHp}</span>
-              <div className="bar">
-                <div className="fill" style={{ width: `${hpPct * 100}%` }} />
-              </div>
-            </div>
-            <div className="stat">
-              <span className="label">ENEMY HP</span>
-              <span className="value">{ui.foeHp}</span>
-            </div>
+            {!compact && (
+              <>
+                <div className="stat lives">
+                  <span className="label">HP</span>
+                  <span className={ui.yourHp <= 80 ? "value danger" : "value"}>{ui.yourHp}</span>
+                  <div className="bar">
+                    <div className="fill" style={{ width: `${hpPct * 100}%` }} />
+                  </div>
+                </div>
+                <div className="stat">
+                  <span className="label">ENEMY HP</span>
+                  <span className="value">{ui.foeHp}</span>
+                </div>
+              </>
+            )}
             <div className="stat">
               <span className="label">WAVE</span>
               <span className="value">{ui.waveLabel}</span>

@@ -49,6 +49,7 @@ export type RemoteOrder =
   | { t: "possess"; team: Team; id: number }
   | { t: "unpossess"; team: Team }
   | { t: "labor"; team: Team; kind: WorkKind; ids: number[] }
+  | { t: "laborAdj"; team: Team; kind: WorkKind; delta: number }
   | { t: "crown"; team: Team; order: KingOrder }
   | { t: "rejoin"; team: Team };
 
@@ -239,6 +240,7 @@ const ORDER_TYPES = new Set<RemoteOrder["t"]>([
   "possess",
   "unpossess",
   "labor",
+  "laborAdj",
   "crown",
   "rejoin",
 ]);

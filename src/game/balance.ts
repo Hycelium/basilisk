@@ -27,6 +27,7 @@ export const VILLAGER_HP = 28;
 export const PEON_TRAIN_TIME = 4.5;
 export const PEON_TRAIN_GOLD = 18;
 export const PEON_TRAIN_WOOD = 0;
+export const PEON_TRAIN_FOOD = 25;
 /** Base peon pop (keep alone). Each house adds HOUSE_POP. */
 export const BASE_PEON_CAP = 2;
 export const HOUSE_POP = 3;
@@ -38,6 +39,7 @@ export const COPPER_REGEN = 4.2;
 export interface ResCost {
   gold: number;
   wood: number;
+  food?: number;
 }
 
 export const BUILD_COST: Record<BuildingKind, ResCost> = {
@@ -252,6 +254,7 @@ export interface UnitDef {
   siegeGap: number;
   cost?: number;
   woodCost?: number;
+  foodCost?: number;
   trainTime?: number;
   label: string;
   blurb: string;
@@ -276,25 +279,25 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
   levy: {
     hp: 58, speed: 34, damage: 8, cooldown: 0.65, bounty: 11,
     towerResist: 0.05, keepMult: 0.9, siegeGap: 0.25,
-    cost: 26, woodCost: 0, trainTime: 3.8,
+    cost: 26, woodCost: 0, foodCost: 0, trainTime: 3.8,
     label: "Levy", blurb: "Cheap line · bonus vs wards",
   },
   runner: {
     hp: 42, speed: 54, damage: 6, cooldown: 0.5, bounty: 13,
     towerResist: 0.72, keepMult: 0.7, siegeGap: 0.3,
-    cost: 28, woodCost: 22, trainTime: 3.2,
+    cost: 28, woodCost: 0, foodCost: 44, trainTime: 3.2,
     label: "Runner", blurb: "Charge · shrugs arrows, fears bolts",
   },
   archer: {
     hp: 44, speed: 29, damage: 7, cooldown: 1.05, bounty: 14,
     towerResist: 0.04, keepMult: 0.42, siegeGap: 0.5,
-    cost: 34, woodCost: 28, trainTime: 4.4,
+    cost: 34, woodCost: 0, foodCost: 56, trainTime: 4.4,
     label: "Archer", blurb: "Ranged · walks around barricades, weak vs wards",
   },
   ward: {
     hp: 150, speed: 22, damage: 5, cooldown: 0.75, bounty: 15,
     towerResist: 0.88, keepMult: 0.55, siegeGap: 0.4,
-    cost: 46, woodCost: 10, trainTime: 5.2,
+    cost: 46, woodCost: 0, foodCost: 20, trainTime: 5.2,
     label: "Ward", blurb: "Shield · shrugs arrows, fears bolts and levies",
   },
   rammer: {
@@ -381,5 +384,17 @@ export function formatCost(c: ResCost) {
   const parts: string[] = [];
   if (c.gold > 0) parts.push(`${c.gold}g`);
   if (c.wood > 0) parts.push(`${c.wood}w`);
+  if ((c.food ?? 0) > 0) parts.push(`${c.food}f`);
   return parts.join(" · ") || "0";
+}
+
+export function trainResCost(kind: UnitKind): ResCost {
+  const def = UNIT_DEFS[kind];
+  return { gold: def.cost ?? 0, wood: def.woodCost ?? 0, food: def.foodCost ?? 0 };
+}
+
+export function peonResCost(basilisk: boolean): ResCost {
+  return basilisk
+    ? { gold: 0, wood: 0, food: PEON_TRAIN_FOOD }
+    : { gold: PEON_TRAIN_GOLD, wood: PEON_TRAIN_WOOD, food: 0 };
 }

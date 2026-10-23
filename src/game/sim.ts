@@ -35,9 +35,10 @@ import {
   PEON_FIGHT_SPEED,
   PEON_MELEE_RANGE,
   PEON_VS_MILITARY,
-  PEON_TRAIN_GOLD,
   PEON_TRAIN_TIME,
-  PEON_TRAIN_WOOD,
+  formatCost,
+  peonResCost,
+  trainResCost,
   YOU_SIEGE_Y,
   RATE_MULT,
   RUNNER_CHARGE_DAMAGE,
@@ -517,6 +518,14 @@ export class GameSim {
       this.holdPrediction(this.assignIdlePeons(team));
       return;
     }
+    if (order.t === "laborAdj") {
+      this.applyBasiliskLaborAdj(team, order.kind, order.delta);
+      return;
+    }
+    if (order.t === "labor") {
+      this.applyBasiliskWork(team, order.kind, order.ids);
+      return;
+    }
     if (order.t === "stop") {
       this.stopIds(team, order.ids);
       this.holdPrediction(order.ids);
@@ -804,6 +813,16 @@ export class GameSim {
     else this.addToast(`${n} peon${n === 1 ? "" : "s"} to ${WORK_LABEL[kind]}.`);
   }
 
+  adjustBasiliskLabor(kind: WorkKind, delta: number) {
+    if (!this.state.basilisk || !this.isLocalKing()) {
+      this.addToast("Only the king assigns labor.");
+      return;
+    }
+    if (this.redirect({ t: "laborAdj", team: this.localTeam, kind, delta })) return;
+    const n = this.applyBasiliskLaborAdj(this.localTeam, kind, delta);
+    if (n === 0 && delta > 0) this.addToast("No free peons.");
+  }
+
   private gatherJobFromHit(hit: RectHit | null, world?: { x: number; y: number }): WorkKind | null {
     if (hit?.kind === "work") {
       if (hit.id === "farm" || hit.id === "hunt" || hit.id === "gold" || hit.id === "wood") return hit.id;
@@ -862,6 +881,42 @@ export class GameSim {
       this.state.commandMarkers.push({ id: this.next(), kind: "gather", pos: { ...mark.pos }, life: 1.2 });
     }
     return targets.length;
+  }
+
+  private applyBasiliskLaborAdj(team: Team, kind: WorkKind, delta: number) {
+    const gatherers = this.basiliskGatherers(team);
+    if (gatherers.length === 0 || delta === 0) return 0;
+    let changed = 0;
+    if (delta > 0) {
+      for (let i = 0; i < delta; i++) {
+        const idle = gatherers.find((u) => !u.workKind && !u.kingPatrol);
+        const steal = [...gatherers]
+          .filter((u) => u.workKind && u.workKind !== kind)
+          .sort((a, b) => {
+            const ca = gatherers.filter((u) => u.workKind === a.workKind).length;
+            const cb = gatherers.filter((u) => u.workKind === b.workKind).length;
+            return cb - ca;
+          })[0];
+        const pick = idle ?? steal;
+        if (!pick) break;
+        this.setPeonJob(pick, kind);
+        changed += 1;
+      }
+    } else {
+      const onJob = gatherers.filter((u) => u.workKind === kind);
+      for (let i = 0; i < -delta && onJob.length > 0; i++) {
+        const u = onJob.pop()!;
+        u.workKind = undefined;
+        u.kingHeld = false;
+        u.kingPatrol = false;
+        changed += 1;
+      }
+    }
+    if (changed > 0) {
+      const mark = nearestWork(team, keepPos(team), kind, this.state.mapSeed);
+      if (mark) this.state.commandMarkers.push({ id: this.next(), kind: "gather", pos: { ...mark.pos }, life: 0.8 });
+    }
+    return changed;
   }
 
   private steerAiLabor(team: Team) {
@@ -1963,9 +2018,10 @@ export class GameSim {
   }
 
   canAfford(team: Team, cost: ResCost) {
+    const food = cost.food ?? 0;
     if (this.state.basilisk) {
       const c = this.state.kingCoffer[team];
-      return c.gold >= cost.gold && c.wood >= cost.wood;
+      return c.gold >= cost.gold && c.wood >= cost.wood && c.food >= food;
     }
     return this.state.gold[team] >= cost.gold && this.state.wood[team] >= cost.wood;
   }
@@ -1974,6 +2030,7 @@ export class GameSim {
     if (this.state.basilisk) {
       this.state.kingCoffer[team].gold -= cost.gold;
       this.state.kingCoffer[team].wood -= cost.wood;
+      this.state.kingCoffer[team].food -= cost.food ?? 0;
       return;
     }
     this.state.gold[team] -= cost.gold;
@@ -1992,9 +2049,9 @@ export class GameSim {
       this.tell(team, `Pop cap ${this.peonCap(team)} — build a House.`);
       return false;
     }
-    const cost: ResCost = { gold: PEON_TRAIN_GOLD, wood: PEON_TRAIN_WOOD };
+    const cost = peonResCost(!!this.state.basilisk);
     if (!this.canAfford(team, cost)) {
-      this.tell(team, `Need ${cost.gold}g to train a peon.`);
+      this.tell(team, this.state.basilisk ? `Need ${cost.food} food to train a peon.` : `Need ${cost.gold}g to train a peon.`);
       return false;
     }
     this.spendRes(team, cost);
@@ -2990,9 +3047,9 @@ export class GameSim {
       return false;
     }
     const def = UNIT_DEFS[kind];
-    const cost: ResCost = { gold: def.cost ?? 30, wood: def.woodCost ?? 0 };
+    const cost = trainResCost(kind);
     if (!this.canAfford(team, cost)) {
-      this.tell(team, `Need ${cost.gold}g ${cost.wood}w.`);
+      this.tell(team, `Need ${formatCost(cost)}.`);
       return false;
     }
     this.spendRes(team, cost);
@@ -3017,10 +3074,17 @@ export class GameSim {
     const def = UNIT_DEFS[job.kind];
     const refundG = Math.floor((def.cost ?? 0) * 0.5);
     const refundW = Math.floor((def.woodCost ?? 0) * 0.5);
-    s.gold[team] += refundG;
-    s.wood[team] += refundW;
+    const refundF = Math.floor((def.foodCost ?? 0) * 0.5);
+    if (s.basilisk) {
+      s.kingCoffer[team].gold += refundG;
+      s.kingCoffer[team].wood += refundW;
+      s.kingCoffer[team].food += refundF;
+    } else {
+      s.gold[team] += refundG;
+      s.wood[team] += refundW;
+    }
     b.queue.splice(index, 1);
-    this.tell(team, `Cancelled (+${refundG}g +${refundW}w).`);
+    this.tell(team, `Cancelled (+${formatCost({ gold: refundG, wood: refundW, food: refundF })}).`);
   }
 
   private buildingDamage(b: Building) {
@@ -3681,7 +3745,7 @@ export class GameSim {
     const desiredHouses = s.waveIndex >= 4 ? 3 : s.waveIndex >= 2 ? 2 : 1;
     if (houses < desiredHouses) this.placeAiBuilding("house", 0, team);
 
-    const peonCost: ResCost = { gold: PEON_TRAIN_GOLD, wood: PEON_TRAIN_WOOD };
+    const peonCost = peonResCost(!!s.basilisk);
     if (this.peonSlotsUsed(team) < this.peonCap(team) && this.canAfford(team, peonCost)) {
       this.enqueuePeon(team);
     }
@@ -3743,7 +3807,7 @@ export class GameSim {
     if (!hall) return false;
     for (const kind of candidates) {
       const def = UNIT_DEFS[kind];
-      const cost: ResCost = { gold: def.cost ?? 30, wood: def.woodCost ?? 0 };
+      const cost = trainResCost(kind);
       if (this.canAfford(team, cost)) return this.enqueueTrainAt(team, kind, hall.id);
     }
     return false;
@@ -4959,6 +5023,9 @@ export class GameSim {
         case "labor":
           this.applyBasiliskWork(team, order.kind, order.ids);
           break;
+        case "laborAdj":
+          this.applyBasiliskLaborAdj(team, order.kind, order.delta);
+          break;
         case "crown":
           this.state.kingOrder[team] = order.order;
           break;
@@ -5471,6 +5538,7 @@ export class GameSim {
               blurb: def.blurb,
               cost: def.cost ?? 0,
               woodCost: def.woodCost ?? 0,
+              foodCost: def.foodCost ?? 0,
               unlocked: unitUnlocked(kind, s.keepLevel, this.campaignMission == null),
               lockHint: unlockHint(kind),
             };
@@ -5527,8 +5595,10 @@ export class GameSim {
       yourHp: Math.max(0, Math.ceil(s.keeps[view].hp)),
       foeHp: Math.max(0, Math.ceil(s.keeps[other].hp)),
       yourMaxHp: s.keeps[view].maxHp,
+      foeMaxHp: s.keeps[other].maxHp,
       yourGold: Math.floor(s.basilisk ? s.kingCoffer[view].gold : s.gold[view]),
       yourWood: Math.floor(s.basilisk ? s.kingCoffer[view].wood : s.wood[view]),
+      yourFood: Math.floor(s.basilisk ? s.kingCoffer[view].food : 0),
       foeGold: Math.floor(s.gold[other]),
       foeWood: Math.floor(s.wood[other]),
       waveLabel: `${Math.max(1, s.waveIndex || 1)}`,
@@ -5578,7 +5648,7 @@ export class GameSim {
       keepGarrisoned: s.villagers.filter((v) => v.team === view && v.state === "garrisoned").length,
       keepGarrisonMax: KEEP_GARRISON_MAX,
       canTrainPeon: keepSelected && this.peonSlotsUsed(view) < this.peonCap(view),
-      peonTrainCost: { gold: PEON_TRAIN_GOLD, wood: PEON_TRAIN_WOOD },
+      peonTrainCost: peonResCost(!!s.basilisk),
       buildCosts: BUILD_COST,
       keepLevel: this.matchMode === "pvp" ? s.keepLevel : meta.level,
       keepXp: meta.xp,

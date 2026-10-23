@@ -398,6 +398,7 @@ export interface TrainOptionUi {
   blurb: string;
   cost: number;
   woodCost: number;
+  foodCost: number;
   unlocked: boolean;
   lockHint: string;
 }
@@ -416,8 +417,10 @@ export interface UiSnapshot {
   yourHp: number;
   foeHp: number;
   yourMaxHp: number;
+  foeMaxHp: number;
   yourGold: number;
   yourWood: number;
+  yourFood: number;
   foeGold: number;
   foeWood: number;
   waveLabel: string;
@@ -452,7 +455,7 @@ export interface UiSnapshot {
   keepGarrisoned: number;
   keepGarrisonMax: number;
   canTrainPeon: boolean;
-  peonTrainCost: { gold: number; wood: number };
+  peonTrainCost: { gold: number; wood: number; food?: number };
   buildCosts: Record<BuildingKind, { gold: number; wood: number }>;
   keepLevel: number;
   keepXp: number;
