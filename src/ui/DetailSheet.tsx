@@ -96,7 +96,7 @@ export function DetailSheet({
         <div className="detail-body">
         <p className="detail-note">
           {ui.basilisk
-            ? "Queue peons from the coffer. Use +/− to set how many haul each resource. Tap a field, grove, mine, or deer to send selected peons. Houses raise the cap by 3."
+            ? "Queue peons from the coffer. Use +/− to set how many haul each resource. Tap a field, grove, mine, or deer to send selected peons. Houses raise the cap by 2."
             : "Queue peons here. Cap starts at 2 — build Houses on green pads behind the keep."}
         </p>
         <div className="train-options">
@@ -186,7 +186,7 @@ export function DetailSheet({
       <div className="detail-body">
       {isHouse && (
         <p className="detail-note">
-          The only way past two peons. Each house adds +3 population. Eco pad only.
+          The only way past two peons. Each house adds +2 population. Eco pad only.
         </p>
       )}
       {!isHouse && !isBarracks && STRUCTURE_ROLE[ui.selectedBuildingKind!] && (

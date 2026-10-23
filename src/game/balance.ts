@@ -30,7 +30,7 @@ export const PEON_TRAIN_WOOD = 0;
 export const PEON_TRAIN_FOOD = 25;
 /** Base peon pop (keep alone). Each house adds HOUSE_POP. */
 export const BASE_PEON_CAP = 2;
-export const HOUSE_POP = 3;
+export const HOUSE_POP = 2;
 export const MAX_PEON_QUEUE = 4;
 
 export const PINE_REGEN = 2.8;
@@ -279,43 +279,43 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
   levy: {
     hp: 58, speed: 34, damage: 8, cooldown: 0.65, bounty: 11,
     towerResist: 0.05, keepMult: 0.9, siegeGap: 0.25,
-    cost: 26, woodCost: 0, foodCost: 0, trainTime: 3.8,
+    cost: 35, woodCost: 0, foodCost: 0, trainTime: 3.8,
     label: "Levy", blurb: "Cheap line · bonus vs wards",
   },
   runner: {
     hp: 42, speed: 54, damage: 6, cooldown: 0.5, bounty: 13,
     towerResist: 0.72, keepMult: 0.7, siegeGap: 0.3,
-    cost: 28, woodCost: 0, foodCost: 44, trainTime: 3.2,
+    cost: 38, woodCost: 0, foodCost: 48, trainTime: 3.2,
     label: "Runner", blurb: "Charge · shrugs arrows, fears bolts",
   },
   archer: {
     hp: 44, speed: 29, damage: 7, cooldown: 1.05, bounty: 14,
     towerResist: 0.04, keepMult: 0.42, siegeGap: 0.5,
-    cost: 34, woodCost: 0, foodCost: 56, trainTime: 4.4,
+    cost: 46, woodCost: 0, foodCost: 62, trainTime: 4.4,
     label: "Archer", blurb: "Ranged · walks around barricades, weak vs wards",
   },
   ward: {
     hp: 150, speed: 22, damage: 5, cooldown: 0.75, bounty: 15,
     towerResist: 0.88, keepMult: 0.55, siegeGap: 0.4,
-    cost: 46, woodCost: 0, foodCost: 20, trainTime: 5.2,
+    cost: 62, woodCost: 0, foodCost: 24, trainTime: 5.2,
     label: "Ward", blurb: "Shield · shrugs arrows, fears bolts and levies",
   },
   rammer: {
     hp: 95, speed: 27, damage: 7, cooldown: 0.8, bounty: 18,
     towerResist: 0.3, keepMult: 2.4, siegeGap: 0.15,
-    cost: 40, woodCost: 45, trainTime: 5.8,
+    cost: 54, woodCost: 60, trainTime: 5.8,
     label: "Rammer", blurb: "Breaks gates and barricades",
   },
   trebuchet: {
     hp: 42, speed: 9, damage: 0, cooldown: 5.8, bounty: 16,
     towerResist: 0.88, keepMult: 0, siegeGap: 1.2,
-    cost: 62, woodCost: 118, trainTime: 9.6,
+    cost: 84, woodCost: 155, trainTime: 9.6,
     label: "Trebuchet", blurb: "Costly timber · crawls · two shots wreck a tower",
   },
   spy: {
     hp: 28, speed: 46, damage: 0, cooldown: 1.6, bounty: 18,
     towerResist: 0.04, keepMult: 0, siegeGap: 5.5,
-    cost: 90, woodCost: 0, trainTime: 5.0,
+    cost: 120, woodCost: 0, trainTime: 5.0,
     label: "Spy", blurb: "Gold sink · one job, then dies. Sneak around dogged ballistae.",
   },
 };

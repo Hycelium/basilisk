@@ -3790,7 +3790,7 @@ export class GameSim {
     const bars = this.state.buildings.filter((b) => b.team === team && b.kind === "barracks");
     if (bars.length === 0 || bars.every((b) => b.queue.length >= 3)) return false;
     const coffer = this.state.kingCoffer[team];
-    if (coffer.gold < 28) return false;
+    if (coffer.gold < 35) return false;
     const enemy = this.enemy(team);
     const observed = this.state.units.filter((u) => u.team === enemy && u.hp > 0 && !isClanSoul(u));
     const enemyTowers = this.state.buildings.filter(

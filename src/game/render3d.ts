@@ -21,6 +21,7 @@ import type { Barricade, Building, GameState, Team, Unit } from "./types";
 import {
   buildScenery,
   buildTerrain,
+  stepPrancingDeer,
 } from "./worldMesh";
 import { buildKeepModel } from "./models/keep";
 import { configureStructureMaterials } from "./models/materials";
@@ -1151,6 +1152,7 @@ export class GameRenderer {
     this.syncVillagers(state);
     this.syncCommandViz(state);
     this.updateAnimations(step);
+    stepPrancingDeer(this.worldGroup, state.time);
     this.syncSelectionRing(state);
     this.syncFloats(state);
     this.pulseTorches(state.time);

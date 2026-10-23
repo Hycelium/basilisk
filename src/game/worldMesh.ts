@@ -171,6 +171,7 @@ export function buildTerrain(seed: number, alwaysWheat = false) {
   g.add(ground);
 
   if (look.wheat || alwaysWheat || isBasiliskSeed(seed)) g.add(buildWheatPatches(seed, river));
+  g.add(buildPrancingDeer(seed, river));
   if (isBasiliskSeed(seed)) g.add(buildBasiliskFords(seed, river));
 
   // River ribbon first; roads cross it on timber/stone bridges.
@@ -283,29 +284,80 @@ function buildBasiliskFords(seed: number, river: ReturnType<typeof riverSpec>) {
     mesh.userData.scarPit = true;
     g.add(mesh);
   }
+  return g;
+}
+
+function makeDeerLeg(hide: THREE.Material, gait: number) {
+  const leg = new THREE.Mesh(new THREE.BoxGeometry(0.45, 2.6, 0.45), hide);
+  leg.position.y = -1.1;
+  const pivot = new THREE.Group();
+  pivot.add(leg);
+  pivot.userData.gait = gait;
+  return pivot;
+}
+
+function buildPrancingDeer(seed: number, river: ReturnType<typeof riverSpec>) {
+  const g = new THREE.Group();
   const hide = new THREE.MeshStandardMaterial({ color: 0x6b4a28, roughness: 0.9 });
   const antler = new THREE.MeshStandardMaterial({ color: 0xd8c49a, roughness: 0.7 });
+  let i = 0;
   for (const team of ["you", "foe"] as const) {
     for (const spot of deerSpots(team, seed)) {
       const deer = new THREE.Group();
-      const body = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.2, 5.4), hide);
-      body.position.y = 2.4;
-      const neck = new THREE.Mesh(new THREE.BoxGeometry(1.4, 2.2, 1.4), hide);
-      neck.position.set(0, 3.8, -2.2);
-      const head = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.3, 2.2), hide);
-      head.position.set(0, 5.1, -3.1);
-      const hornL = new THREE.Mesh(new THREE.BoxGeometry(0.35, 2.4, 0.35), antler);
-      hornL.position.set(-0.6, 6.4, -3.2);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.1, 4.6), hide);
+      body.position.y = 2.6;
+      const neck = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.0, 1.2), hide);
+      neck.position.set(0, 4.0, -2.0);
+      neck.rotation.x = -0.35;
+      const head = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.2, 2.0), hide);
+      head.position.set(0, 5.2, -2.9);
+      const hornL = new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.2, 0.28), antler);
+      hornL.position.set(-0.5, 6.5, -3.0);
+      hornL.rotation.z = 0.25;
       const hornR = hornL.clone();
-      hornR.position.x = 0.6;
-      deer.add(body, neck, head, hornL, hornR);
+      hornR.position.x = 0.5;
+      hornR.rotation.z = -0.25;
+      const legs = [
+        makeDeerLeg(hide, 0),
+        makeDeerLeg(hide, Math.PI),
+        makeDeerLeg(hide, Math.PI),
+        makeDeerLeg(hide, 0),
+      ];
+      legs[0].position.set(-0.8, 2.2, 1.5);
+      legs[1].position.set(0.8, 2.2, 1.5);
+      legs[2].position.set(-0.8, 2.2, -1.4);
+      legs[3].position.set(0.8, 2.2, -1.4);
+      deer.add(body, neck, head, hornL, hornR, ...legs);
       const gy = sampleGround(spot.x, spot.y, seed, river).h;
+      const facing = team === "you" ? 0.45 : Math.PI - 0.45;
       deer.position.set(spot.x - WORLD_W / 2, gy, spot.y - WORLD_H / 2);
-      deer.rotation.y = team === "you" ? 0.4 : Math.PI - 0.4;
+      deer.rotation.y = facing;
+      deer.userData.pranceDeer = { phase: i * 1.37 + seed * 0.001, baseY: gy, facing };
+      deer.userData.pranceLegs = legs;
+      deer.castShadow = true;
       g.add(deer);
+      i += 1;
     }
   }
   return g;
+}
+
+/** Bob and kick the hunt deer so they look alive in the back corners. */
+export function stepPrancingDeer(root: THREE.Object3D, time: number) {
+  root.traverse((obj) => {
+    const p = obj.userData.pranceDeer as { phase: number; baseY: number; facing: number } | undefined;
+    if (!p) return;
+    const t = time * 5.4 + p.phase;
+    const hop = Math.abs(Math.sin(t));
+    obj.position.y = p.baseY + hop * 1.35;
+    obj.rotation.y = p.facing + Math.sin(t * 0.55) * 0.18;
+    obj.rotation.x = hop * 0.12;
+    const legs = obj.userData.pranceLegs as THREE.Group[] | undefined;
+    if (!legs) return;
+    for (const leg of legs) {
+      leg.rotation.x = Math.sin(t + (leg.userData.gait as number)) * 0.85;
+    }
+  });
 }
 
 /** Striped crop fields draped on the terrain, kept clear of roads and the river. */

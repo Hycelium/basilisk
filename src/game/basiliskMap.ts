@@ -1,5 +1,5 @@
 import { WORLD_H, WORLD_W } from "./balance";
-import { mapBounds, mapLanes, riverSpec, roadCenterX } from "./map";
+import { MAP_CX, mapBounds, mapLanes, riverSpec, roadCenterX, roadGap } from "./map";
 import type { LaneCount, MapDef, MapId, Team, Vec2 } from "./types";
 
 export const BASILISK_SEED = 884410;
@@ -57,11 +57,14 @@ export function chokePoints(seed = currentValleySeed()): Vec2[] {
 
 export function deerSpots(team: Team, seed = currentValleySeed()): Vec2[] {
   const { minX, maxX } = mapBounds(seed);
-  const y = team === "you" ? 716 : 4;
-  return [
-    { x: minX + 22, y },
-    { x: maxX - 22, y },
-  ];
+  const y = team === "you" ? WORLD_H - 6 : 6;
+  const raw = [minX + 28, maxX - 28];
+  return raw.map((startX) => {
+    let x = startX;
+    const dir = startX < MAP_CX ? 1 : -1;
+    for (let i = 0; i < 10 && roadGap(seed, x, y) < 24; i++) x += dir * 12;
+    return { x, y };
+  });
 }
 
 export function workSites(team: Team, kind: WorkKind): Vec2[] {
@@ -79,7 +82,7 @@ export function workSites(team: Team, kind: WorkKind): Vec2[] {
           { x: 292, y: 130 },
         ];
   }
-  if (kind === "hunt") return deerSpots(team);
+  if (kind === "hunt") return deerSpots(team, currentValleySeed());
   if (kind === "gold") return [south ? { x: 268, y: 600 } : { x: 132, y: 118 }];
   return south
     ? [
