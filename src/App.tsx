@@ -1644,22 +1644,41 @@ export default function App() {
               if (skirmish.lobby.open || skirmish.lobby.live) return;
               setCampaignOpen(false);
               afterPortalBreak(() => {
+                const asKing = layout.phone;
                 sim.setMatchMode("ai");
                 sim.setLocalTeam(clan);
-                sim.startBasilisk(clan);
+                sim.startBasilisk(clan, "ai", { asKing });
                 const r = rendererRef.current;
-                r?.enterPossess(sim.getPossessYaw(), false);
-                grabPointerLock();
+                if (!asKing) {
+                  r?.enterPossess(sim.getPossessYaw(), false);
+                  grabPointerLock();
+                }
                 refreshUi();
                 beep(520);
               });
             }}
-            onRestart={() => {
+            onRestart={(clan: Team) => {
               if (skirmish.lobby.live) return;
-              if (ui.pvp) skirmish.leave();
-              else sim.reset();
-              refreshUi();
-              hpRef.current = 100;
+              if (ui.pvp) {
+                skirmish.leave();
+                refreshUi();
+                hpRef.current = 100;
+                return;
+              }
+              afterPortalBreak(() => {
+                const asKing = layout.phone;
+                sim.setMatchMode("ai");
+                sim.setLocalTeam(clan);
+                sim.startBasilisk(clan, "ai", { asKing });
+                const r = rendererRef.current;
+                if (!asKing) {
+                  r?.enterPossess(sim.getPossessYaw(), false);
+                  grabPointerLock();
+                }
+                refreshUi();
+                hpRef.current = 100;
+                beep(520);
+              });
             }}
             onReturnToMap={() => {
               if (ui.missionId != null && ui.freshHold) {

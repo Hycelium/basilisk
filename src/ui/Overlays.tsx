@@ -56,7 +56,7 @@ interface OverlaysProps {
   onStart: (clan: Team) => void;
   onSkirmish: () => void;
   onCampaign: () => void;
-  onRestart: () => void;
+  onRestart: (clan: Team) => void;
   onReturnToMap: () => void;
   onMarchAgain: () => void;
   onRerollMap: () => void;
@@ -82,6 +82,7 @@ export function Overlays({
 }: OverlaysProps) {
   const [shareNote, setShareNote] = useState("");
   const [clan, setClan] = useState<Team>("you");
+  const [rematchClan, setRematchClan] = useState<Team>("you");
   const playerRecord = `Your record · ${ui.playerWins}W / ${ui.playerLosses}L`;
   const roads = laneCount(ui.mapSeed);
 
@@ -90,6 +91,10 @@ export function Overlays({
     const id = window.setTimeout(() => setShareNote(""), 2200);
     return () => window.clearTimeout(id);
   }, [shareNote]);
+
+  useEffect(() => {
+    if (ui.phase === "ended") setRematchClan(ui.localTeam);
+  }, [ui.phase, ui.localTeam]);
 
   const copyLink = async () => {
     const ok = await copyText(gameUrl());
@@ -253,8 +258,24 @@ export function Overlays({
             </>
           ) : (
             <>
-              <p className="map-next-hint">Play again loads the map for your current keep level. The foe keeps learning.</p>
-              <button type="button" className="cta" onClick={onRestart}>
+              <p className="map-next-hint">Pick a clan, then play again. The foe keeps learning.</p>
+              <div className="clan-pick" role="group" aria-label="Clan">
+                <button
+                  type="button"
+                  className={rematchClan === "you" ? "cta" : "ghost"}
+                  onClick={() => setRematchClan("you")}
+                >
+                  Blue south
+                </button>
+                <button
+                  type="button"
+                  className={rematchClan === "foe" ? "cta" : "ghost"}
+                  onClick={() => setRematchClan("foe")}
+                >
+                  Red north
+                </button>
+              </div>
+              <button type="button" className="cta" onClick={() => onRestart(rematchClan)}>
                 Play again
               </button>
             </>

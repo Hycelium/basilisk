@@ -733,7 +733,7 @@ export class GameSim {
     this.addToast(`Foe intellect ${iq} — learning your patterns`);
   }
 
-  startBasilisk(clan: Team, mode: "ai" | "pvp" = "ai") {
+  startBasilisk(clan: Team, mode: "ai" | "pvp" = "ai", opts?: { asKing?: boolean }) {
     this.campaignMission = null;
     this.lastUnlock = "";
     this.freshHold = false;
@@ -743,6 +743,7 @@ export class GameSim {
     this.remoteKeys = { w: false, a: false, s: false, d: false };
     this.remoteYaw = Math.PI;
     this.remoteStrike = false;
+    const asKing = !!opts?.asKing;
     const meta = loadMeta();
     const map = getOrCreateCampaignMap(meta.level, meta.scoutSalt);
     this.activeMap = map;
@@ -788,15 +789,30 @@ export class GameSim {
       this.state.keeps[team].maxHp = BASILISK_KEEP_HP;
       this.spawnBasiliskKing(team);
       for (let i = 0; i < BASILISK_START_EACH; i++) {
-        const asPlayer = i === 0 && (mode === "pvp" || team === this.localTeam);
+        // Phone / as-king starts skip the peon walk — crown is claimed below.
+        const asPlayer = !asKing && i === 0 && (mode === "pvp" || team === this.localTeam);
         this.spawnBasiliskSoul(team, asPlayer, i < BASILISK_CHOSEN_START);
       }
     }
+    if (asKing) {
+      if (mode === "pvp") {
+        this.state.kingController = { you: "player", foe: "player" };
+      } else {
+        this.state.kingController[this.localTeam] = "player";
+      }
+      this.state.possessedId = null;
+      this.state.playerUnitId = { you: null, foe: null };
+    }
     refreshKings(this.state);
+    const clanName = this.localTeam === "you" ? "Blue" : "Red";
     this.addToast(
-      mode === "pvp"
-        ? "Skirmish — dump 5 farm, hunt, or gold (or 10 wood) to take the crown. Peons cannot duel soldiers."
-        : `${this.localTeam === "you" ? "Blue" : "Red"} chosen — dump 5 farm at the keep to take the crown. Labor peons cannot promote.`,
+      asKing
+        ? mode === "pvp"
+          ? "Skirmish — both crowns start with the players. Command your keep."
+          : `You rule ${clanName}. Command the keep.`
+        : mode === "pvp"
+          ? "Skirmish — dump 5 farm, hunt, or gold (or 10 wood) to take the crown. Peons cannot duel soldiers."
+          : `${clanName} chosen — dump 5 farm at the keep to take the crown. Labor peons cannot promote.`,
     );
   }
 
