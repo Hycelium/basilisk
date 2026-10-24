@@ -2481,6 +2481,61 @@ button:disabled {
   pointer-events: auto;
 }
 
+/* Phones must play landscape — blocks portrait until rotated. */
+.landscape-lock {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: calc(20px + var(--sat)) calc(20px + var(--sar)) calc(20px + var(--sab)) calc(20px + var(--sal));
+  background: rgba(10, 8, 12, 0.96);
+  color: #f3e2c0;
+  text-align: center;
+}
+
+.landscape-lock-card {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  max-width: 320px;
+}
+
+.landscape-lock-icon {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  border: 2px solid rgba(226, 188, 114, 0.7);
+  background: rgba(42, 32, 22, 0.9);
+  font-size: 36px;
+  line-height: 1;
+  animation: landscape-nudge 1.6s ease-in-out infinite;
+}
+
+.landscape-lock-card strong {
+  font: 700 22px/1.2 Cinzel, Palatino, serif;
+  color: #ffe7b0;
+}
+
+.landscape-lock-card p {
+  margin: 0;
+  color: rgba(243, 226, 192, 0.78);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+@keyframes landscape-nudge {
+  0%,
+  100% {
+    transform: rotate(-12deg);
+  }
+  50% {
+    transform: rotate(18deg);
+  }
+}
+
 .phone-controls-tip {
   display: none;
   color: #e2bc72;

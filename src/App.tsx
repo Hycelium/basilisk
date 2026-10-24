@@ -16,6 +16,7 @@ import { RadialMenu, type RadialItem } from "./ui/RadialMenu";
 import { useHints } from "./ui/hints";
 import { useLayout } from "./ui/useLayout";
 import { TouchFpsPad } from "./ui/TouchFpsPad";
+import { LandscapeLock } from "./ui/LandscapeLock";
 import { basiliskMap } from "./game/basiliskMap";
 import { useSkirmish } from "./net/useSkirmish";
 import { SkirmishEnd, SkirmishLobby } from "./ui/SkirmishLobby";
@@ -1320,6 +1321,7 @@ export default function App() {
 
   return (
     <div className={pageClass} ref={pageRef}>
+      <LandscapeLock />
       <div className="phone shell">
         <header className="brand">
           <span className="brand-mark">Basilisk</span>
