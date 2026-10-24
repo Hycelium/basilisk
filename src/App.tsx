@@ -923,12 +923,18 @@ export default function App() {
       showHint(
         touch ? "touch-start" : "mouse-start",
         layoutRef.current.fpsTouch
-          ? "Left stick walks. Drag the right side to look. Fire on the right. Haul 5 farm to take the crown."
+          ? "Left stick walks, drag right to look, Fire to strike. Kills pull you to third person; pinch or +/− to adjust. Haul 5 farm to take the crown."
           : touch
             ? "Tap your keep to train peons. Two fingers: drag to pan, pinch to zoom, twist to rotate."
             : ui.pvp
               ? "Click your keep to train peons. Right-drag orbits, Shift-drag pans, wheel zooms."
               : "Click a trained soldier to take the field. WASD move, mouse look, click to strike. Kills pull the camera out. Esc returns.",
+      );
+    }
+    if (ui.possessed && !prev.possessed && layoutRef.current.fpsTouch && prev.phase === "running") {
+      showHint(
+        "phone-fps",
+        "Left stick walks, drag right to look, Fire to strike. Kills pull you to third person; pinch or +/− to adjust.",
       );
     }
     if (ui.basilisk?.youAreKing && !prev.basilisk?.youAreKing) {

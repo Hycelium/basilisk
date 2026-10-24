@@ -2536,19 +2536,6 @@ button:disabled {
   }
 }
 
-.phone-controls-tip {
-  display: none;
-  color: #e2bc72;
-  font-size: 14px;
-  margin: 8px 0 0;
-}
-
-.is-phone .phone-controls-tip,
-.is-android .phone-controls-tip,
-.is-fps-touch .phone-controls-tip {
-  display: block;
-}
-
 .touch-zoom {
   position: absolute;
   right: calc(22px + var(--sar));
