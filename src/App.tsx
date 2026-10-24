@@ -616,12 +616,15 @@ export default function App() {
         }
       }
 
-      if (hit?.kind === "unit" && (state.basilisk || (sim.getMatchMode() !== "pvp" && ev.button === 0))) {
+      if (hit?.kind === "unit" && (state.basilisk || (sim.getMatchMode() !== "pvp" && (touch || ev.button === 0)))) {
         const target = state.units.find((u) => u.id === Number(hit.id));
         const kingRts = sim.isLocalKing() && state.possessedId == null;
         const kingPickingPeon = kingRts && target?.lifeStage === "gatherer";
         const kingPickingTroop = kingRts && !!target?.fromBarracks;
-        // Second tap on the same selected barracks troop → first person (phones + desktop).
+        // Phones: tap a barracks troop once to hop in (PUBG). Desktop keeps select → second tap.
+        const phoneHop =
+          layoutRef.current.fpsTouch && kingPickingTroop && !!target && hopIntoBody(target.id);
+        if (phoneHop) return;
         const troopAlreadyPicked =
           kingPickingTroop &&
           !!target &&
