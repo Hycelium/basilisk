@@ -1743,6 +1743,7 @@ export default function App() {
               onHost={skirmish.hostMatch}
               onJoin={() => skirmish.joinMatch()}
               onCopy={() => void skirmish.copyInvite()}
+              onShare={() => void skirmish.shareInvite()}
               onStart={() => {
                 afterPortalBreak(() => {
                   skirmish.startSkirmish();

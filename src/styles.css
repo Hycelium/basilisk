@@ -2722,6 +2722,12 @@ button:disabled {
   font-size: 13px !important;
 }
 
+.lobby-stay {
+  margin: 0;
+  color: #e7c27a !important;
+  font-size: 13px !important;
+}
+
 .link-pill {
   position: absolute;
   top: 8px;

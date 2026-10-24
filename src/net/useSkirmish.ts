@@ -337,6 +337,16 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
     setLobby((s) => ({ ...s, open: false, live: true, link: "open", status: "" }));
   }, [rendererRef, sim]);
 
+  const shareInvite = useCallback(async () => {
+    const invite = lobbyRef.current.invite;
+    if (!invite || !navigator.share) return;
+    try {
+      await navigator.share({ title: "Basilisk", text: "Join my Basilisk match", url: invite });
+    } catch {
+      /* the share sheet was dismissed */
+    }
+  }, []);
+
   const copyInvite = useCallback(async () => {
     const invite = lobbyRef.current.invite;
     if (!invite) return;
@@ -355,6 +365,39 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
   const setJoinDraft = useCallback((joinDraft: string) => {
     setLobby((s) => ({ ...s, open: true, joinDraft }));
   }, []);
+
+  useEffect(() => {
+    if (!lobby.open) return;
+    let released = false;
+    let sentinel: WakeLockSentinel | null = null;
+    const hold = () => {
+      const locks = navigator.wakeLock;
+      if (!locks || sentinel || released) return;
+      void locks
+        .request("screen")
+        .then((lock) => {
+          if (released) void lock.release();
+          else sentinel = lock;
+        })
+        .catch(() => {
+          /* the browser refused the lock */
+        });
+    };
+    hold();
+    const onVis = () => {
+      if (document.visibilityState !== "visible") {
+        sentinel = null;
+        return;
+      }
+      hold();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      released = true;
+      document.removeEventListener("visibilitychange", onVis);
+      void sentinel?.release();
+    };
+  }, [lobby.open]);
 
   useEffect(() => {
     const room = new URLSearchParams(window.location.search).get("room");
@@ -382,6 +425,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
     announceMap,
     pickMap,
     rematch,
+    shareInvite,
     copyInvite,
     leave,
   };
