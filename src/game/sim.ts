@@ -1261,15 +1261,19 @@ export class GameSim {
     s.possessAimBarricadeId = null;
     this.possessKeys = { w: false, a: false, s: false, d: false };
     if (reason === "crown") {
-      this.addToast("The crown is yours. Command the keep. Click barracks soldiers to take the field.");
+      this.addToast("The crown is yours. Train barracks troops, then Hop in or tap them twice for first person.");
     } else if (reason === "death") {
       this.addToast(
         s.basilisk && !this.isLocalKing()
           ? "Fallen. Wait, then enter as a peon — you can switch sides."
-          : "Fallen. Click another soldier to take the field.",
+          : "Fallen. Tap another soldier twice (or Hop in) to take the field.",
       );
     } else if (reason === "esc" && s.basilisk) {
-      this.addToast(this.isLocalKing() ? "Back to the keep. Click a barracks soldier to possess." : "Body keeps the circuit. Click them to take first person.");
+      this.addToast(
+        this.isLocalKing()
+          ? "Back to the keep. Select a barracks soldier, then Hop in — or tap them twice."
+          : "Body keeps the circuit. Tap them to take first person.",
+      );
     }
   }
 
@@ -2283,6 +2287,7 @@ export class GameSim {
       xp: 0,
     };
     this.state.units.push(u);
+    return u;
   }
 
   /**
@@ -3310,8 +3315,20 @@ export class GameSim {
       const job = b.queue[0];
       job.timeLeft -= dt;
       if (job.timeLeft > 0) continue;
-      this.spawnUnit(team, job.kind, this.pickLane(team), true, b);
+      const spawned = this.spawnUnit(team, job.kind, this.pickLane(team), true, b);
       b.queue.shift();
+      // Local king: auto-select the new troop so "Hop in" / second-tap FPS is ready.
+      if (
+        spawned &&
+        team === this.localTeam &&
+        this.isLocalKing() &&
+        this.state.possessedId == null &&
+        this.state.phase === "running"
+      ) {
+        this.state.selectedVillagerIds = [spawned.id];
+        this.state.selectedBuildingId = null;
+        this.state.selectedKeepTeam = null;
+      }
     }
   }
 

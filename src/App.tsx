@@ -209,6 +209,20 @@ export default function App() {
 
   const refreshUi = useCallback(() => setUi(sim.getUiSnapshot()), [sim]);
 
+  /** Hop into a barracks troop (or Chosen peon) for PUBG-style first person. */
+  const hopIntoBody = useCallback(
+    (id: number) => {
+      if (!sim.tryPossess(id)) return false;
+      const body = sim.getState().units.find((u) => u.id === id);
+      rendererRef.current?.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
+      grabPointerLock();
+      refreshUi();
+      beep(360, 0.08);
+      return true;
+    },
+    [sim, grabPointerLock, refreshUi],
+  );
+
   const requestFullscreen = useCallback(async () => {
     if (!fullscreenWantedRef.current || fullscreenElement() || fullscreenRequestRef.current) return;
     const el = pageRef.current as FsElement | null;
@@ -602,22 +616,19 @@ export default function App() {
         }
       }
 
-      if (
-        hit?.kind === "unit" &&
-        (sim.getState().basilisk || (sim.getMatchMode() !== "pvp" && !touch && ev.button === 0))
-      ) {
-        const target = sim.getState().units.find((u) => u.id === Number(hit.id));
-        const kingRts = sim.isLocalKing() && sim.getState().possessedId == null;
+      if (hit?.kind === "unit" && (state.basilisk || (sim.getMatchMode() !== "pvp" && ev.button === 0))) {
+        const target = state.units.find((u) => u.id === Number(hit.id));
+        const kingRts = sim.isLocalKing() && state.possessedId == null;
         const kingPickingPeon = kingRts && target?.lifeStage === "gatherer";
         const kingPickingTroop = kingRts && !!target?.fromBarracks;
-        if (!kingPickingPeon && !kingPickingTroop && sim.tryPossess(Number(hit.id))) {
-          const body = sim.getState().units.find((u) => u.id === Number(hit.id));
-          r.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
-          grabPointerLock();
-          refreshUi();
-          beep(360, 0.08);
-          return;
-        }
+        // Second tap on the same selected barracks troop → first person (phones + desktop).
+        const troopAlreadyPicked =
+          kingPickingTroop &&
+          !!target &&
+          state.selectedVillagerIds.length === 1 &&
+          state.selectedVillagerIds[0] === target.id;
+        if (troopAlreadyPicked && hopIntoBody(target.id)) return;
+        if (!kingPickingPeon && !kingPickingTroop && hopIntoBody(Number(hit.id))) return;
       }
 
       sim.click(hit, world);
@@ -1128,17 +1139,9 @@ export default function App() {
       radialItems.unshift({
         id: "possess",
         icon: "👁",
-        label: "Enter body",
+        label: "Hop in",
         tone: "move",
-        onPress: () => {
-          const id = Number(hit.id);
-          if (!sim.tryPossess(id)) return;
-          const body = sim.getState().units.find((u) => u.id === id);
-          rendererRef.current?.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
-          grabPointerLock();
-          refreshUi();
-          beep(360, 0.08);
-        },
+        onPress: () => hopIntoBody(Number(hit.id)),
       });
     }
     radialItems.push({
@@ -1459,6 +1462,19 @@ export default function App() {
           ))}
           {ui.selectedPeonCount > 0 && ui.phase === "running" && !sheetOpen && (!ui.basilisk || basiliskKing) && (
             <div className="unit-command-bar" role="toolbar" aria-label="Peon orders">
+              {ui.selectedCanPossess && (
+                <button
+                  type="button"
+                  className="enter-body"
+                  title="Drive this barracks soldier in first person. Tap them again on the field to hop in."
+                  onClick={() => {
+                    const id = sim.getState().selectedVillagerIds[0];
+                    if (id != null) hopIntoBody(id);
+                  }}
+                >
+                  Hop in · FPS
+                </button>
+              )}
               <strong>
                 {ui.selectedPeonCount} selected
               </strong>
@@ -1485,23 +1501,6 @@ export default function App() {
               >
                 Stop
               </button>
-              {ui.selectedCanPossess && (
-                <button
-                  type="button"
-                  title="Drive this barracks soldier in first person"
-                  onClick={() => {
-                    const id = sim.getState().selectedVillagerIds[0];
-                    if (id == null || !sim.tryPossess(id)) return;
-                    const body = sim.getState().units.find((u) => u.id === id);
-                    rendererRef.current?.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
-                    grabPointerLock();
-                    refreshUi();
-                    beep(360, 0.08);
-                  }}
-                >
-                  Enter body
-                </button>
-              )}
               {!ui.basilisk && (
                 <button
                   type="button"
