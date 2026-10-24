@@ -1777,6 +1777,32 @@ button:disabled {
   background: linear-gradient(180deg, #7a3030 0%, #401818 100%) !important;
 }
 
+.raze-confirm {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(160, 80, 80, 0.65);
+  background: rgba(12, 8, 8, 0.94);
+  color: #f0e2c8;
+}
+
+.raze-confirm p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.raze-confirm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.raze-confirm-actions .danger-btn {
+  min-width: 72px;
+  padding: 8px 12px;
+}
+
 .is-phone .sheet-float {
   max-height: 64%;
 }

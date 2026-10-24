@@ -51,7 +51,11 @@ export function DetailSheet({
   const keepPanel = ui.selectedKeepTeam === ui.localTeam;
   const subject = keepPanel ? "keep" : ui.selectedBuildingId ? `b${ui.selectedBuildingId}` : "";
   const [collapsed, setCollapsed] = useState(false);
-  useEffect(() => setCollapsed(false), [subject]);
+  const [razeConfirm, setRazeConfirm] = useState(false);
+  useEffect(() => {
+    setCollapsed(false);
+    setRazeConfirm(false);
+  }, [subject]);
   if (!keepPanel && (!ui.selectedBuildingId || !ui.selectedBuildingKind)) return null;
 
   const sheetClass = collapsed ? "detail sheet-float collapsed" : "detail sheet-float";
@@ -318,7 +322,12 @@ export function DetailSheet({
               </button>
             </>
           )}
-          <button type="button" className="danger-btn" onClick={onRaze} disabled={!ui.selectedCanRaze}>
+          <button
+            type="button"
+            className="danger-btn"
+            onClick={() => setRazeConfirm(true)}
+            disabled={!ui.selectedCanRaze}
+          >
             Raze
             <em>
               {ui.selectedRazeRefund > 0 || ui.selectedRazeRefundWood > 0
@@ -326,6 +335,26 @@ export function DetailSheet({
                 : "0"}
             </em>
           </button>
+        </div>
+      )}
+      {razeConfirm && (
+        <div className="raze-confirm" role="alertdialog" aria-labelledby="raze-confirm-title" aria-modal="true">
+          <p id="raze-confirm-title">Are you sure you want to delete this building?</p>
+          <div className="raze-confirm-actions">
+            <button type="button" className="ghost" onClick={() => setRazeConfirm(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="danger-btn"
+              onClick={() => {
+                setRazeConfirm(false);
+                onRaze();
+              }}
+            >
+              Raze
+            </button>
+          </div>
         </div>
       )}
       </div>
