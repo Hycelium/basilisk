@@ -1282,7 +1282,7 @@ export class GameSim {
     const before = Math.floor((s.possessVisionScore ?? 0) / 2);
     s.possessVisionScore = (s.possessVisionScore ?? 0) + amount;
     if (Math.floor(s.possessVisionScore / 2) > before) {
-      this.addToast("Vision widens — scroll the wheel to look out.");
+      this.addToast("Vision widens — looking out.");
     }
   }
 

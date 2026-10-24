@@ -1051,8 +1051,11 @@ export class GameRenderer {
         return;
       }
       this.trebView = false;
-      this.fpsMaxPull =
+      const nextMax =
         (Math.min(state.possessVisionScore ?? 0, POSSESS_VISION_SCORE) / POSSESS_VISION_SCORE) * POSSESS_PULL_MAX;
+      // Kill / vision unlock: snap out to the new third-person range by default.
+      if (nextMax > this.fpsMaxPull + 0.01) this.fpsPull = nextMax;
+      this.fpsMaxPull = nextMax;
       this.fpsPull = Math.min(this.fpsPull, this.fpsMaxPull);
       const visionT = this.fpsMaxPull > 0.01 ? this.fpsPull / this.fpsMaxPull : 0;
       const fov = THREE.MathUtils.lerp(POSSESS_FOV_TIGHT, POSSESS_FOV_WIDE, visionT);

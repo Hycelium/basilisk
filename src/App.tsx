@@ -928,7 +928,7 @@ export default function App() {
             ? "Tap your keep to train peons. Two fingers: drag to pan, pinch to zoom, twist to rotate."
             : ui.pvp
               ? "Click your keep to train peons. Right-drag orbits, Shift-drag pans, wheel zooms."
-              : "Click a trained soldier to take the field. WASD move, mouse look, click to strike. Kills let you scroll the wheel out. Esc returns.",
+              : "Click a trained soldier to take the field. WASD move, mouse look, click to strike. Kills pull the camera out. Esc returns.",
       );
     }
     if (ui.basilisk?.youAreKing && !prev.basilisk?.youAreKing) {
@@ -1401,11 +1401,11 @@ export default function App() {
                     ? " · left stick · drag right to look"
                     : ui.basilisk
                       ? ui.possessed.visionScore < 1
-                        ? " · haul to look out"
-                        : " · wheel looks out"
+                        ? " · haul looks out"
+                        : " · looking out · wheel adjusts"
                       : ui.possessed.visionScore <= 0
-                        ? " · kill to scroll out"
-                        : " · wheel looks out"}
+                        ? " · kill looks out"
+                        : " · looking out · wheel adjusts"}
                   {ui.possessed.isKing ? " · KING" : ""}
                 </p>
                 )
