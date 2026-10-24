@@ -30,9 +30,12 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
   const goldPct = realm ? realm.trips.gold / 5 : 0;
   const woodPct = realm ? realm.trips.wood / 10 : 0;
   const kingView = !!(realm?.youAreKing && !ui.possessed);
+  const peonView = !!(realm && !kingView);
 
   return (
-    <div className={`${compact ? "hud compact" : "hud"}${kingView ? " king-view" : ""}`}>
+    <div
+      className={`${compact ? "hud compact" : "hud"}${kingView ? " king-view" : ""}${peonView ? " peon-view" : ""}`}
+    >
       <div className="hud-top">
         {realm ? (
           <>
@@ -42,7 +45,7 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
                   <span className="label">RANK</span>
                   <span className="value">{realm.rankLabel}</span>
                 </div>
-                <div className="stat">
+                <div className="stat carry">
                   <span className="label">CARRY</span>
                   <span className="value">
                     {Math.floor(realm.carry)}/{LOAD_SIZE}

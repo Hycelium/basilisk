@@ -167,7 +167,6 @@ import {
   nearestWork,
   orderTarget,
   pickWork,
-  predictHaulFill,
   refreshKings,
   stepHaul,
   visionFromLife,
@@ -474,7 +473,8 @@ export class GameSim {
       const u = this.state.units.find((x) => x.id === this.state.possessedId && x.hp > 0);
       if (this.state.basilisk && u) {
         this.poses.delete("u" + u.id);
-        this.stepPossessed(u, elapsed * this.state.speed, this.possessKeys, this.possessYaw, false);
+        // Haul locally so grain/wood fill and keep dumps feel instant on a guest phone.
+        this.stepPossessed(u, elapsed * this.state.speed, this.possessKeys, this.possessYaw, true);
       }
     }
     this.stepPoses(elapsed);
@@ -854,7 +854,19 @@ export class GameSim {
     );
   }
 
+  /** Local possess or guest drive — currently under a player's fingers. */
+  private isActivelyDriven(u: Unit) {
+    return u.id === this.state.possessedId || u.id === this.remoteBody;
+  }
+
+  /** Claimed player body (or actively driven). The AI crown must never steer these. */
+  private isHumanClaimed(u: Unit) {
+    if (this.isActivelyDriven(u)) return true;
+    return this.state.playerUnitId[u.team] === u.id;
+  }
+
   private setPeonJob(u: Unit, kind: WorkKind) {
+    if (this.isHumanClaimed(u)) return;
     u.workKind = kind;
     u.rallyPoint = undefined;
     u.engageFrom = undefined;
@@ -872,13 +884,13 @@ export class GameSim {
         u.team === team &&
         u.hp > 0 &&
         !u.npcKing &&
-        u.id !== this.state.possessedId &&
+        !this.isActivelyDriven(u) &&
         (u.lifeStage === "gatherer" || u.fromBarracks),
     );
   }
 
   private applyBasiliskWork(team: Team, kind: WorkKind, ids: number[]) {
-    const gatherers = this.basiliskGatherers(team);
+    const gatherers = this.basiliskGatherers(team).filter((u) => !this.isHumanClaimed(u));
     if (gatherers.length === 0) return 0;
     const want = new Set(ids);
     const picked = ids.length > 0 ? gatherers.filter((u) => want.has(u.id)) : gatherers;
@@ -892,7 +904,7 @@ export class GameSim {
   }
 
   private applyBasiliskLaborAdj(team: Team, kind: WorkKind, delta: number) {
-    const gatherers = this.basiliskGatherers(team);
+    const gatherers = this.basiliskGatherers(team).filter((u) => !this.isHumanClaimed(u));
     if (gatherers.length === 0 || delta === 0) return 0;
     let changed = 0;
     if (delta > 0) {
@@ -930,7 +942,7 @@ export class GameSim {
   private steerAiLabor(team: Team) {
     const s = this.state;
     if (s.kingController[team] !== "ai") return;
-    const gatherers = this.basiliskGatherers(team);
+    const gatherers = this.basiliskGatherers(team).filter((u) => !this.isHumanClaimed(u));
     if (gatherers.length === 0) return;
     const coffer = s.kingCoffer[team];
     const assign = (kind: WorkKind, want: number) => {
@@ -1035,6 +1047,8 @@ export class GameSim {
     u.ignoreEnemyCreeps = false;
     u.aiHeldForRush = false;
     u.xp = 0;
+    // Player-driven peons gather whatever they walk into, not a random AI job.
+    if (player) u.workKind = undefined;
     if (!player) return;
     this.state.playerUnitId[team] = u.id;
     if (team === this.localTeam && !this.isLocalKing()) this.tryPossess(u.id);
@@ -1191,6 +1205,7 @@ export class GameSim {
       s.possessedId = u.id;
       s.playerUnitId[this.localTeam] = u.id;
       s.speed = 1;
+      if (u.lifeStage === "gatherer") u.workKind = undefined;
       this.possessKeys = { w: false, a: false, s: false, d: false };
       this.possessYaw = u.team === "you" ? 0 : Math.PI;
       this.sendDrive(true);
@@ -1206,6 +1221,7 @@ export class GameSim {
     u.engageFrom = undefined;
     u.targetUnitId = undefined;
     u.aiHeldForRush = undefined;
+    if (u.lifeStage === "gatherer") u.workKind = undefined;
     this.possessKeys = { w: false, a: false, s: false, d: false };
     this.possessYaw = u.team === "you" ? 0 : Math.PI;
     const label = s.basilisk
@@ -1524,14 +1540,7 @@ export class GameSim {
           const near = [...this.basiliskGatherers(this.localTeam)].sort(
             (a, b) => dist(a.pos, world ?? keepPos(this.localTeam)) - dist(b.pos, world ?? keepPos(this.localTeam)),
           )[0];
-          if (near) {
-            if (this.redirect({ t: "labor", team: this.localTeam, kind: job, ids: [near.id] })) {
-              this.tell(this.localTeam, `1 peon to ${WORK_LABEL[job]}.`);
-              return;
-            }
-            this.applyBasiliskWork(this.localTeam, job, [near.id]);
-            this.tell(this.localTeam, `1 peon to ${WORK_LABEL[job]}.`);
-          }
+          if (near) this.applyBasiliskWork(this.localTeam, job, [near.id]);
         }
       }
       return;
@@ -1707,17 +1716,6 @@ export class GameSim {
         (b) => b.id === this.state.selectedBuildingId && b.team === this.localTeam && b.kind === "barracks",
       );
       if (barracks) {
-        if (this.orderSink && !this.applyingRemote) {
-          this.orderSink({
-            t: "rally",
-            team: this.localTeam,
-            buildingId: barracks.id,
-            x: world.x,
-            y: world.y,
-          });
-          this.setRally(this.localTeam, barracks.id, world);
-          return;
-        }
         this.setRally(this.localTeam, barracks.id, world);
         return;
       }
@@ -1725,14 +1723,7 @@ export class GameSim {
         const near = [...this.basiliskGatherers(this.localTeam)].sort(
           (a, b) => dist(a.pos, world) - dist(b.pos, world),
         )[0];
-        if (near) {
-          if (this.redirect({ t: "labor", team: this.localTeam, kind, ids: [near.id] })) {
-            this.tell(this.localTeam, `1 peon to ${WORK_LABEL[kind]}.`);
-            return;
-          }
-          this.applyBasiliskWork(this.localTeam, kind, [near.id]);
-          this.tell(this.localTeam, `1 peon to ${WORK_LABEL[kind]}.`);
-        }
+        if (near) this.applyBasiliskWork(this.localTeam, kind, [near.id]);
       }
       return;
     }
@@ -1786,7 +1777,9 @@ export class GameSim {
     patrol: boolean,
   ) {
     const want = new Set(ids);
-    const units = this.state.units.filter((u) => u.team === team && u.hp > 0 && !u.npcKing && want.has(u.id));
+    const units = this.state.units.filter(
+      (u) => u.team === team && u.hp > 0 && !u.npcKing && want.has(u.id) && !this.isActivelyDriven(u),
+    );
     if (units.length === 0) return;
     if (hit?.kind === "unit") {
       const enemy = this.state.units.find((u) => u.id === Number(hit.id) && u.team !== team && u.hp > 0);
@@ -2489,6 +2482,7 @@ export class GameSim {
     if (this.state.basilisk) {
       const keep = keepPos(team);
       for (const u of this.basiliskGatherers(team)) {
+        if (this.isHumanClaimed(u)) continue;
         u.rallyPoint = { ...keep };
         u.kingHeld = false;
         u.kingPatrol = false;
@@ -2558,7 +2552,9 @@ export class GameSim {
   /** Assigns free peons and returns their ids. Peons already on a node stay there. */
   private assignIdlePeons(team: Team) {
     if (this.state.basilisk) {
-      const idle = this.basiliskGatherers(team).filter((u) => !u.workKind && !u.kingPatrol);
+      const idle = this.basiliskGatherers(team).filter(
+        (u) => !this.isHumanClaimed(u) && !u.workKind && !u.kingPatrol,
+      );
       if (idle.length === 0) {
         this.tell(team, "Peons are already at work.");
         return [];
@@ -3635,14 +3631,17 @@ export class GameSim {
       if (note && u.team === this.localTeam) this.addToast(note);
       refreshKings(this.state);
       if (u.id === this.state.possessedId) this.state.possessVisionScore = visionFromLife(u);
-    } else if (this.state.basilisk && !live) {
-      // Guest FPS: show bag fill locally. Deposit / promote stay on the host.
-      predictHaulFill(this.state, u, dt);
     }
   }
 
   private stepBasiliskSoul(u: Unit, dt: number) {
     const s = this.state;
+    // Human peons stand until the player drives them; AI never walks them for the crown.
+    if (this.isHumanClaimed(u)) {
+      const note = stepHaul(s, u, dt);
+      if (note && u.team === this.localTeam) this.addToast(note);
+      return;
+    }
     const foe = this.enemy(u.team);
     let nearest: Unit | null = null;
     let nearestD = 34;
@@ -3863,6 +3862,33 @@ export class GameSim {
         if (this.remoteStrike) {
           this.possessAttackAs(u, this.remoteYaw);
           this.remoteStrike = false;
+        }
+        continue;
+      }
+      // Claimed player body: haul in place, or only honor player-issued move/attack — never AI march.
+      if (this.state.basilisk && this.isHumanClaimed(u)) {
+        if (u.lifeStage === "gatherer" || (isClanSoul(u) && !u.fromBarracks)) {
+          this.stepBasiliskSoul(u, dt);
+          continue;
+        }
+        if (u.rallyPoint) {
+          moveTowards(u.pos, u.rallyPoint, u.speed, dt);
+          if (dist(u.pos, u.rallyPoint) < 5) {
+            if (u.kingPatrol && u.engageFrom) {
+              const next = u.engageFrom;
+              u.engageFrom = u.rallyPoint;
+              u.rallyPoint = next;
+            } else {
+              u.rallyPoint = undefined;
+            }
+          }
+          continue;
+        }
+        if (u.targetUnitId != null) {
+          const prey = this.state.units.find((e) => e.id === u.targetUnitId && e.hp > 0);
+          if (prey) this.fightMilitary(u, prey, team, dt);
+          else u.targetUnitId = undefined;
+          continue;
         }
         continue;
       }
@@ -5036,6 +5062,7 @@ export class GameSim {
           if (!body || !this.canPossess(body, team)) break;
           this.remoteBody = body.id;
           this.state.playerUnitId[team] = body.id;
+          if (body.lifeStage === "gatherer") body.workKind = undefined;
           this.remoteKeys = { w: order.w, a: order.a, s: order.s, d: order.d };
           this.remoteYaw = order.yaw;
           break;
@@ -5048,6 +5075,7 @@ export class GameSim {
           if (!body || !this.canPossess(body, team)) break;
           this.remoteBody = body.id;
           this.state.playerUnitId[team] = body.id;
+          if (body.lifeStage === "gatherer") body.workKind = undefined;
           this.remoteKeys = { w: false, a: false, s: false, d: false };
           this.remoteYaw = body.team === "you" ? 0 : Math.PI;
           break;
@@ -5136,11 +5164,6 @@ export class GameSim {
         deposited: u.deposited,
         canPromote: u.canPromote,
         xp: u.xp,
-        kingHeld: u.kingHeld,
-        kingPatrol: u.kingPatrol,
-        targetUnitId: u.targetUnitId,
-        engageX: u.engageFrom?.x,
-        engageY: u.engageFrom?.y,
       })),
       villagers: s.villagers.map((v) => ({
         id: v.id,
@@ -5385,10 +5408,6 @@ export class GameSim {
     }
     if (snap.keeps[this.localTeam].hitFlash > 0) s.redFlash = Math.max(s.redFlash, 0.18);
 
-    const prevOwnBody =
-      prevPossessed != null
-        ? s.units.find((x) => x.id === prevPossessed && x.team === this.localTeam)
-        : undefined;
     s.units = [];
     for (const u of snap.units) {
       const def = UNIT_DEFS[u.kind];
@@ -5400,20 +5419,6 @@ export class GameSim {
           ? { x: shown.x + (u.x - shown.x) * 0.2, y: shown.y + (u.y - shown.y) * 0.2 }
           : this.armPose("u", u.id, u.x, u.y, shown, POSE_GLIDE);
       const gatherer = u.lifeStage === "gatherer";
-      // Guest fill runs ahead of the host picture; keep the bag until the host dumps.
-      let carry = u.carry;
-      let carryKind = u.carryKind;
-      if (ownBody && gatherer && prevOwnBody) {
-        const local = prevOwnBody.carry ?? 0;
-        const remote = u.carry ?? 0;
-        if (remote < 0.5 && local > 1) {
-          carry = 0;
-          carryKind = null;
-        } else if (local > remote) {
-          carry = local;
-          carryKind = prevOwnBody.carryKind ?? u.carryKind;
-        }
-      }
       s.units.push({
         id: u.id,
         team: u.team,
@@ -5440,16 +5445,12 @@ export class GameSim {
         lifeStage: u.lifeStage,
         npcKing: u.npcKing,
         workKind: u.workKind,
-        carryKind,
-        carry,
+        carryKind: u.carryKind,
+        carry: u.carry,
         trips: u.trips,
         kills: u.kills,
         deposited: u.deposited,
         canPromote: u.canPromote,
-        kingHeld: u.kingHeld,
-        kingPatrol: u.kingPatrol,
-        targetUnitId: u.targetUnitId,
-        engageFrom: point(u.engageX, u.engageY),
       });
     }
     s.villagers = [];
@@ -5545,7 +5546,13 @@ export class GameSim {
       const driven =
         snap.driven?.[this.localTeam] ?? snap.playerUnitId?.[this.localTeam] ?? prevPossessed;
       const live = s.units.find((u) => u.id === driven && u.team === this.localTeam && u.hp > 0);
-      s.possessedId = live?.id ?? null;
+      const nextPossessed = live?.id ?? null;
+      // Guest Red starts looking into the valley, not at the mountains.
+      if (live && nextPossessed != null && nextPossessed !== prevPossessed) {
+        this.possessYaw = live.team === "you" ? 0 : Math.PI;
+        this.possessKeys = { w: false, a: false, s: false, d: false };
+      }
+      s.possessedId = nextPossessed;
     } else {
       s.possessedId = null;
       s.possessVisionScore = 0;

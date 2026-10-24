@@ -245,24 +245,8 @@ export function nearestWork(team: Team, pos: Vec2, kind?: WorkKind | null, seed 
 function wheatWantsFill(state: GameState, u: Unit) {
   if (u.carryKind && u.carryKind !== "farm") return false;
   if (u.workKind === "farm" || u.workKind == null) return true;
-  return u.id === state.possessedId;
-}
-
-/** Guest presentation only: fill the bag. Never deposit or promote — host owns the coffer. */
-export function predictHaulFill(state: GameState, u: Unit, dt: number) {
-  if (u.lifeStage !== "gatherer") return;
-  if ((u.carry ?? 0) >= LOAD_SIZE) return;
-  if (wheatWantsFill(state, u) && wheatPatchAt(state.mapSeed, u.pos)) {
-    u.carryKind = "farm";
-    u.carry = Math.min(LOAD_SIZE, (u.carry ?? 0) + WHEAT_FILL_RATE * dt);
-    return;
-  }
-  const want = u.carryKind ?? u.workKind;
-  const near = nearestWork(u.team, u.pos, want, state.mapSeed);
-  if (!near || near.dist > WORK_REACH) return;
-  if (!u.carryKind) u.carryKind = near.kind;
-  if (u.carryKind !== near.kind) return;
-  u.carry = Math.min(LOAD_SIZE, (u.carry ?? 0) + FILL_RATE * dt);
+  // Host or guest body the player is driving — not only the local possessedId.
+  return u.id === state.possessedId || u.id === state.playerUnitId[u.team];
 }
 
 /** Fill at a node or dump at the keep. Returns a toast label on deposit or rank-up. */
@@ -285,7 +269,17 @@ export function stepHaul(state: GameState, u: Unit, dt: number) {
     }
     return null;
   }
-  predictHaulFill(state, u, dt);
+  if (wheatWantsFill(state, u) && wheatPatchAt(state.mapSeed, u.pos)) {
+    u.carryKind = "farm";
+    u.carry = Math.min(LOAD_SIZE, (u.carry ?? 0) + WHEAT_FILL_RATE * dt);
+    return null;
+  }
+  const want = u.carryKind ?? u.workKind;
+  const near = nearestWork(u.team, u.pos, want, state.mapSeed);
+  if (!near || near.dist > WORK_REACH) return null;
+  if (!u.carryKind) u.carryKind = near.kind;
+  if (u.carryKind !== near.kind) return null;
+  u.carry = Math.min(LOAD_SIZE, (u.carry ?? 0) + FILL_RATE * dt);
   return null;
 }
 

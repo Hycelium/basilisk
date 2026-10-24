@@ -286,6 +286,24 @@ button:disabled {
   letter-spacing: 0.12em;
 }
 
+.hud.peon-view .stat.carry {
+  order: -1;
+}
+
+.hud.peon-view .stat.carry .value {
+  font-size: 20px;
+  color: #9dffc0;
+}
+
+.layout-side.is-phone .hud.peon-view .hud-top {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.layout-side.is-phone .hud.peon-view .stat.carry {
+  grid-column: 1 / -1;
+}
+
 .layout-side.is-phone .panel-dock {
   display: flex;
   flex-direction: column;
@@ -332,6 +350,30 @@ button:disabled {
 
 .is-phone .fps-charge {
   top: 16px;
+}
+
+/* Narrow phone valley: keep stick and fire clear of the bottom keep bar. */
+.layout-side.is-phone .touch-stick:not(.live) {
+  left: calc(12px + var(--sal));
+  width: 104px;
+  height: 104px;
+}
+
+.layout-side.is-phone .touch-stick-nub {
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+}
+
+.layout-side.is-phone .touch-fire {
+  right: calc(10px + var(--sar));
+  width: 72px;
+  height: 72px;
+  font-size: 12px;
+}
+
+.layout-side.is-phone .panel-status {
+  font-size: 11px;
 }
 
 @media (max-width: 700px) {
@@ -1846,6 +1888,24 @@ button:disabled {
   padding: 20px 18px;
   background: rgba(8, 7, 12, 0.92);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
+/* Phone side layout: keep the rejoin card on the valley, not under the panel. */
+.layout-side.is-phone .join-overlay {
+  left: calc((100% - var(--panel-w)) / 2);
+  width: min(320px, calc(100% - var(--panel-w) - 20px));
+  top: 42%;
+  z-index: 20;
+  padding: 14px 12px;
+}
+
+.layout-side.is-phone .join-overlay h2 {
+  font-size: 20px;
+}
+
+.layout-side.is-phone .join-overlay .cta,
+.layout-side.is-phone .join-overlay .ghost {
+  min-height: 44px;
 }
 
 .join-overlay .cta:disabled {
