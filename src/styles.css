@@ -2549,6 +2549,33 @@ button:disabled {
   display: block;
 }
 
+.touch-zoom {
+  position: absolute;
+  right: calc(22px + var(--sar));
+  bottom: calc(136px + var(--sab));
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.touch-zoom-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  border: 2px solid rgba(226, 188, 114, 0.7);
+  background: rgba(20, 14, 10, 0.72);
+  color: #ffe7b0;
+  font: 700 22px/1 Cinzel, Palatino, serif;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.stage:has(.keep-tug) .touch-zoom {
+  bottom: calc(178px + var(--sab));
+}
+
 .touch-fps {
   position: absolute;
   inset: 0;

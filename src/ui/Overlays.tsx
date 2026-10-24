@@ -109,7 +109,10 @@ export function Overlays({
           <h1>Basilisk</h1>
           <p className="keep-lvl">Twin valleys · one life at a time</p>
           <p className="menu-lead">Most peons only haul. A few chosen can promote. An AI king already holds the keep.</p>
-          <p className="phone-controls-tip">On a phone: left stick walks, drag the right side to look, Fire to strike.</p>
+          <p className="phone-controls-tip">
+            On a phone: left stick walks, drag the right side to look, Fire to strike. After kills, pinch or tap + to look
+            out.
+          </p>
           <p className="foe-brain-tease">{playerRecord}</p>
 
           <div className="map-card selected map-brief">

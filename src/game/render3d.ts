@@ -831,11 +831,25 @@ export class GameRenderer {
     if (this.fpsLive) {
       if (this.trebView) return;
       const step = ev.deltaY > 0 ? 5.4 : -5.4;
-      this.fpsPull = THREE.MathUtils.clamp(this.fpsPull + step, 0, this.fpsMaxPull);
+      this.pullFpsBy(step);
       return;
     }
     const factor = ev.deltaY > 0 ? 1.08 : 0.92;
     this.zoomBy(factor);
+  }
+
+  /** Positive delta pulls the camera toward third person (same as scroll-wheel out). */
+  pullFpsBy(delta: number) {
+    if (!this.fpsLive || this.trebView) return;
+    this.fpsPull = THREE.MathUtils.clamp(this.fpsPull + delta, 0, this.fpsMaxPull);
+  }
+
+  getFpsPull() {
+    return this.fpsPull;
+  }
+
+  getFpsMaxPull() {
+    return this.fpsMaxPull;
   }
 
   private allocateParticleBuffers(cap: number) {

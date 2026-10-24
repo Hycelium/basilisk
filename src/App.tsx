@@ -1413,6 +1413,7 @@ export default function App() {
               {layout.fpsTouch ? (
                 <TouchFpsPad
                   fireLabel={ui.possessed.kind === "trebuchet" ? (ui.possessed.charge >= 1 ? "Loose" : "Wind") : "Fire"}
+                  canLookOut={ui.possessed.kind !== "trebuchet" && ui.possessed.visionScore > 0}
                   onMove={(keys) => sim.setPossessMove(keys)}
                   onLook={(dx, dy) => {
                     const r = rendererRef.current;
@@ -1420,6 +1421,7 @@ export default function App() {
                     r.lookBy(dx, dy, 1.7);
                     sim.setPossessYaw(r.getFpsYaw());
                   }}
+                  onZoom={(delta) => rendererRef.current?.pullFpsBy(delta)}
                   onFire={() => {
                     sim.possessAttack();
                     rendererRef.current?.kickSwing();
