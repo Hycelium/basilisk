@@ -143,6 +143,8 @@ export default function App() {
   const rendererRef = useRef<GameRenderer | null>(null);
   const skirmish = useSkirmish(sim, rendererRef);
   const { roleRef, liveRef, linkRef } = skirmish;
+  const pingMsRef = useRef<number | null>(null);
+  pingMsRef.current = skirmish.lobby.pingMs;
   const [ui, setUi] = useState<UiSnapshot>(() => sim.getUiSnapshot() ?? defaultUi);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const heardCombatRef = useRef(new Set<number>());
@@ -433,8 +435,11 @@ export default function App() {
       }
       if (hosting) {
         snapAcc += Math.min(1, elapsed);
-        // 20 pictures a second. Oversized pictures still split for PeerJS.
-        if (snapAcc >= 0.05) {
+        // Adaptive rate: keep mobile/cellular links from choking on 20 Hz snaps.
+        const ping = pingMsRef.current;
+        const snapEvery =
+          ping != null && ping > 220 ? 0.12 : ping != null && ping > 120 ? 0.08 : 0.05;
+        if (snapAcc >= snapEvery) {
           snapAcc = 0;
           linkRef.current?.send({ t: "snap", snap: sim.exportSnapshot() });
         }
