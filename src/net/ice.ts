@@ -1,5 +1,5 @@
 /**
- * ICE for skirmish.
+ * ICE for skirmish — same layout as KA9KREW/roadkeep.
  *
  * A PC can usually connect straight through a home router. Two phones on cell
  * data cannot: each carrier NAT refuses the direct path, so the match has to
@@ -16,7 +16,7 @@ export const PHONE_ATTEMPT_MS = 2_500;
 export const RELAY_STATUS = "Trying relay…";
 
 const DEFAULT_MINT = "https://basilisk-turn.hycelium.workers.dev/";
-const MINT_URL = (import.meta.env.VITE_TURN_MINT ?? "").trim() || DEFAULT_MINT;
+const MINT_URL = ((import.meta.env.VITE_TURN_MINT as string | undefined) ?? "").trim() || DEFAULT_MINT;
 
 const turn = (urls: string): RTCIceServer => ({
   urls,
@@ -57,17 +57,7 @@ export function orderRelayUrls(urls: string | string[]): string[] {
 }
 
 function fallbackRelays(): RTCIceServer[] {
-  // Prefer port 443 / TLS — cell carriers often drop classic TURN ports.
-  const openRelay = (urls: string): RTCIceServer => ({
-    urls,
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  });
   return [
-    openRelay("turns:openrelay.metered.ca:443?transport=tcp"),
-    openRelay("turn:openrelay.metered.ca:443?transport=tcp"),
-    openRelay("turn:openrelay.metered.ca:80?transport=tcp"),
-    openRelay("turn:openrelay.metered.ca:443"),
     turn("turns:turn.evan-brass.net:443?transport=tcp"),
     turn("turn:turn.evan-brass.net?transport=tcp"),
     turn("turn:turn.evan-brass.net"),

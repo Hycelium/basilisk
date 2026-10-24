@@ -1,5 +1,6 @@
 /**
  * Mints a short-lived Cloudflare TURN credential for one match.
+ * Same layout as KA9KREW/roadkeep turn worker.
  * TURN_KEY_ID and TURN_KEY_API_TOKEN stay here. The browser only receives
  * the expiring username and password.
  *
