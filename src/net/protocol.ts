@@ -86,6 +86,11 @@ export interface SnapUnit {
   deposited?: number;
   canPromote?: boolean;
   xp?: number;
+  kingHeld?: boolean;
+  kingPatrol?: boolean;
+  targetUnitId?: number;
+  engageX?: number;
+  engageY?: number;
 }
 
 export interface SnapVillager {

@@ -167,6 +167,7 @@ import {
   nearestWork,
   orderTarget,
   pickWork,
+  predictHaulFill,
   refreshKings,
   stepHaul,
   visionFromLife,
@@ -1523,7 +1524,14 @@ export class GameSim {
           const near = [...this.basiliskGatherers(this.localTeam)].sort(
             (a, b) => dist(a.pos, world ?? keepPos(this.localTeam)) - dist(b.pos, world ?? keepPos(this.localTeam)),
           )[0];
-          if (near) this.applyBasiliskWork(this.localTeam, job, [near.id]);
+          if (near) {
+            if (this.redirect({ t: "labor", team: this.localTeam, kind: job, ids: [near.id] })) {
+              this.tell(this.localTeam, `1 peon to ${WORK_LABEL[job]}.`);
+              return;
+            }
+            this.applyBasiliskWork(this.localTeam, job, [near.id]);
+            this.tell(this.localTeam, `1 peon to ${WORK_LABEL[job]}.`);
+          }
         }
       }
       return;
@@ -1699,6 +1707,17 @@ export class GameSim {
         (b) => b.id === this.state.selectedBuildingId && b.team === this.localTeam && b.kind === "barracks",
       );
       if (barracks) {
+        if (this.orderSink && !this.applyingRemote) {
+          this.orderSink({
+            t: "rally",
+            team: this.localTeam,
+            buildingId: barracks.id,
+            x: world.x,
+            y: world.y,
+          });
+          this.setRally(this.localTeam, barracks.id, world);
+          return;
+        }
         this.setRally(this.localTeam, barracks.id, world);
         return;
       }
@@ -1706,7 +1725,14 @@ export class GameSim {
         const near = [...this.basiliskGatherers(this.localTeam)].sort(
           (a, b) => dist(a.pos, world) - dist(b.pos, world),
         )[0];
-        if (near) this.applyBasiliskWork(this.localTeam, kind, [near.id]);
+        if (near) {
+          if (this.redirect({ t: "labor", team: this.localTeam, kind, ids: [near.id] })) {
+            this.tell(this.localTeam, `1 peon to ${WORK_LABEL[kind]}.`);
+            return;
+          }
+          this.applyBasiliskWork(this.localTeam, kind, [near.id]);
+          this.tell(this.localTeam, `1 peon to ${WORK_LABEL[kind]}.`);
+        }
       }
       return;
     }
@@ -3609,6 +3635,9 @@ export class GameSim {
       if (note && u.team === this.localTeam) this.addToast(note);
       refreshKings(this.state);
       if (u.id === this.state.possessedId) this.state.possessVisionScore = visionFromLife(u);
+    } else if (this.state.basilisk && !live) {
+      // Guest FPS: show bag fill locally. Deposit / promote stay on the host.
+      predictHaulFill(this.state, u, dt);
     }
   }
 
@@ -5107,6 +5136,11 @@ export class GameSim {
         deposited: u.deposited,
         canPromote: u.canPromote,
         xp: u.xp,
+        kingHeld: u.kingHeld,
+        kingPatrol: u.kingPatrol,
+        targetUnitId: u.targetUnitId,
+        engageX: u.engageFrom?.x,
+        engageY: u.engageFrom?.y,
       })),
       villagers: s.villagers.map((v) => ({
         id: v.id,
@@ -5351,6 +5385,10 @@ export class GameSim {
     }
     if (snap.keeps[this.localTeam].hitFlash > 0) s.redFlash = Math.max(s.redFlash, 0.18);
 
+    const prevOwnBody =
+      prevPossessed != null
+        ? s.units.find((x) => x.id === prevPossessed && x.team === this.localTeam)
+        : undefined;
     s.units = [];
     for (const u of snap.units) {
       const def = UNIT_DEFS[u.kind];
@@ -5362,6 +5400,20 @@ export class GameSim {
           ? { x: shown.x + (u.x - shown.x) * 0.2, y: shown.y + (u.y - shown.y) * 0.2 }
           : this.armPose("u", u.id, u.x, u.y, shown, POSE_GLIDE);
       const gatherer = u.lifeStage === "gatherer";
+      // Guest fill runs ahead of the host picture; keep the bag until the host dumps.
+      let carry = u.carry;
+      let carryKind = u.carryKind;
+      if (ownBody && gatherer && prevOwnBody) {
+        const local = prevOwnBody.carry ?? 0;
+        const remote = u.carry ?? 0;
+        if (remote < 0.5 && local > 1) {
+          carry = 0;
+          carryKind = null;
+        } else if (local > remote) {
+          carry = local;
+          carryKind = prevOwnBody.carryKind ?? u.carryKind;
+        }
+      }
       s.units.push({
         id: u.id,
         team: u.team,
@@ -5388,12 +5440,16 @@ export class GameSim {
         lifeStage: u.lifeStage,
         npcKing: u.npcKing,
         workKind: u.workKind,
-        carryKind: u.carryKind,
-        carry: u.carry,
+        carryKind,
+        carry,
         trips: u.trips,
         kills: u.kills,
         deposited: u.deposited,
         canPromote: u.canPromote,
+        kingHeld: u.kingHeld,
+        kingPatrol: u.kingPatrol,
+        targetUnitId: u.targetUnitId,
+        engageFrom: point(u.engageX, u.engageY),
       });
     }
     s.villagers = [];
