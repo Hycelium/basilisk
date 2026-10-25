@@ -890,9 +890,17 @@ export class GameSim {
           (u.fromBarracks || u.lifeStage === "warrior" || u.lifeStage === "king"),
       )
       .sort((a, b) => a.id - b.id);
+    // Attack: clear hold rallies so troops resume normal march / hunt AI.
+    if (layer === "assault") {
+      for (const u of troops) {
+        u.rallyPoint = undefined;
+        u.engageFrom = undefined;
+      }
+      return;
+    }
     // Spread troops across roads so Commands don't pile everyone on one lane.
     this.balanceTroopLanes(troops, lanes);
-    if (layer === "keep" || layer === "assault") {
+    if (layer === "keep") {
       for (const u of troops) {
         u.rallyPoint = defendPointFor(seed, layer, u.lane, u.id, team);
         u.engageFrom = undefined;

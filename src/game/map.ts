@@ -183,7 +183,7 @@ export function defendLayerOptions(seed: number): { id: DefendStanceId; label: s
   return [
     { id: "keep", label: "Defend keep" },
     ...belts.filter((o) => present.has(o.id as RiverLayerId)),
-    { id: "assault", label: "Assault keep" },
+    { id: "assault", label: "Attack" },
   ];
 }
 

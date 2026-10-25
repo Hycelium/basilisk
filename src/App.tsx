@@ -1112,7 +1112,10 @@ export default function App() {
         id: `defend-${layer.id}`,
         icon: layer.id === "assault" ? "⚔" : layer.id === "keep" ? "🛡" : "🌉",
         label: layer.label,
-        hint: `Concentrate troops — ${layer.label}`,
+        hint:
+          layer.id === "assault"
+            ? "Release hold — troops march and fight normally"
+            : `Concentrate troops — ${layer.label}`,
         active: active === layer.id,
         onPress: () => {
           sim.setDefendLayer(active === layer.id ? null : layer.id);
