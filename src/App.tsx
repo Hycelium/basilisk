@@ -921,6 +921,15 @@ export default function App() {
   }, [sim, refreshUi, setPatrol, toggleFullscreen, skirmish.liveRef]);
 
   useEffect(() => {
+    let fireHold = 0;
+    const clearFireHold = () => {
+      window.clearInterval(fireHold);
+      fireHold = 0;
+    };
+    const strikeOnce = () => {
+      sim.possessAttack();
+      rendererRef.current?.kickSwing();
+    };
     const onLook = (ev: MouseEvent) => {
       const canvas = canvasRef.current;
       if (document.pointerLockElement !== canvas) return;
@@ -931,28 +940,47 @@ export default function App() {
     };
     const onLockChange = () => {
       if (document.pointerLockElement === canvasRef.current) return;
+      clearFireHold();
+      if (sim.getMatchMode() === "arena") {
+        lockWantedRef.current = true;
+        return;
+      }
       if (!lockWantedRef.current) return;
       lockWantedRef.current = false;
       if (sim.getState().possessedId == null) return;
       sim.releasePossess("esc");
       setUi(sim.getUiSnapshot());
     };
-    const onStrike = (ev: MouseEvent) => {
-      if (document.pointerLockElement !== canvasRef.current) return;
+    const onStrikeDown = (ev: MouseEvent) => {
       if (ev.button !== 0) return;
+      if (sim.getState().possessedId == null) return;
+      if (layoutRef.current.fpsTouch) return;
+      const canvas = canvasRef.current;
+      if (document.pointerLockElement !== canvas) {
+        grabPointerLock();
+        return;
+      }
       ev.preventDefault();
-      sim.possessAttack();
-      rendererRef.current?.kickSwing();
+      strikeOnce();
+      clearFireHold();
+      fireHold = window.setInterval(strikeOnce, 160);
+    };
+    const onStrikeUp = (ev: MouseEvent) => {
+      if (ev.button !== 0) return;
+      clearFireHold();
     };
     document.addEventListener("mousemove", onLook);
     document.addEventListener("pointerlockchange", onLockChange);
-    document.addEventListener("mousedown", onStrike);
+    document.addEventListener("mousedown", onStrikeDown);
+    document.addEventListener("mouseup", onStrikeUp);
     return () => {
+      clearFireHold();
       document.removeEventListener("mousemove", onLook);
       document.removeEventListener("pointerlockchange", onLockChange);
-      document.removeEventListener("mousedown", onStrike);
+      document.removeEventListener("mousedown", onStrikeDown);
+      document.removeEventListener("mouseup", onStrikeUp);
     };
-  }, [sim]);
+  }, [sim, grabPointerLock]);
 
   // Contextual one-shot hints.
   useEffect(() => {
@@ -972,11 +1000,18 @@ export default function App() {
               : "Click a trained soldier to take the field. WASD move, mouse look, click to strike. Kills pull the camera out. Esc returns.",
       );
     }
-    if (ui.possessed && !prev.possessed && layoutRef.current.fpsTouch && prev.phase === "running") {
-      showHint(
-        "phone-fps",
-        "Left stick walks, drag right to look, Fire to strike. Kills pull you to third person; pinch or +/− to adjust.",
-      );
+    if (ui.possessed && !prev.possessed) {
+      const body = sim.getState().units.find((u) => u.id === ui.possessed!.id);
+      rendererRef.current?.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
+      if (layoutRef.current.fpsTouch) {
+        showHint(
+          "phone-fps",
+          "Left stick walks, drag right to look, hold Fire to strike. Kills pull you to third person; pinch or +/− to adjust.",
+        );
+      } else if (ui.arena) {
+        grabPointerLock();
+        showHint("arena-fps", "WASD move, mouse look, hold click to strike. Esc unlocks the cursor — click again to look.");
+      }
     }
     if (ui.basilisk?.youAreKing && !prev.basilisk?.youAreKing) {
       showHint(
@@ -1010,7 +1045,7 @@ export default function App() {
           : "Queue peons here. Build Houses on eco pads to raise the cap.",
       );
     }
-  }, [ui, showHint]);
+  }, [ui, showHint, sim, grabPointerLock]);
 
   const onSelectBuild = (kind: BuildingKind) => {
     sim.selectBuild(kind);
@@ -1041,8 +1076,11 @@ export default function App() {
       hint: ui.possessed ? "Leave the soldier (Esc)" : "Cancel selection (Esc)",
       onPress: () => {
         if (ui.possessed) {
-          sim.releasePossess("esc");
-          document.exitPointerLock();
+          if (ui.arena) document.exitPointerLock();
+          else {
+            sim.releasePossess("esc");
+            document.exitPointerLock();
+          }
         } else {
           sim.cancelSelection();
           setPatrol(false);
@@ -1768,6 +1806,12 @@ export default function App() {
               setCampaignOpen(false);
               afterPortalBreak(() => {
                 sim.startArena();
+                const bodyId = sim.getState().possessedId;
+                if (bodyId != null) {
+                  const body = sim.getState().units.find((u) => u.id === bodyId);
+                  rendererRef.current?.enterPossess(sim.getPossessYaw(), body?.kind === "trebuchet");
+                  grabPointerLock();
+                }
                 refreshUi();
                 beep(520);
               });

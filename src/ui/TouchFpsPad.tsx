@@ -195,6 +195,7 @@ export function TouchFpsPad({
     if (ev.pointerType === "mouse" && ev.button !== 0) return;
     ev.preventDefault();
     ev.stopPropagation();
+    (ev.currentTarget as HTMLElement).setPointerCapture?.(ev.pointerId);
     onFireRef.current();
     window.clearInterval(fireHold.current);
     fireHold.current = window.setInterval(() => onFireRef.current(), 160);
@@ -202,6 +203,9 @@ export function TouchFpsPad({
 
   const stopFire = (ev: React.PointerEvent<HTMLButtonElement>) => {
     ev.stopPropagation();
+    if (ev.currentTarget.hasPointerCapture?.(ev.pointerId)) {
+      ev.currentTarget.releasePointerCapture(ev.pointerId);
+    }
     window.clearInterval(fireHold.current);
     fireHold.current = 0;
   };
@@ -267,7 +271,6 @@ export function TouchFpsPad({
         onPointerDown={startFire}
         onPointerUp={stopFire}
         onPointerCancel={stopFire}
-        onPointerLeave={stopFire}
       >
         {fireLabel}
       </button>
