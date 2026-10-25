@@ -189,7 +189,7 @@ export const ARCHER_VS_TREBUCHET = 0.28;
 export const MELEE_VS_TREBUCHET = 1.55;
 export const BARRICADE_HP = 36;
 
-/** Hit points so a trebuchet wrecks a structure in four shots. Yard houses stay off-limits; purple mid houses and churches are legal. */
+/** Hit points so a trebuchet wrecks a structure in four shots. Houses stay off-limits; churches are legal. */
 export const BUILD_HP: Record<BuildingKind, number> = {
   watchtower: 40,
   ballista: 48,
@@ -211,7 +211,7 @@ export function trebuchetShot(maxHp: number) {
   return Math.max(1, Math.ceil(maxHp / TREBUCHET_SHOTS_TO_KILL));
 }
 
-/** Towers, halls, and churches. Purple mid houses are checked separately via pad zone. */
+/** Towers, halls, and churches. Houses (yard and purple) are off-limits. */
 export function isTrebuchetBuilding(kind: BuildingKind) {
   return (
     kind === "watchtower" ||

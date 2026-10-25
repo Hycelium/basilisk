@@ -2303,10 +2303,9 @@ export class GameSim {
     return this.state.pads.find((p) => p.id === padId)?.zone === "midEco";
   }
 
-  /** Towers/halls/churches, plus purple midfield houses. */
+  /** Towers, halls, and churches — houses are off-limits. */
   private canTrebuchetTarget(b: Building) {
-    if (isTrebuchetBuilding(b.kind)) return true;
-    return b.kind === "house" && this.isMidEcoPad(b.padId);
+    return isTrebuchetBuilding(b.kind);
   }
 
   private inChurchAura(u: Unit) {
