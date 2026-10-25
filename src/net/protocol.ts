@@ -3,6 +3,7 @@ import { skirmishMap } from "../game/map";
 import type {
   BuildingKind,
   Coffer,
+  DefendLayerId,
   GamePhase,
   KingController,
   KingOrder,
@@ -51,6 +52,7 @@ export type RemoteOrder =
   | { t: "labor"; team: Team; kind: WorkKind; ids: number[] }
   | { t: "laborAdj"; team: Team; kind: WorkKind; delta: number }
   | { t: "crown"; team: Team; order: KingOrder }
+  | { t: "defend"; team: Team; layer: DefendLayerId | null }
   | { t: "rejoin"; team: Team };
 
 export interface SnapKeep {
@@ -194,6 +196,7 @@ export interface MatchSnapshot {
   coffer?: Record<Team, Coffer>;
   kingController?: Record<Team, KingController>;
   kingOrder?: Record<Team, KingOrder>;
+  defendLayer?: Record<Team, DefendLayerId | null>;
   kingId?: Record<Team, number | null>;
   playerUnitId?: Record<Team, number | null>;
   driven?: Record<Team, number | null>;
@@ -242,6 +245,7 @@ const ORDER_TYPES = new Set<RemoteOrder["t"]>([
   "labor",
   "laborAdj",
   "crown",
+  "defend",
   "rejoin",
 ]);
 

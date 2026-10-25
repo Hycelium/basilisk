@@ -1,13 +1,15 @@
 import { useMemo } from "react";
-import { WORLD_H, WORLD_W } from "../game/balance";
+import { WORLD_H } from "../game/balance";
 import {
   buildPads,
   generateMap,
   keepPos,
   mapBounds,
   mapLanes,
-  riverSpec,
+  riverLayers,
+  riverYAt,
   roadCenterX,
+  type RiverBand,
 } from "../game/map";
 import type { Lane, Team } from "../game/types";
 
@@ -27,17 +29,15 @@ function roadPath(seed: number, lane: Lane) {
   return d;
 }
 
-function riverPath(seed: number) {
-  const river = riverSpec(seed);
-  if (!river.enabled) return null;
+function riverPath(seed: number, river: RiverBand) {
   const { minX, width } = mapBounds(seed);
   let d = "";
   for (let i = 0; i <= RIVER_SAMPLES; i++) {
     const x = minX + (width * i) / RIVER_SAMPLES;
-    const y = river.y + Math.sin((x / WORLD_W) * Math.PI * 2 + river.phase) * river.amplitude;
+    const y = riverYAt(river, x);
     d += `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
   }
-  return { d, width: river.width };
+  return { d, width: river.width, id: river.id };
 }
 
 function KeepGlyph({ x, y, team }: { x: number; y: number; team: Team }) {
@@ -63,7 +63,7 @@ export function MapPreview({ seed }: { seed: number }) {
     return {
       view: `${bounds.minX - marginX} ${-marginY} ${bounds.width + marginX * 2} ${WORLD_H + marginY * 2}`,
       field: bounds,
-      river: riverPath(seed),
+      rivers: riverLayers(seed).map((river) => riverPath(seed, river)),
       roads: mapLanes(seed).map((lane) => ({ lane, d: roadPath(seed, lane) })),
       pads: buildPads(map),
       you: keepPos("you"),
@@ -75,16 +75,17 @@ export function MapPreview({ seed }: { seed: number }) {
     <div className="map-seed-preview">
       <svg viewBox={drawing.view} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Top-down map of this battlefield">
         <rect x={drawing.field.minX} y={-12} width={drawing.field.width} height={WORLD_H + 24} fill="#4d6438" />
-        {drawing.river ? (
+        {drawing.rivers.map((river) => (
           <path
-            d={drawing.river.d}
+            key={river.id}
+            d={river.d}
             fill="none"
             stroke="#3f91b0"
-            strokeWidth={drawing.river.width}
+            strokeWidth={river.width}
             strokeLinecap="round"
             strokeLinejoin="round"
           />
-        ) : null}
+        ))}
         {drawing.roads.map((road) => (
           <path
             key={road.lane}

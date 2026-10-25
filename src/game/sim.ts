@@ -83,6 +83,7 @@ import {
 import {
   buildNodes,
   buildPads,
+  defendLayerOptions,
   generateMap,
   getMap,
   getOrCreateCampaignMap,
@@ -133,6 +134,7 @@ import type {
   Team,
   TrainKind,
   KingOrder,
+  DefendLayerId,
   UiSnapshot,
   Unit,
   UnitKind,
@@ -365,6 +367,7 @@ export class GameSim {
       kingId: { you: null, foe: null },
       kingController: defaultKingController(),
       kingOrder: defaultKingOrder(),
+      defendLayer: { you: null, foe: null },
       kingTreasury: { you: 0, foe: 0 },
       kingCoffer: { you: emptyCoffer(), foe: emptyCoffer() },
       scars: emptyScars(),
@@ -769,6 +772,7 @@ export class GameSim {
     this.state.food = { you: 0, foe: 0 };
     this.state.playerJob = null;
     this.state.kingOrder = { you: "gather", foe: "gather" };
+    this.state.defendLayer = { you: null, foe: null };
     this.state.kingTreasury = { you: 0, foe: 0 };
     this.state.kingController = defaultKingController();
     this.state.kingCoffer = {
@@ -824,7 +828,36 @@ export class GameSim {
     if (!this.isLocalKing()) return;
     if (this.redirect({ t: "crown", team: this.localTeam, order })) return;
     s.kingOrder[this.localTeam] = order;
+    if (order !== "hold") s.defendLayer[this.localTeam] = null;
     this.addToast(`The crown bids: ${order}.`);
+  }
+
+  /** Concentrate warriors on a river-bridge layer (Hold fords). */
+  setDefendLayer(layer: DefendLayerId | null) {
+    const s = this.state;
+    if (!s.basilisk) return;
+    if (!this.isLocalKing()) return;
+    if (this.redirect({ t: "defend", team: this.localTeam, layer })) return;
+    this.applyDefendLayer(this.localTeam, layer);
+  }
+
+  private applyDefendLayer(team: Team, layer: DefendLayerId | null) {
+    const s = this.state;
+    if (!s.basilisk) return;
+    if (layer) {
+      const ok = defendLayerOptions(this.activeMap.seed).some((o) => o.id === layer);
+      if (!ok) return;
+      s.kingOrder[team] = "hold";
+      s.defendLayer[team] = layer;
+      if (team === this.localTeam) {
+        const label = defendLayerOptions(this.activeMap.seed).find((o) => o.id === layer)?.label ?? "bridges";
+        this.addToast(`Holding ${label.toLowerCase()}.`);
+      }
+      return;
+    }
+    s.defendLayer[team] = null;
+    if (s.kingOrder[team] === "hold") s.kingOrder[team] = "gather";
+    if (team === this.localTeam) this.addToast("Standing down from the bridges.");
   }
 
   assignBasiliskWork(kind: WorkKind) {
@@ -3956,7 +3989,18 @@ export class GameSim {
       if (!this.placeAiBuilding("watchtower", 20, team)) this.basiliskTrainUnits(team);
     }
 
-    s.kingOrder[team] = barracks.length === 0 ? "gather" : s.waveIndex >= 4 ? "hunt" : "hold";
+    if (barracks.length === 0) {
+      s.kingOrder[team] = "gather";
+      s.defendLayer[team] = null;
+    } else if (s.waveIndex >= 4) {
+      s.kingOrder[team] = "hunt";
+      s.defendLayer[team] = null;
+    } else {
+      const opts = defendLayerOptions(this.activeMap.seed);
+      const home = opts.find((o) => o.id === "home")?.id ?? opts[0]?.id ?? null;
+      s.kingOrder[team] = "hold";
+      s.defendLayer[team] = home;
+    }
   }
 
   private basiliskTrainUnits(team: Team) {
@@ -5253,6 +5297,10 @@ export class GameSim {
           break;
         case "crown":
           this.state.kingOrder[team] = order.order;
+          if (order.order !== "hold") this.state.defendLayer[team] = null;
+          break;
+        case "defend":
+          this.applyDefendLayer(team, order.layer);
           break;
         case "rejoin":
           if (this.state.kingController[team] === "player") break;
@@ -5396,6 +5444,7 @@ export class GameSim {
       },
       kingController: { ...s.kingController },
       kingOrder: { ...s.kingOrder },
+      defendLayer: { you: s.defendLayer.you, foe: s.defendLayer.foe },
       kingId: { ...s.kingId },
       playerUnitId: { ...s.playerUnitId },
       driven: { you: s.possessedId, foe: this.remoteBody },
@@ -5550,6 +5599,7 @@ export class GameSim {
     }
     if (snap.kingController) s.kingController = { ...snap.kingController };
     if (snap.kingOrder) s.kingOrder = { ...snap.kingOrder };
+    if (snap.defendLayer) s.defendLayer = { you: snap.defendLayer.you ?? null, foe: snap.defendLayer.foe ?? null };
     if (snap.kingId) s.kingId = { ...snap.kingId };
     if (snap.playerUnitId) s.playerUnitId = { ...snap.playerUnitId };
     if (snap.joinTimer) s.joinTimer = { ...snap.joinTimer };
@@ -5939,6 +5989,8 @@ export class GameSim {
             cofferWood: Math.floor(s.kingCoffer[view].wood),
             cofferFood: Math.floor(s.kingCoffer[view].food),
             kingOrder: s.kingOrder[view],
+            defendLayer: s.defendLayer[view],
+            defendLayers: defendLayerOptions(mapView.seed),
             youAreKing: s.kingController[view] === "player",
             joinTimer: Math.max(0, s.joinTimer[view]),
             joinReady: s.joinReady[view],

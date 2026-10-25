@@ -1,5 +1,5 @@
 import { KEEP_MARGIN, WORLD_H, WORLD_W } from "./balance";
-import { MAP_CX, mapBounds, mapLanes, riverSpec, roadCenterX, roadGap } from "./map";
+import { MAP_CX, bridgePoints, mapBounds, roadGap, type RiverLayerId } from "./map";
 import type { LaneCount, MapDef, MapId, Team, Vec2 } from "./types";
 
 export const BASILISK_SEED = 884410;
@@ -49,11 +49,12 @@ export function basiliskMap(): MapDef {
   };
 }
 
-export function chokePoints(seed = currentValleySeed()): Vec2[] {
+/** Bridge centers for a layer, or every river belt when layer is omitted. */
+export function chokePoints(seed = currentValleySeed(), layer?: RiverLayerId): Vec2[] {
+  const pts = bridgePoints(seed, layer);
+  if (pts.length > 0) return pts;
   if (isBasiliskSeed(seed)) return FORD_X.map((x) => ({ x, y: SPINE_Y }));
-  const river = riverSpec(seed);
-  const y = river.enabled ? river.y : SPINE_Y;
-  return mapLanes(seed).map((lane) => ({ x: roadCenterX(seed, lane, y), y }));
+  return [{ x: MAP_CX, y: SPINE_Y }];
 }
 
 export function deerSpots(team: Team, seed = currentValleySeed()): Vec2[] {

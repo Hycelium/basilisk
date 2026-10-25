@@ -6,6 +6,8 @@ export type UnitKind = WaveUnitKind | TrainKind;
 export type Job = "farmer" | "hunter" | "smith" | "lumber";
 export type LifeStage = "gatherer" | "warrior" | "king";
 export type KingOrder = "gather" | "hold" | "hunt";
+/** Bridge belt to hold — matches river layers on the map. */
+export type DefendLayerId = "home" | "mid" | "forward";
 export type KingController = "ai" | "player";
 export type WorkKind = "farm" | "hunt" | "gold" | "wood";
 export type Coffer = { gold: number; wood: number; food: number };
@@ -122,6 +124,8 @@ export interface BasiliskUi {
   cofferWood: number;
   cofferFood: number;
   kingOrder: KingOrder;
+  defendLayer: DefendLayerId | null;
+  defendLayers: { id: DefendLayerId; label: string }[];
   youAreKing: boolean;
   joinTimer: number;
   joinReady: boolean;
@@ -337,6 +341,7 @@ export interface GameState {
   kingId: Record<Team, number | null>;
   kingController: Record<Team, KingController>;
   kingOrder: Record<Team, KingOrder>;
+  defendLayer: Record<Team, DefendLayerId | null>;
   kingTreasury: Record<Team, number>;
   kingCoffer: Record<Team, Coffer>;
   scars: { trees: number; fields: number; pit: number; trails: number };

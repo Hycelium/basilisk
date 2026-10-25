@@ -8,6 +8,7 @@ import { Hud } from "./ui/Hud";
 import { KeepTugBar } from "./ui/KeepTugBar";
 import { LaborSteppers } from "./ui/LaborSteppers";
 import { BuildBar } from "./ui/BuildBar";
+import { DefendBar } from "./ui/DefendBar";
 import { DetailSheet } from "./ui/DetailSheet";
 import { Overlays } from "./ui/Overlays";
 import { CampaignMap } from "./ui/CampaignMap";
@@ -1279,7 +1280,7 @@ export default function App() {
           )}
           <div className="king-orders" role="toolbar" aria-label="King orders">
             <strong>Crown</strong>
-            {(["gather", "hold", "hunt"] as KingOrder[]).map((order) => (
+            {(["gather", "hunt"] as KingOrder[]).map((order) => (
               <button
                 key={order}
                 type="button"
@@ -1290,10 +1291,19 @@ export default function App() {
                   beep(400);
                 }}
               >
-                {order === "gather" ? "Gather" : order === "hold" ? "Hold fords" : "Hunt"}
+                {order === "gather" ? "Gather" : "Hunt"}
               </button>
             ))}
           </div>
+          <DefendBar
+            ui={ui}
+            enabled={!!ui.basilisk?.youAreKing}
+            onDefend={(layer) => {
+              sim.setDefendLayer(layer);
+              refreshUi();
+              beep(layer ? 420 : 260);
+            }}
+          />
         </div>
           )}
     </div>

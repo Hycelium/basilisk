@@ -1,6 +1,16 @@
 import { COPPER_REGEN, KEEP_MARGIN, PINE_REGEN, ROAD_X, WORLD_H, WORLD_W } from "./balance";
-import { isBasiliskSeed, SPINE_Y } from "./basiliskMap";
-import type { Lane, LaneCount, MapDef, MapId, Pad, ResourceNode, ResourceKind, Team } from "./types";
+import type { Lane, LaneCount, MapDef, MapId, Pad, ResourceNode, ResourceKind, Team, Vec2 } from "./types";
+
+/** River belts keyed by how far they sit from your keep. */
+export type RiverLayerId = "home" | "mid" | "forward";
+
+export interface RiverBand {
+  id: RiverLayerId;
+  y: number;
+  amplitude: number;
+  phase: number;
+  width: number;
+}
 
 /** Deterministic RNG (mulberry32). */
 export function rngFromSeed(seed: number) {
@@ -101,19 +111,82 @@ export function roadGap(seed: number, x: number, y: number) {
   return Math.min(...mapLanes(seed).map((lane) => Math.abs(x - roadCenterX(seed, lane, y))));
 }
 
-/** Some generated worlds have a cross-map river; location/shape is deterministic. */
-export function riverSpec(seed: number) {
-  if (isBasiliskSeed(seed)) {
-    return { enabled: true, y: SPINE_Y, amplitude: 7, phase: 0.35, width: 22 };
-  }
+/** Keep yard stays dry; rivers sit this far in from each keep. */
+const BASE_RIVER_INSET = 220;
+
+/**
+ * Rivers follow road count:
+ * 1 lane → central river, 1 bridge
+ * 2 lanes → river at each base edge, 2 bridges each
+ * 3 lanes → home + mid + forward rivers, 3 bridges each
+ */
+export function riverLayers(seed: number): RiverBand[] {
+  const n = laneCount(seed);
   const variant = hashSeed(seed, 0x51a7);
-  return {
-    enabled: variant % 4 !== 0,
-    y: 265 + (variant % 190),
-    amplitude: 12 + ((variant >>> 8) % 20),
-    phase: (((variant >>> 16) % 1000) / 1000) * Math.PI * 2,
-    width: 18 + ((variant >>> 24) % 9),
-  };
+  const amplitude = 10 + ((variant >>> 8) % 14);
+  const phase = (((variant >>> 16) % 1000) / 1000) * Math.PI * 2;
+  const width = 16 + ((variant >>> 24) % 8);
+  const mk = (id: RiverLayerId, y: number, phaseShift: number): RiverBand => ({
+    id,
+    y,
+    amplitude,
+    phase: phase + phaseShift,
+    width,
+  });
+  const north = KEEP_MARGIN + BASE_RIVER_INSET;
+  const south = WORLD_H - KEEP_MARGIN - BASE_RIVER_INSET;
+  const mid = WORLD_H / 2;
+  if (n === 1) return [mk("mid", mid, 0)];
+  if (n === 2) return [mk("forward", north, -0.55), mk("home", south, 0.7)];
+  return [mk("forward", north, -0.55), mk("mid", mid, 0), mk("home", south, 0.7)];
+}
+
+export function riverYAt(band: RiverBand, simX: number) {
+  return band.y + Math.sin((simX / WORLD_W) * Math.PI * 2 + band.phase) * band.amplitude;
+}
+
+/** Shim for single-band callers — always the mid (or only) river, always on. */
+export function riverSpec(seed: number) {
+  const layers = riverLayers(seed);
+  const r = layers.find((l) => l.id === "mid") ?? layers[0]!;
+  return { enabled: true as const, y: r.y, amplitude: r.amplitude, phase: r.phase, width: r.width };
+}
+
+export function bridgeCrossing(seed: number, lane: Lane, band: RiverBand): Vec2 {
+  let y = band.y;
+  for (let pass = 0; pass < 3; pass++) {
+    const x = roadCenterX(seed, lane, y);
+    y = riverYAt(band, x);
+  }
+  return { x: roadCenterX(seed, lane, y), y };
+}
+
+/** All lane×river bridge centers, or one layer when `layerId` is set. */
+export function bridgePoints(seed: number, layerId?: RiverLayerId): Vec2[] {
+  const bands = layerId ? riverLayers(seed).filter((b) => b.id === layerId) : riverLayers(seed);
+  const pts: Vec2[] = [];
+  for (const band of bands) {
+    for (const lane of mapLanes(seed)) pts.push(bridgeCrossing(seed, lane, band));
+  }
+  return pts;
+}
+
+export function defendLayerOptions(seed: number): { id: RiverLayerId; label: string }[] {
+  const present = new Set(riverLayers(seed).map((b) => b.id));
+  const labels: { id: RiverLayerId; label: string }[] = [
+    { id: "home", label: "Home bridges" },
+    { id: "mid", label: present.size === 1 ? "Central bridge" : "Mid bridges" },
+    { id: "forward", label: "Forward bridges" },
+  ];
+  return labels.filter((o) => present.has(o.id));
+}
+
+/** Rally spot for a soldier holding a bridge layer — prefers their own road. */
+export function defendPointFor(seed: number, layerId: RiverLayerId, lane: Lane, unitId: number): Vec2 {
+  const band = riverLayers(seed).find((b) => b.id === layerId);
+  if (band) return bridgeCrossing(seed, lane, band);
+  const pts = bridgePoints(seed);
+  return pts[unitId % Math.max(1, pts.length)] ?? { x: MAP_CX, y: WORLD_H / 2 };
 }
 
 /** One unique seed per keep level (+ optional scout reroll salt). Infinite campaign maps. */
@@ -141,14 +214,13 @@ function describeGeneratedMap(
   nodes: MapDef["nodes"],
 ) {
   const road = roads === 1 ? "One road" : roads === 2 ? "Two roads" : "Three roads";
-  const river = riverSpec(seed);
-  const riverLine = !river.enabled
-    ? "No river"
-    : river.y < 330
-      ? "The river crosses the north"
-      : river.y > 400
-        ? "The river crosses the south"
-        : "The river crosses the middle";
+  const belts = riverLayers(seed).length;
+  const riverLine =
+    belts === 1
+      ? "One central river · one bridge"
+      : belts === 2
+        ? "Rivers at each base · two bridges each"
+        : "Three river lines · three bridges each";
   const pines = nodes.filter((n) => n.kind === "pine");
   const ore = nodes.filter((n) => n.kind === "copper");
   const crowdedAt = roads === 1 ? 5 : roads === 2 ? 8 : 10;

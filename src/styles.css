@@ -2268,7 +2268,8 @@ button:disabled {
   width: calc(100% - 16px);
 }
 
-.king-orders {
+.king-orders,
+.defend-bar {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -2279,6 +2280,38 @@ button:disabled {
   border: 1px solid rgba(212, 175, 95, 0.45);
   border-radius: 10px;
   pointer-events: auto;
+}
+
+.defend-bar {
+  margin-top: 6px;
+}
+
+.defend-bar strong {
+  font-family: Cinzel, Palatino, Georgia, serif;
+  color: #e2bc72;
+  margin-right: 4px;
+}
+
+.defend-bar button {
+  background: #2a2218;
+  color: #f0e6d0;
+  border: 1px solid #6a5438;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  min-height: 32px;
+}
+
+.defend-bar button.active {
+  background: #6a4a22;
+  border-color: #e2bc72;
+  color: #ffe7b0;
+}
+
+.defend-bar button.ghost {
+  background: transparent;
+  border-color: #4a4034;
+  color: var(--muted);
 }
 
 .labor-orders {

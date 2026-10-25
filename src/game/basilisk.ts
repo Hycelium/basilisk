@@ -299,8 +299,12 @@ export function orderTarget(state: GameState, u: Unit): Vec2 | null {
   if (u.lifeStage === "gatherer") return haulDestination(u, state.mapSeed);
   const order = state.kingOrder[u.team];
   if (order === "gather") return keepPos(u.team);
-  const chokes = chokePoints(state.mapSeed);
-  if (order === "hold") return chokes[u.id % Math.max(1, chokes.length)] ?? chokes[0]!;
+  const layer = state.defendLayer[u.team] ?? undefined;
+  const chokes = chokePoints(state.mapSeed, layer);
+  if (order === "hold") {
+    const byLane = chokes.find((c) => Math.abs(c.x - u.pos.x) < 48) ?? chokes[u.id % Math.max(1, chokes.length)];
+    return byLane ?? chokes[0]!;
+  }
   let best = chokes[0]!;
   let bestD = Infinity;
   for (const e of state.units) {
