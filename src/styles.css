@@ -3246,8 +3246,7 @@ button,
 }
 
 .chat-rail {
-  flex: 1 1 auto;
-  min-height: 72px;
+  flex: 0 1 auto;
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -3256,24 +3255,18 @@ button,
   pointer-events: none;
 }
 
-.chat-empty {
-  margin: 0;
-  padding: 6px 10px;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #8a7a62;
-  text-align: right;
-  opacity: 0.7;
-}
-
 .chat-rail .chat-log {
-  max-height: min(220px, 36vh);
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 3px;
-  scrollbar-width: thin;
+}
+
+.side-chat {
+  flex: 0 0 auto;
+  width: 100%;
+  pointer-events: none;
+  padding: 6px 2px 4px;
+  margin-top: auto;
 }
 
 .chat-commands {
@@ -4021,6 +4014,11 @@ button,
   letter-spacing: 0.02em;
 }
 
+.chat-line.fade {
+  opacity: 0.35;
+  transition: opacity 0.7s ease;
+}
+
 .chat-name {
   color: #c4b49c;
   margin-right: 6px;
@@ -4096,12 +4094,7 @@ button,
   min-height: 32px;
 }
 
-.is-phone .chat-rail .chat-log {
-  max-height: min(180px, 28vh);
-}
-
-.layout-side.is-phone .panel-dock .chat-rail {
-  flex: 1 1 auto;
-  min-height: 80px;
+.layout-side.is-phone .panel-dock .side-chat {
+  order: 5;
 }
 

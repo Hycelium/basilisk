@@ -1305,7 +1305,9 @@ export default function App() {
                 : null
             }
           />
-          {skirmish.lobby.live && <ChatLog lines={skirmish.chatLines} localTeam={ui.localTeam} />}
+          {skirmish.lobby.live && !layout.phone && (
+            <ChatLog lines={skirmish.chatLines} localTeam={ui.localTeam} />
+          )}
           {basiliskKing && kingTables && (
         <div className="king-panel">
           {!ui.possessed && (
@@ -1438,6 +1440,11 @@ export default function App() {
                       {t}
                     </div>
                   ))}
+                </div>
+              )}
+              {skirmish.lobby.live && ui.phase === "running" && (
+                <div className="side-chat">
+                  <ChatLog lines={skirmish.chatLines} localTeam={ui.localTeam} />
                 </div>
               )}
               {fieldChrome}

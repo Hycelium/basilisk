@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CHAT_EMOTES, CHAT_MAX_LEN, type ChatLine } from "../net/chat";
+import { CHAT_EMOTES, CHAT_MAX_LEN, CHAT_TTL_MS, visibleChatLines, type ChatLine } from "../net/chat";
 import type { Team } from "../game/types";
 
 interface ChatLogProps {
@@ -7,36 +7,42 @@ interface ChatLogProps {
   localTeam: Team;
 }
 
-/** Message feed for the right-side panel (middle of the command rail). */
+/** Message feed — at most 3 lines; each line clears after 5s. */
 export function ChatLog({ lines, localTeam }: ChatLogProps) {
+  const [, setTick] = useState(0);
   const logRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (lines.length === 0) return;
+    const id = window.setInterval(() => setTick((n) => n + 1), 250);
+    return () => window.clearInterval(id);
+  }, [lines.length]);
+
+  const recent = visibleChatLines(lines);
   useEffect(() => {
     const el = logRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [lines]);
+  }, [recent]);
 
-  const recent = lines.slice(-10);
-  if (recent.length === 0) {
-    return (
-      <div className="chat-rail" aria-label="Match chat">
-        <p className="chat-empty">Chat</p>
-      </div>
-    );
-  }
+  if (recent.length === 0) return null;
 
   return (
-    <div className="chat-rail" role="log" aria-label="Match chat">
+    <div className="chat-rail" role="log" aria-label="Match chat" aria-live="polite">
       <div className="chat-log" ref={logRef}>
-        {recent.map((line) => (
-          <div
-            key={line.id}
-            className={`chat-line${line.team === localTeam ? " ally" : " foe"}${line.emote ? " emote" : ""}`}
-          >
-            <span className="chat-name">{line.name}</span>
-            <span className="chat-text">{line.text}</span>
-          </div>
-        ))}
+        {recent.map((line) => {
+          const age = Date.now() - line.at;
+          const fading = age > CHAT_TTL_MS - 800;
+          return (
+            <div
+              key={line.id}
+              className={`chat-line${line.team === localTeam ? " ally" : " foe"}${line.emote ? " emote" : ""}${fading ? " fade" : ""}`}
+            >
+              <span className="chat-name">{line.name}</span>
+              <span className="chat-text">{line.text}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

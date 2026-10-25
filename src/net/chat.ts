@@ -2,6 +2,10 @@ import type { Team } from "../game/types";
 
 export const CHAT_MAX_LEN = 80;
 export const CHAT_LOG_CAP = 40;
+/** How long a line stays on the feed before it fades out. */
+export const CHAT_TTL_MS = 5000;
+/** Max lines shown at once. */
+export const CHAT_VISIBLE = 3;
 
 export const CHAT_EMOTES = [
   { id: "yes", label: "Yes", text: "Yes!" },
@@ -35,4 +39,13 @@ export function sanitizeChatText(raw: string) {
 export function pushChatLine(lines: ChatLine[], line: Omit<ChatLine, "id">, nextId: number): ChatLine[] {
   const next = [...lines, { ...line, id: nextId }];
   return next.length > CHAT_LOG_CAP ? next.slice(next.length - CHAT_LOG_CAP) : next;
+}
+
+export function pruneChatLines(lines: ChatLine[], now = Date.now()): ChatLine[] {
+  return lines.filter((line) => now - line.at < CHAT_TTL_MS);
+}
+
+/** Newest first-trimmed set still within TTL. */
+export function visibleChatLines(lines: ChatLine[], now = Date.now()): ChatLine[] {
+  return pruneChatLines(lines, now).slice(-CHAT_VISIBLE);
 }
