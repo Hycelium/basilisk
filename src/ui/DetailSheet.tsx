@@ -25,7 +25,8 @@ const STRUCTURE_ROLE: Partial<Record<BuildingKind, string>> = {
   ballista: "Armor-piercing bolts at a fixed rate. Upgrade posts guard dogs that kill spies on the pad.",
   catapult: "Splash that stays strong at the gate and breaks barricades.",
   barricade: "A peon blocks one road. Melee has to chop it. A ram smashes it.",
-  church: "Blessing aura: +25% damage and slow healing for friendly troops nearby. +10 army pop.",
+  church:
+    "Upgraded purple house. Blessing aura (+25% damage, regen), +10 army pop. Free levy every 10s, templar knight every 60s.",
 };
 
 function costLabel(gold: number, wood: number, food = 0) {
@@ -176,7 +177,7 @@ export function DetailSheet({
   const isEnemy = isEnemyStructure(ui.localTeam, ui.selectedBuildingTeam);
   const isBarracks = ui.selectedBuildingKind === "barracks";
   const isChurch = ui.selectedBuildingKind === "church";
-  const isTrainHall = isBarracks || isChurch;
+  const isTrainHall = isBarracks;
   const isHouse = ui.selectedBuildingKind === "house";
   const isBallista = ui.selectedBuildingKind === "ballista";
   const structureName = buildingName(ui.selectedBuildingKind!);
@@ -195,15 +196,27 @@ export function DetailSheet({
       <div className="detail-body">
       {isHouse && (
         <p className="detail-note">
-          Yard houses add +2 peon pop. Purple midfield houses add +5 army pop. Keep army slots scale with roads (15 / 20 / 25).
+          Yard houses add +2 peon pop. Purple midfield houses add +5 army pop and can consecrate into a church for 500g.
+          Keep army slots scale with roads (15 / 20 / 25).
         </p>
       )}
-      {!isHouse && !isTrainHall && STRUCTURE_ROLE[ui.selectedBuildingKind!] && (
+      {isHouse && !isEnemy && ui.selectedIsMidHouse && (
+        <button
+          type="button"
+          className="cta"
+          disabled={!ui.selectedCanConsecrate}
+          onClick={onConsecrate}
+          title="500 gold — church with free levies, templars, and a blessing aura"
+        >
+          Consecrate church · 500g
+        </button>
+      )}
+      {!isHouse && !isTrainHall && !isChurch && STRUCTURE_ROLE[ui.selectedBuildingKind!] && (
         <p className="detail-note">{STRUCTURE_ROLE[ui.selectedBuildingKind!]}</p>
       )}
       {isChurch && <p className="detail-note">{STRUCTURE_ROLE.church}</p>}
 
-      {!isTrainHall && !isHouse && (
+      {!isTrainHall && !isHouse && !isChurch && (
         <>
           <div className="rank-row">
             <span>Damage</span>
@@ -240,19 +253,7 @@ export function DetailSheet({
           <p className="detail-note">
             Army {ui.armyCount}/{ui.armyCap}. Levies crack wards, rams break barricades, trebuchets need four shots,
             spies hunt trebuchets, riders shrug arrows, archers walk around blocks.
-            {isBarracks ? " Consecrate for 500g to raise a church (+10 army, blessing aura)." : ""}
           </p>
-          {isBarracks && (
-            <button
-              type="button"
-              className="cta"
-              disabled={!ui.selectedCanConsecrate}
-              onClick={onConsecrate}
-              title="500 gold — church with blessing aura and +10 army pop"
-            >
-              Consecrate church · 500g
-            </button>
-          )}
 
           <div className="train-options">
             {ui.trainOptions.map((opt) => {

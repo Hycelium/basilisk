@@ -744,6 +744,33 @@ function ward(t: Team) {
   return finish(h.root, "ward", [{ P: "", style: "poleaxe" }], 1.04);
 }
 
+/** Church knight — heavier ward with a templar cross on the breastplate. */
+function templar(t: Team) {
+  const h = human({
+    hair: HAIR.brown,
+    hairStyle: "none",
+    coat: { color: cloth(t), hem: 2.5, flare: 1.08 },
+    under: { mat: mats.mail([10, 2]), hem: 2.9 },
+    chest: mats.steel(),
+    sleeves: { mat: mats.mail([3, 3]), fore: mats.steel() },
+    legs: { mat: mats.mail([3, 3]), shin: mats.steel() },
+    boots: mats.steel(),
+    feet: mats.steel(),
+    gloves: mats.steel(),
+    belt: mats.leather(0x2a1a10),
+  });
+  bascinet(h.head, cloth(t));
+  pauldrons(h.spine);
+  for (const x of [-1, 1]) put(h.hips, box(1.05, 1.35, 0.12), mats.steel(), [x * 0.78, -0.1, 1.15], [0.18, 0, 0]);
+  put(h.spine, G("plackart", () => lathe([[1.48, -0.2], [1.58, 0.7], [1.55, 1.2]], 24, -1.1, 2.2)), mats.steel(), [0, 0.05, 0.04], undefined, [1.04, 1, 0.84]);
+  const cross = mats.brass();
+  put(h.spine, box(0.18, 1.15, 0.1), cross, [0, 1.15, 1.42]);
+  put(h.spine, box(0.85, 0.18, 0.1), cross, [0, 1.45, 1.42]);
+  put(h.spine, torus(0.7, 0.05, 16), cross, [0, 2.05, 1.36], [0, 0, 0]);
+  h.spine.add(halberd("main", cloth(t)));
+  return finish(h.root, "templar", [{ P: "", style: "poleaxe" }], 1.12);
+}
+
 function peon(t: Team) {
   const h = human({
     hair: HAIR.grey,
@@ -973,6 +1000,7 @@ const BUILDERS: Record<string, (t: Team) => THREE.Group> = {
   brute,
   archer,
   ward,
+  templar,
   runner,
   rammer: buildRamModel,
   trebuchet: buildTrebuchetModel,

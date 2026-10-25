@@ -60,6 +60,7 @@ const defaultUi: UiSnapshot = {
   selectedCanUpgradeDamage: false,
   selectedCanUpgradeRate: false,
   selectedCanConsecrate: false,
+  selectedIsMidHouse: false,
   selectedCanRaze: false,
   selectedRazeRefund: 0,
   selectedRazeRefundWood: 0,

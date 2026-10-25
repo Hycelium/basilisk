@@ -17,7 +17,10 @@ import {
   CHURCH_AURA_DAMAGE,
   CHURCH_AURA_RANGE,
   CHURCH_AURA_REGEN,
+  CHURCH_LEVY_INTERVAL,
+  CHURCH_TEMPLAR_INTERVAL,
   CHURCH_UPGRADE_GOLD,
+  isWardKind,
   CATAPULT_SPLASH_RADIUS,
   CATAPULT_VS_BARRICADE,
   CATAPULT_VS_PEON,
@@ -1564,7 +1567,7 @@ export class GameSim {
     let bestBar: Barricade | undefined;
     let best = -1;
     for (const b of s.buildings) {
-      if (b.team === u.team || b.hp <= 0 || !isTrebuchetBuilding(b.kind)) continue;
+      if (b.team === u.team || b.hp <= 0 || !this.canTrebuchetTarget(b)) continue;
       const a = this.possessTrebAimScore(u, b.pos);
       if (!a.ok || a.score < best) continue;
       best = a.score;
@@ -2238,7 +2241,17 @@ export class GameSim {
   }
 
   private isTrainHall(kind: BuildingKind) {
-    return kind === "barracks" || kind === "church";
+    return kind === "barracks";
+  }
+
+  private isMidEcoPad(padId: string) {
+    return this.state.pads.find((p) => p.id === padId)?.zone === "midEco";
+  }
+
+  /** Towers/halls/churches, plus purple midfield houses. */
+  private canTrebuchetTarget(b: Building) {
+    if (isTrebuchetBuilding(b.kind)) return true;
+    return b.kind === "house" && this.isMidEcoPad(b.padId);
   }
 
   private inChurchAura(u: Unit) {
@@ -2256,6 +2269,37 @@ export class GameSim {
       if (!u.fromBarracks && u.lifeStage !== "warrior" && u.lifeStage !== "king") continue;
       if (!this.inChurchAura(u)) continue;
       u.hp = Math.min(u.maxHp, u.hp + CHURCH_AURA_REGEN * dt);
+    }
+  }
+
+  /** Free levy every 10s and templar every 60s from each church. */
+  private tickChurchSpawns(dt: number) {
+    for (const b of this.state.buildings) {
+      if (b.kind !== "church" || b.hp <= 0) continue;
+      if (b.churchLevyTimer == null) b.churchLevyTimer = CHURCH_LEVY_INTERVAL;
+      if (b.churchTemplarTimer == null) b.churchTemplarTimer = CHURCH_TEMPLAR_INTERVAL;
+      b.churchLevyTimer -= dt;
+      b.churchTemplarTimer -= dt;
+      if (b.churchLevyTimer <= 0) {
+        if (this.armySlotsUsed(b.team) < this.armyCap(b.team)) {
+          this.spawnUnit(b.team, "levy", this.pickLane(b.team), true);
+          const layer = this.state.defendLayer[b.team];
+          if (layer) this.assignDefendRallies(b.team, layer);
+          b.churchLevyTimer = CHURCH_LEVY_INTERVAL;
+        } else {
+          b.churchLevyTimer = 0;
+        }
+      }
+      if (b.churchTemplarTimer <= 0) {
+        if (this.armySlotsUsed(b.team) < this.armyCap(b.team)) {
+          this.spawnUnit(b.team, "templar", this.pickLane(b.team), true);
+          const layer = this.state.defendLayer[b.team];
+          if (layer) this.assignDefendRallies(b.team, layer);
+          b.churchTemplarTimer = CHURCH_TEMPLAR_INTERVAL;
+        } else {
+          b.churchTemplarTimer = 0;
+        }
+      }
     }
   }
 
@@ -2926,7 +2970,7 @@ export class GameSim {
     else this.tell(team, `${kind} rank ${rank + 2} bought.`);
   }
 
-  /** Turn a barracks into a church for 500 gold — +10 army pop and a blessing aura. */
+  /** Turn a purple midfield house into a church for 500 gold. */
   consecrateSelected() {
     if (this.state.basilisk && !this.isLocalKing()) {
       this.addToast("Only the king consecrates a church.");
@@ -2935,14 +2979,14 @@ export class GameSim {
     const id = this.state.selectedBuildingId;
     if (id == null) return;
     if (this.redirect({ t: "church", team: this.localTeam, buildingId: id })) return;
-    this.consecrateBarracks(this.localTeam, id);
+    this.consecrateHouse(this.localTeam, id);
   }
 
-  private consecrateBarracks(team: Team, buildingId: number) {
+  private consecrateHouse(team: Team, buildingId: number) {
     const s = this.state;
-    const b = s.buildings.find((x) => x.id === buildingId && x.team === team && x.kind === "barracks");
-    if (!b) {
-      this.tell(team, "Select a barracks to consecrate.");
+    const b = s.buildings.find((x) => x.id === buildingId && x.team === team && x.kind === "house");
+    if (!b || !this.isMidEcoPad(b.padId)) {
+      this.tell(team, "Select a purple midfield house to consecrate.");
       return;
     }
     if (s.basilisk) {
@@ -2961,8 +3005,11 @@ export class GameSim {
     b.spent += CHURCH_UPGRADE_GOLD;
     b.kind = "church";
     b.maxHp = BUILD_HP.church;
-    b.hp = Math.min(b.maxHp, b.hp + 16);
-    this.tell(team, "Church consecrated — +10 army pop, blessing aura.");
+    b.hp = Math.min(b.maxHp, b.hp + 24);
+    b.queue = [];
+    b.churchLevyTimer = CHURCH_LEVY_INTERVAL;
+    b.churchTemplarTimer = CHURCH_TEMPLAR_INTERVAL;
+    this.tell(team, "Church consecrated — free levies, templars, blessing aura.");
   }
 
   razeSelected() {
@@ -3063,7 +3110,7 @@ export class GameSim {
     let bestB: Building | undefined;
     let bestBd = Infinity;
     for (const b of this.state.buildings) {
-      if (b.team === u.team || b.hp <= 0 || !isTrebuchetBuilding(b.kind)) continue;
+      if (b.team === u.team || b.hp <= 0 || !this.canTrebuchetTarget(b)) continue;
       const d = dist(u.pos, b.pos);
       if (d < bestBd) {
         bestBd = d;
@@ -3891,7 +3938,7 @@ export class GameSim {
   private meleeDamage(attacker: Unit, target: Unit | Villager) {
     let dealt = attacker.damage;
     if ("kind" in target && target.kind === "trebuchet") dealt *= MELEE_VS_TREBUCHET;
-    if (attacker.kind === "levy" && "kind" in target && target.kind === "ward") {
+    if (attacker.kind === "levy" && "kind" in target && isWardKind(target.kind)) {
       dealt *= LEVY_VS_WARD_DAMAGE;
     }
     if (attacker.kind === "runner" && attacker.chargeReady !== false) {
@@ -3906,7 +3953,7 @@ export class GameSim {
   private strikeDamage(attacker: Unit, target: Unit | Villager) {
     if (attacker.kind !== "archer") return this.meleeDamage(attacker, target);
     let dealt = attacker.damage;
-    if ("kind" in target && target.kind === "ward") dealt *= ARCHER_VS_WARD;
+    if ("kind" in target && isWardKind(target.kind)) dealt *= ARCHER_VS_WARD;
     if ("kind" in target && target.kind === "trebuchet") dealt *= ARCHER_VS_TREBUCHET;
     if (this.inChurchAura(attacker)) dealt *= CHURCH_AURA_DAMAGE;
     return this.vsPeon(attacker, target, dealt);
@@ -4222,7 +4269,7 @@ export class GameSim {
     const ranged = observed.filter((u) => u.kind === "archer").length;
     const fast = observed.filter((u) => u.kind === "runner" || u.kind === "raider").length;
     const heavy = observed.filter(
-      (u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer" || u.kind === "trebuchet",
+      (u) => u.kind === "brute" || isWardKind(u.kind) || u.kind === "rammer" || u.kind === "trebuchet",
     ).length;
     let candidates: TrainKind[];
     if (enemyTowers >= 2 && count("spy") === 0) candidates = ["spy", "levy", "runner", "ward"];
@@ -4943,6 +4990,7 @@ export class GameSim {
       this.doBarracks(dt, "you");
       this.doBarracks(dt, "foe");
       this.tickChurchAuras(dt);
+      this.tickChurchSpawns(dt);
       this.cleanupDeaths();
       this.tickBasilisk(dt);
       this.tickPeonQueues(dt);
@@ -4984,6 +5032,7 @@ export class GameSim {
     this.doBarracks(dt, "you");
     this.doBarracks(dt, "foe");
     this.tickChurchAuras(dt);
+    this.tickChurchSpawns(dt);
     this.tickPeonQueues(dt);
     this.updateUnitMovementAndMelee(dt, "you");
     this.updateUnitMovementAndMelee(dt, "foe");
@@ -5191,7 +5240,7 @@ export class GameSim {
     const hasFrontline = held.some(
       (u) => u.kind !== "archer" && u.kind !== "rammer" && u.kind !== "trebuchet" && u.kind !== "spy",
     );
-    const hasSupport = held.some((u) => u.kind === "archer" || u.kind === "ward");
+    const hasSupport = held.some((u) => u.kind === "archer" || isWardKind(u.kind));
     const timedOut = this.state.time >= this.aiRushDeadline;
     const release =
       (immediateDefense && held.length >= 2) ||
@@ -5227,7 +5276,7 @@ export class GameSim {
     const spies = observed.filter((u) => u.kind === "spy").length;
     const fast = observed.filter((u) => u.kind === "runner" || u.kind === "raider").length;
     const heavy = observed.filter(
-      (u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer" || u.kind === "trebuchet",
+      (u) => u.kind === "brute" || isWardKind(u.kind) || u.kind === "rammer" || u.kind === "trebuchet",
     ).length;
     if (spies > 0) {
       const kennel = towers.find((b) => b.kind === "ballista" && b.rateRank < 2);
@@ -5366,7 +5415,7 @@ export class GameSim {
     const ranged = observed.filter((u) => u.kind === "archer").length;
     const fast = observed.filter((u) => u.kind === "runner" || u.kind === "raider").length;
     const heavy = observed.filter(
-      (u) => u.kind === "brute" || u.kind === "ward" || u.kind === "rammer" || u.kind === "trebuchet",
+      (u) => u.kind === "brute" || isWardKind(u.kind) || u.kind === "rammer" || u.kind === "trebuchet",
     ).length;
     const visibleBarricades = this.state.barricades.filter((b) => b.team === "you" && b.built).length;
     const force = this.state.units.filter((u) => u.team === "foe" && u.fromBarracks);
@@ -5458,7 +5507,7 @@ export class GameSim {
           this.upgradeBuilding(team, order.buildingId, order.kind);
           break;
         case "church":
-          this.consecrateBarracks(team, order.buildingId);
+          this.consecrateHouse(team, order.buildingId);
           break;
         case "raze":
           this.razeBuilding(team, order.buildingId);
@@ -5621,6 +5670,8 @@ export class GameSim {
         hp: b.hp,
         maxHp: b.maxHp,
         disableTimer: b.disableTimer,
+        churchLevyTimer: b.churchLevyTimer,
+        churchTemplarTimer: b.churchTemplarTimer,
         queue: b.queue.map((job) => ({ kind: job.kind, timeLeft: job.timeLeft, totalTime: job.totalTime })),
         rallyX: b.rallyPoint?.x,
         rallyY: b.rallyPoint?.y,
@@ -5928,6 +5979,8 @@ export class GameSim {
       hp: b.hp ?? BUILD_HP[b.kind],
       maxHp: b.maxHp ?? BUILD_HP[b.kind],
       disableTimer: b.disableTimer ?? 0,
+      churchLevyTimer: b.churchLevyTimer,
+      churchTemplarTimer: b.churchTemplarTimer,
       queue: b.queue.map((job) => ({ kind: job.kind, timeLeft: job.timeLeft, totalTime: job.totalTime })),
       rallyPoint: point(b.rallyX, b.rallyY),
     }));
@@ -6122,8 +6175,13 @@ export class GameSim {
       selectedRanks: selected ? { damage: selected.damageRank + 1, rate: selected.rateRank + 1 } : null,
       selectedCanUpgradeDamage: canUpgradeStructure && selected!.damageRank < 2,
       selectedCanUpgradeRate: canUpgradeStructure && selected!.rateRank < 2,
+      selectedIsMidHouse: !!selected && selected.kind === "house" && this.isMidEcoPad(selected.padId),
       selectedCanConsecrate:
-        !!selected && selectedIsYours && selected.kind === "barracks" && goldPool >= CHURCH_UPGRADE_GOLD,
+        !!selected &&
+        selectedIsYours &&
+        selected.kind === "house" &&
+        this.isMidEcoPad(selected.padId) &&
+        goldPool >= CHURCH_UPGRADE_GOLD,
       selectedCanRaze: !!selected && selectedIsYours,
       selectedRazeRefund: selected && selectedIsYours ? (selected.canRefund ? Math.floor(selected.spent * 0.5) : 0) : 0,
       selectedRazeRefundWood:

@@ -47,7 +47,12 @@ export function baseArmyCap(lanes: LaneCount) {
 export const MID_HOUSE_ARMY_POP = 5;
 /** Church (upgraded barracks) → military pop. */
 export const CHURCH_ARMY_POP = 10;
+/** Purple midfield house → church. */
 export const CHURCH_UPGRADE_GOLD = 500;
+/** Free levy interval from a consecrated church. */
+export const CHURCH_LEVY_INTERVAL = 10;
+/** Free templar interval from a consecrated church. */
+export const CHURCH_TEMPLAR_INTERVAL = 60;
 /** Blessing radius around a church (sim units). */
 export const CHURCH_AURA_RANGE = 95;
 export const CHURCH_AURA_DAMAGE = 1.25;
@@ -169,7 +174,7 @@ export const ARCHER_VS_TREBUCHET = 0.28;
 export const MELEE_VS_TREBUCHET = 1.55;
 export const BARRICADE_HP = 36;
 
-/** Hit points so a trebuchet wrecks a structure in four shots. Houses are listed but not legal targets. */
+/** Hit points so a trebuchet wrecks a structure in four shots. Yard houses stay off-limits; purple mid houses and churches are legal. */
 export const BUILD_HP: Record<BuildingKind, number> = {
   watchtower: 40,
   ballista: 48,
@@ -191,7 +196,7 @@ export function trebuchetShot(maxHp: number) {
   return Math.max(1, Math.ceil(maxHp / TREBUCHET_SHOTS_TO_KILL));
 }
 
-/** Towers and halls only. Keeps and houses are off-limits. */
+/** Towers, halls, and churches. Purple mid houses are checked separately via pad zone. */
 export function isTrebuchetBuilding(kind: BuildingKind) {
   return (
     kind === "watchtower" ||
@@ -200,6 +205,10 @@ export function isTrebuchetBuilding(kind: BuildingKind) {
     kind === "barracks" ||
     kind === "church"
   );
+}
+
+export function isWardKind(kind: UnitKind) {
+  return kind === "ward" || kind === "templar";
 }
 
 export const SPY_DISABLE = 10;
@@ -335,6 +344,11 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
     towerResist: 0.88, keepMult: 0.55, siegeGap: 0.4,
     cost: 75, woodCost: 15, foodCost: 0, trainTime: 5.2,
     label: "Ward", blurb: "Shield · shrugs arrows, fears bolts and levies",
+  },
+  templar: {
+    hp: 240, speed: 24, damage: 10, cooldown: 0.65, bounty: 28,
+    towerResist: 0.9, keepMult: 0.75, siegeGap: 0.35,
+    label: "Templar", blurb: "Church knight · heavy ward bearing the sacred cross",
   },
   rammer: {
     hp: 95, speed: 27, damage: 7, cooldown: 0.8, bounty: 18,

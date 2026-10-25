@@ -132,6 +132,8 @@ export interface SnapBuilding {
   rallyX?: number;
   rallyY?: number;
   disableTimer?: number;
+  churchLevyTimer?: number;
+  churchTemplarTimer?: number;
 }
 
 export interface SnapNode {

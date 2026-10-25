@@ -2,7 +2,8 @@ export type Team = "you" | "foe";
 export type WaveUnitKind = "raider" | "soldier" | "brute" | "runner" | "ward";
 export type TrainKind = "levy" | "runner" | "archer" | "ward" | "rammer" | "trebuchet" | "spy";
 export type SiegePhase = "packed" | "unpacking" | "ready" | "packing";
-export type UnitKind = WaveUnitKind | TrainKind;
+/** Church-only knight; not train-queueable from barracks. */
+export type UnitKind = WaveUnitKind | TrainKind | "templar";
 export type Job = "farmer" | "hunter" | "smith" | "lumber";
 export type LifeStage = "gatherer" | "warrior" | "king";
 export type KingOrder = "gather" | "hold" | "hunt";
@@ -170,6 +171,10 @@ export interface Building {
   rallyPoint?: Vec2;
   /** Spy sabotage. Gun stays silent while this is above zero. */
   disableTimer?: number;
+  /** Church: seconds until the next free levy. */
+  churchLevyTimer?: number;
+  /** Church: seconds until the next free templar. */
+  churchTemplarTimer?: number;
 }
 
 export interface Pad {
@@ -447,6 +452,8 @@ export interface UiSnapshot {
   selectedCanUpgradeDamage: boolean;
   selectedCanUpgradeRate: boolean;
   selectedCanConsecrate: boolean;
+  /** Selected house sits on a purple midfield pad (can become a church). */
+  selectedIsMidHouse: boolean;
   selectedCanRaze: boolean;
   selectedRazeRefund: number;
   selectedRazeRefundWood: number;
