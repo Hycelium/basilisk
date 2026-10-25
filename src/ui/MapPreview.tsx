@@ -102,9 +102,17 @@ export function MapPreview({ seed }: { seed: number }) {
             key={pad.id}
             cx={pad.pos.x}
             cy={pad.pos.y}
-            r={pad.zone === "eco" ? 11 : 13}
+            r={pad.zone === "eco" || pad.zone === "midEco" ? 11 : 13}
             fill="none"
-            stroke={pad.zone === "eco" ? "#c6f06a" : pad.team === "you" ? "#7fd4ff" : "#ff6a78"}
+            stroke={
+              pad.zone === "midEco"
+                ? "#a56bff"
+                : pad.zone === "eco"
+                  ? "#c6f06a"
+                  : pad.team === "you"
+                    ? "#7fd4ff"
+                    : "#ff6a78"
+            }
             strokeWidth={3.5}
           />
         ))}

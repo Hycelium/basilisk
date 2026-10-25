@@ -12,9 +12,10 @@ export type KingController = "ai" | "player";
 export type WorkKind = "farm" | "hunt" | "gold" | "wood";
 export type Coffer = { gold: number; wood: number; food: number };
 export type TripCounts = { farm: number; hunt: number; gold: number; wood: number };
-export type BuildingKind = "watchtower" | "ballista" | "catapult" | "barracks" | "house" | "barricade";
+export type BuildingKind = "watchtower" | "ballista" | "catapult" | "barracks" | "church" | "house" | "barricade";
 export type ResourceKind = "pine" | "copper";
-export type PadZone = "combat" | "eco";
+/** eco = keep-yard houses; midEco = purple no-man's-land houses (army pop). */
+export type PadZone = "combat" | "eco" | "midEco";
 export type GamePhase = "title" | "running" | "ended";
 /** Procedural map id, e.g. `seed-1842291`. Infinite campaign maps. */
 export type MapId = string;
@@ -445,6 +446,7 @@ export interface UiSnapshot {
   selectedRanks: { damage: number; rate: number } | null;
   selectedCanUpgradeDamage: boolean;
   selectedCanUpgradeRate: boolean;
+  selectedCanConsecrate: boolean;
   selectedCanRaze: boolean;
   selectedRazeRefund: number;
   selectedRazeRefundWood: number;
@@ -455,6 +457,8 @@ export interface UiSnapshot {
   peonQueue: QueueSlotUi[];
   peonCount: number;
   peonCap: number;
+  armyCount: number;
+  armyCap: number;
   /** Peons standing idle or walking home with no job. */
   idlePeonCount: number;
   keepGarrisoned: number;

@@ -4,8 +4,10 @@ import { skirmishMap } from "../game/map";
 import type { GameRenderer } from "../game/render3d";
 import type { GameSim } from "../game/sim";
 import { createRoomId, inviteLink, parseRoomInput, type NetMsg } from "./protocol";
+import { emoteById, pushChatLine, sanitizeChatText, type ChatLine } from "./chat";
 import { RELAY_STATUS } from "./ice";
 import { ROOM_OPEN_STATUS, SkirmishLink } from "./skirmish";
+import type { Team } from "../game/types";
 
 const DEFAULT_MAP = basiliskMap().id;
 
@@ -72,6 +74,7 @@ const idleLobby = (): LobbyState => ({
 export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | null>) {
   const [name, setNameState] = useState(loadName);
   const [lobby, setLobby] = useState<LobbyState>(idleLobby);
+  const [chatLines, setChatLines] = useState<ChatLine[]>([]);
   const nameRef = useRef(name);
   nameRef.current = name;
   const roleRef = useRef<"solo" | "host" | "guest">("solo");
@@ -80,6 +83,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
   const lobbyRef = useRef(lobby);
   lobbyRef.current = lobby;
   const pictureWarned = useRef(false);
+  const chatIdRef = useRef(1);
 
   const setName = useCallback((value: string) => {
     const next = value.slice(0, 24);
@@ -103,6 +107,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
     sim.setLocalTeam("you");
     sim.reset();
     rendererRef.current?.setHomeSide("you");
+    setChatLines([]);
     setLobby(idleLobby());
     const url = new URL(window.location.href);
     if (url.searchParams.has("room")) {
@@ -161,6 +166,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
         if (roleRef.current !== "guest" || lobbyRef.current.link !== "open") return;
         if (!sim.applyRematch(msg.mapId, "guest")) return;
         rendererRef.current?.setHomeSide("foe");
+        setChatLines([]);
         setLobby((s) => ({ ...s, selectedMapId: msg.mapId, live: true, open: false, link: "open" }));
         return;
       }
@@ -177,12 +183,67 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
         else sim.pushToast(msg.text);
         return;
       }
+      if (msg.t === "chat") {
+        const text = sanitizeChatText(msg.text);
+        if (!text) return;
+        if (roleRef.current === "host") linkRef.current?.send(msg);
+        const localId = roleRef.current === "host" ? "host" : "guest";
+        if (msg.playerId === localId) return;
+        const id = chatIdRef.current++;
+        setChatLines((lines) =>
+          pushChatLine(
+            lines,
+            {
+              playerId: msg.playerId,
+              name: msg.name.trim().slice(0, 24) || "Player",
+              team: msg.team,
+              text,
+              emote: msg.emote,
+              at: Date.now(),
+            },
+            id,
+          ),
+        );
+        return;
+      }
       if (msg.t === "pong") {
         const ms = Math.max(0, Date.now() - msg.at);
         setLobby((s) => ({ ...s, pingMs: ms }));
       }
     },
     [beginGuest, sim, warnPicture],
+  );
+
+  const sendChatPayload = useCallback((text: string, emote?: string) => {
+    const cleaned = sanitizeChatText(text);
+    if (!cleaned || !liveRef.current || lobbyRef.current.link !== "open") return;
+    const role = roleRef.current;
+    if (role !== "host" && role !== "guest") return;
+    const playerId = role;
+    const team: Team = role === "host" ? "you" : "foe";
+    const who = nameRef.current.trim().slice(0, 24) || "Player";
+    const msg: NetMsg = { t: "chat", playerId, name: who, team, text: cleaned, emote };
+    const id = chatIdRef.current++;
+    setChatLines((lines) =>
+      pushChatLine(lines, { playerId, name: who, team, text: cleaned, emote, at: Date.now() }, id),
+    );
+    linkRef.current?.send(msg);
+  }, []);
+
+  const sendChat = useCallback(
+    (text: string) => {
+      sendChatPayload(text);
+    },
+    [sendChatPayload],
+  );
+
+  const sendEmote = useCallback(
+    (emoteId: string) => {
+      const emote = emoteById(emoteId);
+      if (!emote) return;
+      sendChatPayload(emote.text, emote.id);
+    },
+    [sendChatPayload],
   );
 
   const openLink = useCallback(
@@ -317,6 +378,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
     if (roleRef.current !== "host" || !liveRef.current || lobbyRef.current.link !== "open") return;
     const mapId = basiliskMap().id;
     if (!sim.applyRematch(mapId, "host")) return;
+    setChatLines([]);
     linkRef.current?.send({ t: "rematch", mapId });
     linkRef.current?.send({ t: "snap", snap: sim.exportSnapshot() });
     rendererRef.current?.setHomeSide("you");
@@ -334,6 +396,7 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
     linkRef.current?.send({ t: "snap", snap: sim.exportSnapshot() });
     liveRef.current = true;
     rendererRef.current?.setHomeSide("you");
+    setChatLines([]);
     setLobby((s) => ({ ...s, open: false, live: true, link: "open", status: "" }));
   }, [rendererRef, sim]);
 
@@ -414,6 +477,9 @@ export function useSkirmish(sim: GameSim, rendererRef: RefObject<GameRenderer | 
     name,
     setName,
     lobby,
+    chatLines,
+    sendChat,
+    sendEmote,
     roleRef,
     liveRef,
     linkRef,

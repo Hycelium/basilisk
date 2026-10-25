@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { TouchDragMode } from "../game/render3d";
+import { ChatControls } from "./ChatDock";
 
 export interface ClusterAction {
   id: string;
@@ -24,6 +25,8 @@ interface ControlClusterProps {
   /** 0 = closest, 1 = furthest. Non-touch only. */
   zoom: number;
   onZoom: (t: number) => void;
+  /** Skirmish chat — emotes and type live under Commands. */
+  chat?: { onSend: (text: string) => void; onEmote: (emoteId: string) => void } | null;
 }
 
 /**
@@ -39,6 +42,7 @@ export function ControlCluster({
   onDragMode,
   zoom,
   onZoom,
+  chat = null,
 }: ControlClusterProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -72,6 +76,7 @@ export function ControlCluster({
         {expanded ? "Close" : "Commands"}
       </button>
       <div className="banner-stack" role="menu" aria-label="Quick actions" aria-hidden={!expanded} id="cluster-arc">
+        {chat && <ChatControls onSend={chat.onSend} onEmote={chat.onEmote} active={expanded} />}
         {actions.map((a) => (
           <button
             key={a.id}

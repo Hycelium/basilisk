@@ -379,3 +379,19 @@ export function buildHouseModel(team: Team) {
   }
   return finish(g);
 }
+
+/** Barracks hall consecrated — house footprint with a large rooftop cross. */
+export function buildChurchModel(team: Team) {
+  const g = buildHouseModel(team);
+  const crossMat = new THREE.MeshStandardMaterial({
+    color: team === "you" ? 0xe8d4a0 : 0xd8b080,
+    roughness: 0.55,
+    metalness: 0.15,
+  });
+  const mast = new THREE.Mesh(new THREE.BoxGeometry(1.4, 22, 1.4), crossMat);
+  mast.position.set(0, 32, 0);
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(12, 1.4, 1.4), crossMat);
+  arm.position.set(0, 38, 0);
+  g.add(mast, arm);
+  return finish(g);
+}

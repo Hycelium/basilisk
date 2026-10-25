@@ -20,6 +20,7 @@ import { LandscapeLock, tryLockLandscape } from "./ui/LandscapeLock";
 import { basiliskMap } from "./game/basiliskMap";
 import { useSkirmish } from "./net/useSkirmish";
 import { SkirmishEnd, SkirmishLobby } from "./ui/SkirmishLobby";
+import { ChatLog } from "./ui/ChatDock";
 import { afterPortalBreak, bindPortalAudio, onMatchEndToMenu, onMatchStart, onReturnToTitle } from "./portal";
 
 const defaultUi: UiSnapshot = {
@@ -58,6 +59,7 @@ const defaultUi: UiSnapshot = {
   selectedRanks: null,
   selectedCanUpgradeDamage: false,
   selectedCanUpgradeRate: false,
+  selectedCanConsecrate: false,
   selectedCanRaze: false,
   selectedRazeRefund: 0,
   selectedRazeRefundWood: 0,
@@ -68,6 +70,8 @@ const defaultUi: UiSnapshot = {
   peonQueue: [],
   peonCount: 2,
   peonCap: 2,
+  armyCount: 0,
+  armyCap: 25,
   idlePeonCount: 0,
   keepGarrisoned: 0,
   keepGarrisonMax: 5,
@@ -857,6 +861,10 @@ export default function App() {
         setRadial(null);
         setClusterOpen(false);
       }
+      if (ev.key === "Enter" && skirmish.liveRef.current && sim.getState().phase === "running") {
+        ev.preventDefault();
+        setClusterOpen(true);
+      }
       if ((ev.key === "p" || ev.key === "P") && sim.getState().selectedVillagerIds.length > 0) {
         setPatrol(!patrolModeRef.current);
       }
@@ -895,7 +903,7 @@ export default function App() {
       window.removeEventListener("keyup", onUp);
       document.removeEventListener("pointerlockchange", onLock);
     };
-  }, [sim, refreshUi, setPatrol, toggleFullscreen]);
+  }, [sim, refreshUi, setPatrol, toggleFullscreen, skirmish.liveRef]);
 
   useEffect(() => {
     const onLook = (ev: MouseEvent) => {
@@ -1291,7 +1299,13 @@ export default function App() {
               rendererRef.current?.setZoomT(t);
               setZoomT(t);
             }}
+            chat={
+              skirmish.lobby.live
+                ? { onSend: skirmish.sendChat, onEmote: skirmish.sendEmote }
+                : null
+            }
           />
+          {skirmish.lobby.live && <ChatLog lines={skirmish.chatLines} localTeam={ui.localTeam} />}
           {basiliskKing && kingTables && (
         <div className="king-panel">
           {!ui.possessed && (
@@ -1649,6 +1663,11 @@ export default function App() {
               sim.razeSelected();
               refreshUi();
               beep(220);
+            }}
+            onConsecrate={() => {
+              sim.consecrateSelected();
+              refreshUi();
+              beep(520);
             }}
             onEnqueue={onEnqueue}
             onCancelQueue={(i) => {

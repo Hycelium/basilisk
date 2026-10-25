@@ -35,6 +35,20 @@ export const PEON_TRAIN_FOOD = 25;
 export const BASE_PEON_CAP = 2;
 export const HOUSE_POP = 2;
 export const MAX_PEON_QUEUE = 4;
+/** Barracks army pop from the keep alone. Midfield houses and churches add more. */
+export const BASE_ARMY_CAP = 25;
+/** Purple midfield house → military pop. */
+export const MID_HOUSE_ARMY_POP = 5;
+/** Church (upgraded barracks) → military pop. */
+export const CHURCH_ARMY_POP = 10;
+export const CHURCH_UPGRADE_GOLD = 500;
+/** Blessing radius around a church (sim units). */
+export const CHURCH_AURA_RANGE = 95;
+export const CHURCH_AURA_DAMAGE = 1.25;
+/** HP restored per second while standing in a church aura. */
+export const CHURCH_AURA_REGEN = 4.5;
+/** Max barracks/clan troops holding one bridge crossing. */
+export const BRIDGE_STATION_CAP = 5;
 
 export const PINE_REGEN = 2.8;
 export const COPPER_REGEN = 4.2;
@@ -50,6 +64,7 @@ export const BUILD_COST: Record<BuildingKind, ResCost> = {
   ballista: { gold: 95, wood: 55 },
   catapult: { gold: 120, wood: 70 },
   barracks: { gold: 100, wood: 80 },
+  church: { gold: 100, wood: 80 },
   house: { gold: 30, wood: 55 },
   barricade: { gold: 8, wood: 30 },
 };
@@ -59,6 +74,7 @@ export const BUILD_RANGE: Record<BuildingKind, number> = {
   ballista: 178,
   catapult: 150,
   barracks: 0,
+  church: 0,
   house: 0,
   barricade: 0,
 };
@@ -153,6 +169,7 @@ export const BUILD_HP: Record<BuildingKind, number> = {
   ballista: 48,
   catapult: 44,
   barracks: 52,
+  church: 68,
   house: 36,
   barricade: BARRICADE_HP,
 };
@@ -170,7 +187,13 @@ export function trebuchetShot(maxHp: number) {
 
 /** Towers and halls only. Keeps and houses are off-limits. */
 export function isTrebuchetBuilding(kind: BuildingKind) {
-  return kind === "watchtower" || kind === "ballista" || kind === "catapult" || kind === "barracks";
+  return (
+    kind === "watchtower" ||
+    kind === "ballista" ||
+    kind === "catapult" ||
+    kind === "barracks" ||
+    kind === "church"
+  );
 }
 
 export const SPY_DISABLE = 10;
@@ -210,6 +233,7 @@ export const BUILD_DAMAGE: Record<BuildingKind, number> = {
   ballista: 22,
   catapult: 13,
   barracks: 0,
+  church: 0,
   house: 0,
   barricade: 0,
 };
@@ -219,6 +243,7 @@ export const BUILD_COOLDOWN: Record<BuildingKind, number> = {
   ballista: 1.7,
   catapult: 1.75,
   barracks: 1,
+  church: 1,
   house: 1,
   barricade: 1,
 };

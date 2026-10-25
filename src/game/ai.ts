@@ -10,14 +10,14 @@ function featuresFrom(sim: GameSim): LearnFeatures {
   // foe's half of the map; production queues remain hidden.
   const observedArmy = s.units.filter((u) => u.team === "you" && u.pos.y <= 430);
   const isCombatStructure = (kind: (typeof yours)[number]["kind"]) =>
-    kind !== "barracks" && kind !== "house" && kind !== "barricade";
+    kind !== "barracks" && kind !== "church" && kind !== "house" && kind !== "barricade";
   return {
     yourTowers: yours.filter((b) => isCombatStructure(b.kind)).length,
     yourArmy: observedArmy.length,
-    yourBarracks: yours.filter((b) => b.kind === "barracks").length,
+    yourBarracks: yours.filter((b) => b.kind === "barracks" || b.kind === "church").length,
     foeTowers: foes.filter((b) => isCombatStructure(b.kind)).length,
     foeArmy: s.units.filter((u) => u.team === "foe").length,
-    foeBarracks: foes.filter((b) => b.kind === "barracks").length,
+    foeBarracks: foes.filter((b) => b.kind === "barracks" || b.kind === "church").length,
     foeGold: s.gold.foe,
     yourGold: s.gold.you,
     wave: s.waveIndex,

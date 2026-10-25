@@ -7,6 +7,7 @@ import {
   POSSESS_FOV_WIDE,
   POSSESS_PULL_MAX,
   POSSESS_VISION_SCORE,
+  CHURCH_AURA_RANGE,
   STARTER_GUARD_RANGE,
   TREB_POSSESS_AHEAD,
   TREB_POSSESS_BACK,
@@ -34,6 +35,7 @@ import {
   buildBallistaModel,
   buildBarracksModel,
   buildCatapultModel,
+  buildChurchModel,
   buildHouseModel,
   buildWatchtowerModel,
 } from "./models/buildings";
@@ -1330,6 +1332,7 @@ export class GameRenderer {
     if (kind === "ballista") return buildBallistaModel(team);
     if (kind === "catapult") return buildCatapultModel(team);
     if (kind === "house") return buildHouseModel(team);
+    if (kind === "church") return buildChurchModel(team);
     return buildBarracksModel(team);
   }
 
@@ -1338,12 +1341,40 @@ export class GameRenderer {
     for (const b of state.buildings) {
       const key = `bld-${b.id}`;
       live.add(key);
-      const obj = this.ensure(key, () => {
-        const built = this.makeBuilding(b.kind, b.team);
-        built.userData.arm = built.getObjectByName("arm") ?? null;
-        return built;
-      });
+      let obj = this.entityMap.get(key);
+      if (obj && obj.userData.buildingKind !== b.kind) {
+        this.dynamicRoot.remove(obj);
+        this.entityMap.delete(key);
+        obj = undefined;
+      }
+      if (!obj) {
+        obj = this.ensure(key, () => {
+          const built = this.makeBuilding(b.kind, b.team);
+          built.userData.arm = built.getObjectByName("arm") ?? null;
+          built.userData.buildingKind = b.kind;
+          return built;
+        });
+      }
       setPos3(obj, b.pos.x, b.pos.y, 0);
+      if (b.kind === "church") {
+        let ring = obj.userData.auraRing as THREE.Mesh | undefined;
+        if (!ring) {
+          ring = new THREE.Mesh(
+            new THREE.RingGeometry(CHURCH_AURA_RANGE * 0.92, CHURCH_AURA_RANGE, 48),
+            new THREE.MeshBasicMaterial({
+              color: 0xe8d080,
+              transparent: true,
+              opacity: 0.28,
+              side: THREE.DoubleSide,
+              depthWrite: false,
+            }),
+          );
+          ring.rotation.x = -Math.PI / 2;
+          ring.position.y = 0.4;
+          obj.add(ring);
+          obj.userData.auraRing = ring;
+        }
+      }
       const silenced = (b.disableTimer ?? 0) > 0;
       let hush = obj.userData.hush as THREE.Mesh | undefined;
       if (!hush) {
@@ -1405,7 +1436,7 @@ export class GameRenderer {
     let mat = this.padMaterials.get(id);
     if (!mat) {
       mat = new THREE.MeshBasicMaterial({
-        color: zone === "eco" ? 0xc6f06a : team === "you" ? 0x7fd4ff : 0xff6a78,
+        color: zone === "midEco" ? 0xa56bff : zone === "eco" ? 0xc6f06a : team === "you" ? 0x7fd4ff : 0xff6a78,
         transparent: true,
         opacity: 0.95,
         side: THREE.DoubleSide,
@@ -1428,8 +1459,8 @@ export class GameRenderer {
       const key = `pad-${p.id}`;
       live.add(key);
       const obj = this.ensure(key, () => {
-        const inner = p.zone === "eco" ? 8.5 : 9.5;
-        const outer = p.zone === "eco" ? 14.5 : 16;
+        const inner = p.zone === "eco" || p.zone === "midEco" ? 8.5 : 9.5;
+        const outer = p.zone === "eco" || p.zone === "midEco" ? 14.5 : 16;
         const color = this.padMaterial(p.zone, p.team).color;
         const ringMat = this.padMaterial(p.zone, p.team).clone();
         const glowMat = new THREE.MeshBasicMaterial({

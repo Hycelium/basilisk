@@ -9,6 +9,7 @@ interface DetailSheetProps {
   onUpgradeDamage: () => void;
   onUpgradeRate: () => void;
   onRaze: () => void;
+  onConsecrate: () => void;
   onClose: () => void;
   onEnqueue: (kind: TrainKind) => void;
   onCancelQueue: (index: number) => void;
@@ -24,6 +25,7 @@ const STRUCTURE_ROLE: Partial<Record<BuildingKind, string>> = {
   ballista: "Armor-piercing bolts at a fixed rate. Upgrade posts guard dogs that kill spies on the pad.",
   catapult: "Splash that stays strong at the gate and breaks barricades.",
   barricade: "A peon blocks one road. Melee has to chop it. A ram smashes it.",
+  church: "Blessing aura: +25% damage and slow healing for friendly troops nearby. +10 army pop.",
 };
 
 function costLabel(gold: number, wood: number, food = 0) {
@@ -39,6 +41,7 @@ export function DetailSheet({
   onUpgradeDamage,
   onUpgradeRate,
   onRaze,
+  onConsecrate,
   onClose,
   onEnqueue,
   onCancelQueue,
@@ -172,6 +175,8 @@ export function DetailSheet({
 
   const isEnemy = isEnemyStructure(ui.localTeam, ui.selectedBuildingTeam);
   const isBarracks = ui.selectedBuildingKind === "barracks";
+  const isChurch = ui.selectedBuildingKind === "church";
+  const isTrainHall = isBarracks || isChurch;
   const isHouse = ui.selectedBuildingKind === "house";
   const isBallista = ui.selectedBuildingKind === "ballista";
   const structureName = buildingName(ui.selectedBuildingKind!);
@@ -190,14 +195,15 @@ export function DetailSheet({
       <div className="detail-body">
       {isHouse && (
         <p className="detail-note">
-          The only way past two peons. Each house adds +2 population. Eco pad only.
+          Yard houses add +2 peon pop. Purple midfield houses add +5 army pop. Keep starts with 25 army slots.
         </p>
       )}
-      {!isHouse && !isBarracks && STRUCTURE_ROLE[ui.selectedBuildingKind!] && (
+      {!isHouse && !isTrainHall && STRUCTURE_ROLE[ui.selectedBuildingKind!] && (
         <p className="detail-note">{STRUCTURE_ROLE[ui.selectedBuildingKind!]}</p>
       )}
+      {isChurch && <p className="detail-note">{STRUCTURE_ROLE.church}</p>}
 
-      {!isBarracks && !isHouse && (
+      {!isTrainHall && !isHouse && (
         <>
           <div className="rank-row">
             <span>Damage</span>
@@ -229,22 +235,36 @@ export function DetailSheet({
         </>
       )}
 
-      {isBarracks && !isEnemy && (
+      {isTrainHall && !isEnemy && (
         <>
           <p className="detail-note">
-            Trains your army. Levies crack wards, rams break barricades, trebuchets need four shots to wreck a tower, spies prefer enemy trebuchets and can wreck several, riders shrug arrows, and archers walk around road blocks.
+            Army {ui.armyCount}/{ui.armyCap}. Levies crack wards, rams break barricades, trebuchets need four shots,
+            spies hunt trebuchets, riders shrug arrows, archers walk around blocks.
+            {isBarracks ? " Consecrate for 500g to raise a church (+10 army, blessing aura)." : ""}
           </p>
+          {isBarracks && (
+            <button
+              type="button"
+              className="cta"
+              disabled={!ui.selectedCanConsecrate}
+              onClick={onConsecrate}
+              title="500 gold — church with blessing aura and +10 army pop"
+            >
+              Consecrate church · 500g
+            </button>
+          )}
 
           <div className="train-options">
             {ui.trainOptions.map((opt) => {
               const afford =
                 ui.yourGold >= opt.cost && ui.yourWood >= opt.woodCost && ui.yourFood >= (opt.foodCost ?? 0);
+              const room = ui.armyCount < ui.armyCap;
               return (
                 <button
                   key={opt.kind}
                   type="button"
-                  className={`train-opt${opt.unlocked ? "" : " locked"}${opt.unlocked && afford ? " afford" : ""}`}
-                  disabled={!opt.unlocked || !afford}
+                  className={`train-opt${opt.unlocked ? "" : " locked"}${opt.unlocked && afford && room ? " afford" : ""}`}
+                  disabled={!opt.unlocked || !afford || !room}
                   onClick={() => onEnqueue(opt.kind)}
                   title={opt.unlocked ? opt.blurb : opt.lockHint}
                 >
@@ -275,28 +295,32 @@ export function DetailSheet({
             </div>
           </div>
 
-          <div className="rank-row">
-            <span>Troop power</span>
-            <div className="pips">
-              {[1, 2, 3].map((n) => (
-                <i key={n} className={(ui.selectedRanks?.damage ?? 1) >= n ? "on" : ""} />
-              ))}
-            </div>
-          </div>
-          <div className="rank-row">
-            <span>Train speed</span>
-            <div className="pips">
-              {[1, 2, 3].map((n) => (
-                <i key={n} className={(ui.selectedRanks?.rate ?? 1) >= n ? "on" : ""} />
-              ))}
-            </div>
-          </div>
+          {!isChurch && (
+            <>
+              <div className="rank-row">
+                <span>Troop power</span>
+                <div className="pips">
+                  {[1, 2, 3].map((n) => (
+                    <i key={n} className={(ui.selectedRanks?.damage ?? 1) >= n ? "on" : ""} />
+                  ))}
+                </div>
+              </div>
+              <div className="rank-row">
+                <span>Train speed</span>
+                <div className="pips">
+                  {[1, 2, 3].map((n) => (
+                    <i key={n} className={(ui.selectedRanks?.rate ?? 1) >= n ? "on" : ""} />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </>
       )}
 
       {!isEnemy && (
         <div className="detail-actions">
-          {!isHouse && (
+          {!isHouse && !isChurch && (
             <>
               <button
                 type="button"

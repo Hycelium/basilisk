@@ -40,6 +40,7 @@ export type RemoteOrder =
   | { t: "rally"; team: Team; buildingId: number; x: number; y: number }
   | { t: "barricade"; team: Team; x: number; y: number; builderId?: number }
   | { t: "upgrade"; team: Team; buildingId: number; kind: "damage" | "rate" }
+  | { t: "church"; team: Team; buildingId: number }
   | { t: "raze"; team: Team; buildingId: number }
   | { t: "cancel"; team: Team; buildingId: number; index: number }
   | { t: "pause" }
@@ -159,7 +160,7 @@ export interface SnapPad {
   x: number;
   y: number;
   laneCoverage: Lane[];
-  zone: "combat" | "eco";
+  zone: "combat" | "eco" | "midEco";
 }
 
 /** Slim world picture. Selection, camera, and control groups stay on each machine. */
@@ -212,6 +213,7 @@ export type NetMsg =
   | { t: "order"; order: RemoteOrder }
   | { t: "snap"; snap: MatchSnapshot }
   | { t: "note"; text: string }
+  | { t: "chat"; playerId: string; name: string; team: Team; text: string; emote?: string }
   | { t: "ping"; n: number; at: number }
   | { t: "pong"; n: number; at: number }
   | { t: "full" }
@@ -233,6 +235,7 @@ const ORDER_TYPES = new Set<RemoteOrder["t"]>([
   "rally",
   "barricade",
   "upgrade",
+  "church",
   "raze",
   "cancel",
   "pause",
@@ -298,6 +301,14 @@ export function asNetMsg(data: unknown): NetMsg | null {
     const mapId = (data as { mapId?: unknown }).mapId;
     if (typeof mapId !== "string" || !knownMap(mapId)) return null;
   }
+  if (t === "chat") {
+    const m = data as { playerId?: unknown; name?: unknown; team?: unknown; text?: unknown; emote?: unknown };
+    if (typeof m.playerId !== "string" || !m.playerId) return null;
+    if (typeof m.name !== "string") return null;
+    if (m.team !== "you" && m.team !== "foe") return null;
+    if (typeof m.text !== "string" || !m.text.trim()) return null;
+    if (m.emote != null && typeof m.emote !== "string") return null;
+  }
   if (
     t === "hello" ||
     t === "start" ||
@@ -306,6 +317,7 @@ export function asNetMsg(data: unknown): NetMsg | null {
     t === "order" ||
     t === "snap" ||
     t === "note" ||
+    t === "chat" ||
     t === "ping" ||
     t === "pong" ||
     t === "full" ||

@@ -515,6 +515,23 @@ export function buildPads(map: MapDef): Pad[] {
       zone: "eco",
     });
   }
+
+  // Four purple midfield eco pads — two nearer each base, mirrored and balanced.
+  const midSlots: { id: string; team: Team; x: number; y: number }[] = [
+    { id: "mid-w", team: "you", x: MAP_CX - 78, y: WORLD_H * 0.64 },
+    { id: "mid-e", team: "you", x: MAP_CX + 78, y: WORLD_H * 0.68 },
+    { id: "mid-w", team: "foe", x: MAP_CX - 78, y: WORLD_H * 0.36 },
+    { id: "mid-e", team: "foe", x: MAP_CX + 78, y: WORLD_H * 0.32 },
+  ];
+  for (const slot of midSlots) {
+    pads.push({
+      id: `${slot.team}-${slot.id}`,
+      team: slot.team,
+      pos: { x: slot.x, y: slot.y },
+      laneCoverage: [],
+      zone: "midEco",
+    });
+  }
   return pads;
 }
 

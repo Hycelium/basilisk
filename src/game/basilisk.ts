@@ -301,6 +301,8 @@ export function orderTarget(state: GameState, u: Unit): Vec2 | null {
   if (order === "gather") return keepPos(u.team);
   const layer = state.defendLayer[u.team];
   if (layer === "keep" || layer === "home" || layer === "mid" || layer === "forward" || layer === "assault") {
+    // Balanced bridge rallies (cap 5 / crossing) are stamped when the layer is set.
+    if (u.rallyPoint) return u.rallyPoint;
     return defendPointFor(state.mapSeed, layer, u.lane, u.id, u.team);
   }
   const chokes = chokePoints(state.mapSeed);
