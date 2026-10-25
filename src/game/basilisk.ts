@@ -1,6 +1,6 @@
 import { UNIT_DEFS, VILLAGER_HP, VILLAGER_SPEED, PEON_DAMAGE, WORLD_H } from "./balance";
 import { chokePoints, deerSpots, type WorkKind } from "./basiliskMap";
-import { getMap, keepPos } from "./map";
+import { defendPointFor, getMap, keepPos } from "./map";
 import type { GameState, KingController, KingOrder, MapId, Team, Unit, UnitKind, Vec2, Villager, WaveSpec } from "./types";
 import { farmPlots, wheatPatchAt } from "./wheat";
 
@@ -299,8 +299,11 @@ export function orderTarget(state: GameState, u: Unit): Vec2 | null {
   if (u.lifeStage === "gatherer") return haulDestination(u, state.mapSeed);
   const order = state.kingOrder[u.team];
   if (order === "gather") return keepPos(u.team);
-  const layer = state.defendLayer[u.team] ?? undefined;
-  const chokes = chokePoints(state.mapSeed, layer);
+  const layer = state.defendLayer[u.team];
+  if (layer === "keep" || layer === "home" || layer === "mid" || layer === "forward" || layer === "assault") {
+    return defendPointFor(state.mapSeed, layer, u.lane, u.id, u.team);
+  }
+  const chokes = chokePoints(state.mapSeed);
   if (order === "hold") {
     const byLane = chokes.find((c) => Math.abs(c.x - u.pos.x) < 48) ?? chokes[u.id % Math.max(1, chokes.length)];
     return byLane ?? chokes[0]!;

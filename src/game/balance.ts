@@ -2,7 +2,7 @@ import type { BuildingKind, LaneCount, Team, TrainKind, UnitKind, WaveSpec } fro
 
 export const WORLD_W = 400;
 /** Tall field so the mid strip between keeps is a real no-man's-land. */
-export const WORLD_H = 1800;
+export const WORLD_H = 1200;
 /** Keeps sit this far in from each end of the field. */
 export const KEEP_MARGIN = 56;
 export const ROAD_Y_MIN = 100;

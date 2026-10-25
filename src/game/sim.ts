@@ -847,17 +847,17 @@ export class GameSim {
     if (layer) {
       const ok = defendLayerOptions(this.activeMap.seed).some((o) => o.id === layer);
       if (!ok) return;
-      s.kingOrder[team] = "hold";
+      s.kingOrder[team] = layer === "assault" ? "hunt" : "hold";
       s.defendLayer[team] = layer;
       if (team === this.localTeam) {
-        const label = defendLayerOptions(this.activeMap.seed).find((o) => o.id === layer)?.label ?? "bridges";
-        this.addToast(`Holding ${label.toLowerCase()}.`);
+        const label = defendLayerOptions(this.activeMap.seed).find((o) => o.id === layer)?.label ?? "orders";
+        this.addToast(`${label}.`);
       }
       return;
     }
     s.defendLayer[team] = null;
     if (s.kingOrder[team] === "hold") s.kingOrder[team] = "gather";
-    if (team === this.localTeam) this.addToast("Standing down from the bridges.");
+    if (team === this.localTeam) this.addToast("Standing down.");
   }
 
   assignBasiliskWork(kind: WorkKind) {

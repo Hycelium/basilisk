@@ -171,18 +171,40 @@ export function bridgePoints(seed: number, layerId?: RiverLayerId): Vec2[] {
   return pts;
 }
 
-export function defendLayerOptions(seed: number): { id: RiverLayerId; label: string }[] {
+export type DefendStanceId = "keep" | RiverLayerId | "assault";
+
+export function defendLayerOptions(seed: number): { id: DefendStanceId; label: string }[] {
   const present = new Set(riverLayers(seed).map((b) => b.id));
-  const labels: { id: RiverLayerId; label: string }[] = [
+  const belts: { id: DefendStanceId; label: string }[] = [
     { id: "home", label: "Home bridges" },
     { id: "mid", label: present.size === 1 ? "Central bridge" : "Mid bridges" },
     { id: "forward", label: "Forward bridges" },
   ];
-  return labels.filter((o) => present.has(o.id));
+  return [
+    { id: "keep", label: "Defend keep" },
+    ...belts.filter((o) => present.has(o.id as RiverLayerId)),
+    { id: "assault", label: "Assault keep" },
+  ];
 }
 
-/** Rally spot for a soldier holding a bridge layer — prefers their own road. */
-export function defendPointFor(seed: number, layerId: RiverLayerId, lane: Lane, unitId: number): Vec2 {
+/** Rally spot for a troop stance — keep yard, bridge layer, or enemy gate. */
+export function defendPointFor(
+  seed: number,
+  layerId: DefendStanceId,
+  lane: Lane,
+  unitId: number,
+  team: Team = "you",
+): Vec2 {
+  if (layerId === "keep") {
+    const gate = laneYGate(team);
+    return { x: lanePathX(seed, team, lane, gate), y: gate };
+  }
+  if (layerId === "assault") {
+    const foe: Team = team === "you" ? "foe" : "you";
+    const gate = laneYGate(foe);
+    const approach = foe === "you" ? gate + 48 : gate - 48;
+    return { x: lanePathX(seed, team, lane, approach), y: approach };
+  }
   const band = riverLayers(seed).find((b) => b.id === layerId);
   if (band) return bridgeCrossing(seed, lane, band);
   const pts = bridgePoints(seed);

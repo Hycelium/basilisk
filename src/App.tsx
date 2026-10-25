@@ -8,7 +8,6 @@ import { Hud } from "./ui/Hud";
 import { KeepTugBar } from "./ui/KeepTugBar";
 import { LaborSteppers } from "./ui/LaborSteppers";
 import { BuildBar } from "./ui/BuildBar";
-import { DefendBar } from "./ui/DefendBar";
 import { DetailSheet } from "./ui/DetailSheet";
 import { Overlays } from "./ui/Overlays";
 import { CampaignMap } from "./ui/CampaignMap";
@@ -1013,6 +1012,25 @@ export default function App() {
   const basiliskKing = !!ui.basilisk?.youAreKing && !ui.possessed;
   const clusterActions: ClusterAction[] = [
     {
+      id: "escape",
+      icon: "⎋",
+      label: "Escape",
+      hint: ui.possessed ? "Leave the soldier (Esc)" : "Cancel selection (Esc)",
+      onPress: () => {
+        if (ui.possessed) {
+          sim.releasePossess("esc");
+          document.exitPointerLock();
+        } else {
+          sim.cancelSelection();
+          setPatrol(false);
+          setRadial(null);
+        }
+        setClusterOpen(false);
+        refreshUi();
+        beep(240);
+      },
+    },
+    {
       id: "recall",
       icon: "🔔",
       label: "Recall",
@@ -1074,17 +1092,35 @@ export default function App() {
         beep(280);
       },
     },
-    {
-      id: "reset-cam",
-      icon: "⟲",
-      label: "Reset view",
-      hint: "Reset camera (R)",
-      onPress: () => {
-        rendererRef.current?.resetCamera();
-        setZoomT(rendererRef.current?.getZoomT() ?? 0.4);
-      },
-    },
   );
+  if (ui.phase === "running" && (!ui.basilisk || ui.basilisk.youAreKing)) {
+    const layers = ui.basilisk?.defendLayers ?? [];
+    const active = ui.basilisk?.defendLayer ?? null;
+    for (const layer of layers) {
+      clusterActions.push({
+        id: `defend-${layer.id}`,
+        icon: layer.id === "assault" ? "⚔" : layer.id === "keep" ? "🛡" : "🌉",
+        label: layer.label,
+        hint: `Concentrate troops — ${layer.label}`,
+        active: active === layer.id,
+        onPress: () => {
+          sim.setDefendLayer(active === layer.id ? null : layer.id);
+          refreshUi();
+          beep(active === layer.id ? 260 : 420);
+        },
+      });
+    }
+  }
+  clusterActions.push({
+    id: "reset-cam",
+    icon: "⟲",
+    label: "Reset view",
+    hint: "Reset camera (R)",
+    onPress: () => {
+      rendererRef.current?.resetCamera();
+      setZoomT(rendererRef.current?.getZoomT() ?? 0.4);
+    },
+  });
   if (fsSupported) {
     clusterActions.push({
       id: "fullscreen",
@@ -1295,15 +1331,6 @@ export default function App() {
               </button>
             ))}
           </div>
-          <DefendBar
-            ui={ui}
-            enabled={!!ui.basilisk?.youAreKing}
-            onDefend={(layer) => {
-              sim.setDefendLayer(layer);
-              refreshUi();
-              beep(layer ? 420 : 260);
-            }}
-          />
         </div>
           )}
     </div>

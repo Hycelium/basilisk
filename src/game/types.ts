@@ -6,8 +6,8 @@ export type UnitKind = WaveUnitKind | TrainKind;
 export type Job = "farmer" | "hunter" | "smith" | "lumber";
 export type LifeStage = "gatherer" | "warrior" | "king";
 export type KingOrder = "gather" | "hold" | "hunt";
-/** Bridge belt to hold — matches river layers on the map. */
-export type DefendLayerId = "home" | "mid" | "forward";
+/** Troop stance: own keep, river belts, or enemy keep. */
+export type DefendLayerId = "keep" | "home" | "mid" | "forward" | "assault";
 export type KingController = "ai" | "player";
 export type WorkKind = "farm" | "hunt" | "gold" | "wood";
 export type Coffer = { gold: number; wood: number; food: number };
