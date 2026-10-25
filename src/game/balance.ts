@@ -357,7 +357,7 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
     label: "Rammer", blurb: "Breaks gates and barricades",
   },
   trebuchet: {
-    hp: 42, speed: 6.75, damage: 0, cooldown: 5.8, bounty: 16,
+    hp: 42, speed: 9, damage: 0, cooldown: 5.8, bounty: 16,
     towerResist: 0.88, keepMult: 0, siegeGap: 1.2,
     cost: 150, woodCost: 200, trainTime: 9.6,
     label: "Trebuchet", blurb: "Costly timber · crawls · four shots wreck a tower",

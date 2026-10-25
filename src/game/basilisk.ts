@@ -297,6 +297,7 @@ export function haulDestination(u: Unit, seed = 0): Vec2 | null {
 
 export function orderTarget(state: GameState, u: Unit): Vec2 | null {
   if (u.lifeStage === "gatherer") return haulDestination(u, state.mapSeed);
+  if (u.kind === "trebuchet") return null;
   const order = state.kingOrder[u.team];
   if (order === "gather") return keepPos(u.team);
   const layer = state.defendLayer[u.team];

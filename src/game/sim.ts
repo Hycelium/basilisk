@@ -885,11 +885,17 @@ export class GameSim {
         (u) =>
           u.team === team &&
           u.hp > 0 &&
+          u.kind !== "trebuchet" &&
           !u.npcKing &&
           u.lifeStage !== "gatherer" &&
           (u.fromBarracks || u.lifeStage === "warrior" || u.lifeStage === "king"),
       )
       .sort((a, b) => a.id - b.id);
+    // Trebuchets ignore hold commands and keep rolling up the road.
+    for (const u of this.state.units) {
+      if (u.team !== team || u.kind !== "trebuchet") continue;
+      u.rallyPoint = undefined;
+    }
     // Attack: clear hold rallies so troops resume normal march / hunt AI.
     if (layer === "assault") {
       for (const u of troops) {
@@ -2520,7 +2526,7 @@ export class GameSim {
       fromBarracks,
       chargeReady: kind === "runner",
       ignoreEnemyCreeps: !fromBarracks,
-      rallyPoint: barracks?.rallyPoint ? { ...barracks.rallyPoint } : undefined,
+      rallyPoint: kind === "trebuchet" ? undefined : barracks?.rallyPoint ? { ...barracks.rallyPoint } : undefined,
       aiHeldForRush,
       aiStagingPoint: aiHeldForRush
         ? {
