@@ -187,7 +187,19 @@ export function defendLayerOptions(seed: number): { id: DefendStanceId; label: s
   ];
 }
 
-/** Rally spot for a troop stance — keep yard, bridge layer, or enemy gate. */
+/**
+ * Player-relative stance → absolute river belt.
+ * South ("you") keeps home/forward as authored; north ("foe") swaps them so
+ * Home = nearest bridge and Forward = far bridge for both players.
+ */
+export function absoluteRiverLayer(layerId: RiverLayerId, team: Team): RiverLayerId {
+  if (team === "you" || layerId === "mid") return layerId;
+  if (layerId === "home") return "forward";
+  if (layerId === "forward") return "home";
+  return layerId;
+}
+
+/** Rally spot for a troop stance — own keep, nearest/far bridges, or enemy gate. */
 export function defendPointFor(
   seed: number,
   layerId: DefendStanceId,
@@ -205,7 +217,8 @@ export function defendPointFor(
     const approach = foe === "you" ? gate + 48 : gate - 48;
     return { x: lanePathX(seed, team, lane, approach), y: approach };
   }
-  const band = riverLayers(seed).find((b) => b.id === layerId);
+  const belt = absoluteRiverLayer(layerId, team);
+  const band = riverLayers(seed).find((b) => b.id === belt);
   if (band) return bridgeCrossing(seed, lane, band);
   const pts = bridgePoints(seed);
   return pts[unitId % Math.max(1, pts.length)] ?? { x: MAP_CX, y: WORLD_H / 2 };
