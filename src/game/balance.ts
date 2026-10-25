@@ -296,13 +296,13 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
   archer: {
     hp: 44, speed: 29, damage: 7, cooldown: 1.05, bounty: 14,
     towerResist: 0.04, keepMult: 0.42, siegeGap: 0.5,
-    cost: 46, woodCost: 0, foodCost: 62, trainTime: 4.4,
+    cost: 0, woodCost: 75, foodCost: 0, trainTime: 4.4,
     label: "Archer", blurb: "Ranged · walks around barricades, weak vs wards",
   },
   ward: {
     hp: 150, speed: 22, damage: 5, cooldown: 0.75, bounty: 15,
     towerResist: 0.88, keepMult: 0.55, siegeGap: 0.4,
-    cost: 62, woodCost: 0, foodCost: 24, trainTime: 5.2,
+    cost: 90, woodCost: 0, foodCost: 24, trainTime: 5.2,
     label: "Ward", blurb: "Shield · shrugs arrows, fears bolts and levies",
   },
   rammer: {
@@ -314,7 +314,7 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
   trebuchet: {
     hp: 42, speed: 9, damage: 0, cooldown: 5.8, bounty: 16,
     towerResist: 0.88, keepMult: 0, siegeGap: 1.2,
-    cost: 84, woodCost: 155, trainTime: 9.6,
+    cost: 150, woodCost: 200, trainTime: 9.6,
     label: "Trebuchet", blurb: "Costly timber · crawls · four shots wreck a tower",
   },
   spy: {
