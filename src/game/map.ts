@@ -207,14 +207,15 @@ export function defendPointFor(
   unitId: number,
   team: Team = "you",
 ): Vec2 {
+  // laneYGate(team) is the enemy gate that team marches on — not their own keep.
   if (layerId === "keep") {
-    const gate = laneYGate(team);
+    const foe: Team = team === "you" ? "foe" : "you";
+    const gate = laneYGate(foe);
     return { x: lanePathX(seed, team, lane, gate), y: gate };
   }
   if (layerId === "assault") {
-    const foe: Team = team === "you" ? "foe" : "you";
-    const gate = laneYGate(foe);
-    const approach = foe === "you" ? gate + 48 : gate - 48;
+    const gate = laneYGate(team);
+    const approach = team === "you" ? gate + 48 : gate - 48;
     return { x: lanePathX(seed, team, lane, approach), y: approach };
   }
   const belt = absoluteRiverLayer(layerId, team);

@@ -459,6 +459,10 @@ export interface UiSnapshot {
   peonCap: number;
   armyCount: number;
   armyCap: number;
+  /** Field army gold+wood cost (your side). */
+  armyCost: number;
+  /** Field army gold+wood cost (opponent). */
+  foeArmyCost: number;
   /** Peons standing idle or walking home with no job. */
   idlePeonCount: number;
   keepGarrisoned: number;

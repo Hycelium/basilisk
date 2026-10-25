@@ -16,7 +16,7 @@ interface HudProps {
 
 export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound, onRush }: HudProps) {
   const realm = ui.basilisk;
-  const hpPct = Math.max(0, Math.min(1, ui.yourHp / ui.yourMaxHp));
+  const armyPct = Math.max(0, Math.min(1, ui.armyCount / Math.max(1, ui.armyCap)));
   const phaseLabel =
     ui.wavePhase === "build"
       ? `Build ${Math.ceil(ui.buildTimer)}s`
@@ -86,21 +86,15 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
                 <span className="value">{realm.crownHint}</span>
               </div>
             )}
-            {!compact && !realm && (
-              <>
-                <div className="stat lives">
-                  <span className="label">HP</span>
-                  <span className={ui.yourHp <= 80 ? "value danger" : "value"}>{ui.yourHp}</span>
-                  <div className="bar">
-                    <div className="fill" style={{ width: `${hpPct * 100}%` }} />
-                  </div>
-                </div>
-                <div className="stat">
-                  <span className="label">ENEMY HP</span>
-                  <span className="value">{ui.foeHp}</span>
-                </div>
-              </>
-            )}
+            <div className="stat lives">
+              <span className="label">ARMY</span>
+              <span className={ui.armyCount >= ui.armyCap ? "value danger" : "value"}>
+                {ui.armyCount}/{ui.armyCap}
+              </span>
+              <div className="bar">
+                <div className="fill" style={{ width: `${armyPct * 100}%` }} />
+              </div>
+            </div>
             <div className="stat">
               <span className="label">WAVE</span>
               <span className="value">{ui.waveLabel}</span>
@@ -116,10 +110,12 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
         ) : (
           <>
             <div className="stat lives">
-              <span className="label">HP</span>
-              <span className={ui.yourHp <= 80 ? "value danger" : "value"}>{ui.yourHp}</span>
+              <span className="label">ARMY</span>
+              <span className={ui.armyCount >= ui.armyCap ? "value danger" : "value"}>
+                {ui.armyCount}/{ui.armyCap}
+              </span>
               <div className="bar">
-                <div className="fill" style={{ width: `${hpPct * 100}%` }} />
+                <div className="fill" style={{ width: `${armyPct * 100}%` }} />
               </div>
             </div>
             <div className="stat">

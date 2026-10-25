@@ -72,6 +72,8 @@ const defaultUi: UiSnapshot = {
   peonCap: 2,
   armyCount: 0,
   armyCap: 25,
+  armyCost: 0,
+  foeArmyCost: 0,
   idlePeonCount: 0,
   keepGarrisoned: 0,
   keepGarrisonMax: 5,
