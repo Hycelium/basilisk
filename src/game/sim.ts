@@ -881,7 +881,7 @@ export class GameSim {
     if (team === this.localTeam) this.addToast("Standing down.");
   }
 
-  /** Cap 5 troops per bridge; overflow falls back to the keep gate. */
+  /** Cap 15 troops per bridge; overflow falls back to the keep gate. */
   private assignDefendRallies(team: Team, layer: DefendLayerId) {
     const seed = this.activeMap.seed;
     const lanes = mapLanes(seed);

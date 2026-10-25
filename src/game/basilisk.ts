@@ -303,7 +303,7 @@ export function orderTarget(state: GameState, u: Unit): Vec2 | null {
   const layer = state.defendLayer[u.team];
   // Assault/Attack clears hold points — fall through to hunt/chase below.
   if (layer === "keep" || layer === "home" || layer === "mid" || layer === "forward") {
-    // Balanced bridge rallies (cap 5 / crossing) are stamped when the layer is set.
+    // Balanced bridge rallies (cap 15 / crossing) are stamped when the layer is set.
     if (u.rallyPoint) return u.rallyPoint;
     return defendPointFor(state.mapSeed, layer, u.lane, u.id, u.team);
   }

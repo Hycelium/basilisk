@@ -59,7 +59,7 @@ export const CHURCH_AURA_DAMAGE = 1.25;
 /** HP restored per second while standing in a church aura. */
 export const CHURCH_AURA_REGEN = 4.5;
 /** Max barracks/clan troops holding one bridge crossing. */
-export const BRIDGE_STATION_CAP = 5;
+export const BRIDGE_STATION_CAP = 15;
 
 export const PINE_REGEN = 2.8;
 export const COPPER_REGEN = 4.2;
