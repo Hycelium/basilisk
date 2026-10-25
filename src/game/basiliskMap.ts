@@ -1,4 +1,4 @@
-import { WORLD_H, WORLD_W } from "./balance";
+import { KEEP_MARGIN, WORLD_H, WORLD_W } from "./balance";
 import { MAP_CX, mapBounds, mapLanes, riverSpec, roadCenterX, roadGap } from "./map";
 import type { LaneCount, MapDef, MapId, Team, Vec2 } from "./types";
 
@@ -23,17 +23,18 @@ export function isBasiliskSeed(seed: number) {
 }
 
 export function basiliskMap(): MapDef {
+  const yourKeep = WORLD_H - KEEP_MARGIN;
   const pads: MapDef["pads"] = [
-    { id: "keep-guard", x: WORLD_W / 2, y: 640, laneCoverage: [0, 1], zone: "combat" },
-    { id: "mid-w", x: 118, y: 520, laneCoverage: [0], zone: "combat" },
-    { id: "mid-e", x: 282, y: 520, laneCoverage: [1], zone: "combat" },
+    { id: "keep-guard", x: WORLD_W / 2, y: yourKeep - 24, laneCoverage: [0, 1], zone: "combat" },
+    { id: "mid-w", x: 118, y: yourKeep - 144, laneCoverage: [0], zone: "combat" },
+    { id: "mid-e", x: 282, y: yourKeep - 144, laneCoverage: [1], zone: "combat" },
   ];
   const nodes: MapDef["nodes"] = [
-    { id: "pine-sw", kind: "pine", x: 78, yourY: 520, loads: 14, gold: 0, wood: 10, gather: 1.1, regen: 2.4 },
-    { id: "pine-se", kind: "pine", x: 322, yourY: 540, loads: 14, gold: 0, wood: 10, gather: 1.1, regen: 2.4 },
+    { id: "pine-sw", kind: "pine", x: 78, yourY: yourKeep - 144, loads: 14, gold: 0, wood: 10, gather: 1.1, regen: 2.4 },
+    { id: "pine-se", kind: "pine", x: 322, yourY: yourKeep - 124, loads: 14, gold: 0, wood: 10, gather: 1.1, regen: 2.4 },
     { id: "pine-nw", kind: "pine", x: 78, yourY: 180, loads: 14, gold: 0, wood: 10, gather: 1.1, regen: 2.4 },
     { id: "pine-ne", kind: "pine", x: 322, yourY: 160, loads: 14, gold: 0, wood: 10, gather: 1.1, regen: 2.4 },
-    { id: "ore-s", kind: "copper", x: 268, yourY: 600, loads: 12, gold: 18, wood: 0, gather: 1.8, regen: 3.6 },
+    { id: "ore-s", kind: "copper", x: 268, yourY: yourKeep - 64, loads: 12, gold: 18, wood: 0, gather: 1.8, regen: 3.6 },
     { id: "ore-n", kind: "copper", x: 132, yourY: 118, loads: 12, gold: 18, wood: 0, gather: 1.8, regen: 3.6 },
   ];
   return {
