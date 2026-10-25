@@ -195,7 +195,7 @@ export function DetailSheet({
       <div className="detail-body">
       {isHouse && (
         <p className="detail-note">
-          Yard houses add +2 peon pop. Purple midfield houses add +5 army pop. Keep starts with 25 army slots.
+          Yard houses add +2 peon pop. Purple midfield houses add +5 army pop. Keep army slots scale with roads (15 / 20 / 25).
         </p>
       )}
       {!isHouse && !isTrainHall && STRUCTURE_ROLE[ui.selectedBuildingKind!] && (

@@ -35,8 +35,14 @@ export const PEON_TRAIN_FOOD = 25;
 export const BASE_PEON_CAP = 2;
 export const HOUSE_POP = 2;
 export const MAX_PEON_QUEUE = 4;
-/** Barracks army pop from the keep alone. Midfield houses and churches add more. */
+/** Fallback keep army pop (3-lane). Prefer `baseArmyCap(lanes)`. */
 export const BASE_ARMY_CAP = 25;
+/** Keep army slots by road count before mid houses / churches. */
+export function baseArmyCap(lanes: LaneCount) {
+  if (lanes <= 1) return 15;
+  if (lanes === 2) return 20;
+  return 25;
+}
 /** Purple midfield house → military pop. */
 export const MID_HOUSE_ARMY_POP = 5;
 /** Church (upgraded barracks) → military pop. */
