@@ -383,6 +383,11 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
     cost: 150, woodCost: 0, trainTime: 5.0,
     label: "Spy", blurb: "Hunts trebuchets first · can wreck several · dies silencing a tower",
   },
+  peon: {
+    hp: 36, speed: 48, damage: 6, cooldown: 0.5, bounty: 4,
+    towerResist: 0.02, keepMult: 0.35, siegeGap: 0.5,
+    label: "Peon", blurb: "Arena starter · melee tool",
+  },
 };
 
 export const UNIT_STATS = UNIT_DEFS;

@@ -119,6 +119,17 @@ import {
   startPadPos,
   villagerStart,
 } from "./map";
+import {
+  ARENA_BOT_COUNT,
+  ARENA_LADDER,
+  ARENA_RESPAWN_DELAY,
+  arenaMap,
+  arenaRungKind,
+  arenaSpawnPoints,
+  clampToArena,
+  demoteRung,
+  promoteRung,
+} from "./arena";
 import { foeBrainStats, notifyAiMatchEnd, notifyAiMatchStart, runAiTurn } from "./ai";
 import {
   awardMatchXp,
@@ -239,7 +250,7 @@ export class GameSim {
   private aiRushDeadline = 0;
   private activeMap: MapDef;
   private controlGroups = new Map<number, number[]>();
-  private matchMode: "ai" | "pvp" = "ai";
+  private matchMode: "ai" | "pvp" | "arena" = "ai";
   private campaignMission: CampaignMission | null = null;
   private lastUnlock = "";
   /** True when the match that just ended was the first time that march was held. */
@@ -427,6 +438,7 @@ export class GameSim {
       matchXpEarned: 0,
       lastXpGain: 0,
       won: null,
+      arena: null,
     };
   }
 
@@ -438,7 +450,7 @@ export class GameSim {
     return this.state;
   }
 
-  setMatchMode(mode: "ai" | "pvp") {
+  setMatchMode(mode: "ai" | "pvp" | "arena") {
     this.matchMode = mode;
   }
 
@@ -757,6 +769,115 @@ export class GameSim {
     this.addToast(`Build phase — ${FIRST_BUILD}s until wave 1`);
     this.addToast(`Foe intellect ${iq} — learning your patterns`);
   }
+
+  /** Local free-for-all gun game in an empty keep courtyard. */
+  startArena() {
+    this.campaignMission = null;
+    this.lastUnlock = "";
+    this.freshHold = false;
+    this.matchMode = "arena";
+    this.localTeam = "you";
+    const map = arenaMap();
+    this.activeMap = map;
+    this.nextId = 1;
+    this.aiTimer = 0;
+    this.aiRushDeadline = 0;
+    this.shownMap = { id: map.id, name: map.name, tagline: map.tagline, seed: map.seed };
+    this.linkDown = false;
+    this.poses.clear();
+    this.predicted.clear();
+    this.pendingOwnPad = null;
+    this.controlGroups.clear();
+    this.remoteBody = null;
+    const soundOn = this.state.soundOn;
+    const audioUnlocked = this.state.audioUnlocked;
+    this.state = this.makeFreshState(map);
+    this.state.soundOn = soundOn;
+    this.state.audioUnlocked = audioUnlocked;
+    this.state.commandTeam = "you";
+    this.state.basilisk = false;
+    this.state.buildings = [];
+    this.state.villagers = [];
+    this.state.barricades = [];
+    this.state.pads = [];
+    this.state.nodes = [];
+    this.state.units = [];
+    this.state.keeps.you.hp = START_KEEP_HP;
+    this.state.keeps.foe.hp = START_KEEP_HP;
+    this.state.arena = { playerUnitId: null, respawns: [] };
+    this.state.phase = "running";
+    this.state.wavePhase = "fighting";
+    this.state.allWavesLaunched = true;
+    this.state.buildTimer = 0;
+
+    const total = 1 + ARENA_BOT_COUNT;
+    const spawns = arenaSpawnPoints(total);
+    const player = this.spawnArenaFighter("you", 0, 0, spawns[0], true);
+    this.state.arena.playerUnitId = player.id;
+    for (let i = 0; i < ARENA_BOT_COUNT; i++) {
+      this.spawnArenaFighter("foe", 0, 0, spawns[i + 1], false);
+    }
+    this.tryPossess(player.id);
+    this.addToast("Arena — peon to runner. A runner kill wins.");
+  }
+
+  private spawnArenaFighter(
+    team: Team,
+    rung: number,
+    kills: number,
+    pos: { x: number; y: number },
+    _isPlayer: boolean,
+  ) {
+    const kind = arenaRungKind(rung);
+    const def = UNIT_DEFS[kind];
+    const id = this.next();
+    const u: Unit = {
+      id,
+      team,
+      kind,
+      lane: 0,
+      pos: { x: pos.x, y: pos.y },
+      hp: def.hp,
+      maxHp: def.hp,
+      speed: def.speed,
+      damage: def.damage,
+      bounty: def.bounty,
+      attackCooldown: def.cooldown,
+      attackTimer: 0.2 + Math.random() * 0.4,
+      towerResist: def.towerResist,
+      keepMult: def.keepMult,
+      siegeGap: def.siegeGap,
+      targetKeep: false,
+      fromBarracks: true,
+      chargeReady: kind === "runner",
+      ignoreEnemyCreeps: false,
+      arenaRung: rung,
+      arenaKills: kills,
+      lastHitBy: undefined,
+      xp: 0,
+    };
+    this.state.units.push(u);
+    return u;
+  }
+
+  private applyArenaKind(u: Unit, rung: number) {
+    const kind = arenaRungKind(rung);
+    const def = UNIT_DEFS[kind];
+    const ratio = u.maxHp > 0 ? Math.max(0.15, u.hp / u.maxHp) : 1;
+    u.kind = kind;
+    u.arenaRung = rung;
+    u.maxHp = def.hp;
+    u.hp = Math.min(def.hp, Math.max(1, def.hp * ratio));
+    u.speed = def.speed;
+    u.damage = def.damage;
+    u.attackCooldown = def.cooldown;
+    u.towerResist = def.towerResist;
+    u.keepMult = def.keepMult;
+    u.siegeGap = def.siegeGap;
+    u.bounty = def.bounty;
+    u.chargeReady = kind === "runner";
+  }
+
 
   startBasilisk(clan: Team, mode: "ai" | "pvp" = "ai", opts?: { asKing?: boolean }) {
     this.campaignMission = null;
@@ -1501,10 +1622,13 @@ export class GameSim {
       return { d, dot, ok: dot >= minDot };
     };
 
-    const foes: Array<Unit | Villager> = [
-      ...s.units.filter((e) => e.team === enemyTeam && e.hp > 0),
-      ...s.villagers.filter((v) => v.team === enemyTeam && v.hp > 0 && v.state !== "garrisoned"),
-    ];
+    const foes: Array<Unit | Villager> =
+      this.matchMode === "arena"
+        ? s.units.filter((e) => e.id !== u.id && e.hp > 0)
+        : [
+            ...s.units.filter((e) => e.team === enemyTeam && e.hp > 0),
+            ...s.villagers.filter((v) => v.team === enemyTeam && v.hp > 0 && v.state !== "garrisoned"),
+          ];
     let best: Unit | Villager | null = null;
     let bestD = Infinity;
     for (const t of foes) {
@@ -1526,6 +1650,8 @@ export class GameSim {
       this.addFloat(`-${Math.round(dealt)}`, best.pos.x, best.pos.y - 7, ranged ? "#e8d39a" : "#ffd1cc");
       return true;
     }
+
+    if (this.matchMode === "arena") return true;
 
     const keep = this.teamKeep(enemyTeam);
     const keepAim = aim(keep.pos);
@@ -4088,21 +4214,25 @@ export class GameSim {
       u.pos.x += (mx / mag) * speed * dt;
       u.pos.y += (my / mag) * speed * dt;
     }
-    const { minX, maxX } = mapBounds(this.activeMap.seed);
-    u.pos.x = Math.max(minX + 10, Math.min(maxX - 10, u.pos.x));
-    u.pos.y = Math.max(18, Math.min(WORLD_H - 18, u.pos.y));
-    const lanes = mapLanes(this.activeMap.seed);
-    let bestLane = u.lane;
-    let bestD = Infinity;
-    for (const lane of lanes) {
-      const x = lanePathX(this.activeMap.seed, u.team, lane, u.pos.y);
-      const gap = Math.abs(x - u.pos.x);
-      if (gap < bestD) {
-        bestD = gap;
-        bestLane = lane;
+    if (this.matchMode === "arena") {
+      clampToArena(u.pos);
+    } else {
+      const { minX, maxX } = mapBounds(this.activeMap.seed);
+      u.pos.x = Math.max(minX + 10, Math.min(maxX - 10, u.pos.x));
+      u.pos.y = Math.max(18, Math.min(WORLD_H - 18, u.pos.y));
+      const lanes = mapLanes(this.activeMap.seed);
+      let bestLane = u.lane;
+      let bestD = Infinity;
+      for (const lane of lanes) {
+        const x = lanePathX(this.activeMap.seed, u.team, lane, u.pos.y);
+        const gap = Math.abs(x - u.pos.x);
+        if (gap < bestD) {
+          bestD = gap;
+          bestLane = lane;
+        }
       }
+      u.lane = bestLane;
     }
-    u.lane = bestLane;
     u.rallyPoint = undefined;
     u.engageFrom = undefined;
     u.targetUnitId = undefined;
@@ -4570,7 +4700,152 @@ export class GameSim {
     }
   }
 
+
+  private cleanupArenaDeaths() {
+    const s = this.state;
+    const arena = s.arena;
+    if (!arena) return;
+    const dead = s.units.filter((u) => u.hp <= 0);
+    if (dead.length === 0) return;
+    const living = s.units.filter((u) => u.hp > 0);
+    let winnerId: number | null = null;
+    for (const u of dead) {
+      const wasPlayer = u.id === arena.playerUnitId || u.id === s.possessedId;
+      if (u.id === s.possessedId) this.releasePossess("death");
+      const liveKiller =
+        u.lastHitBy != null ? living.find((x) => x.id === u.lastHitBy) : undefined;
+      if (liveKiller) {
+        const rung = liveKiller.arenaRung ?? 0;
+        liveKiller.arenaKills = (liveKiller.arenaKills ?? 0) + 1;
+        if (liveKiller.team === "you") s.stats.you.slain += 1;
+        else s.stats.foe.slain += 1;
+        if (rung >= ARENA_LADDER.length - 1) {
+          winnerId = liveKiller.id;
+        } else {
+          this.applyArenaKind(liveKiller, promoteRung(rung));
+          this.addFloat(UNIT_DEFS[liveKiller.kind].label, liveKiller.pos.x, liveKiller.pos.y - 14, "#c8e6ff");
+        }
+      }
+      this.emitCombat("unitDeath", u.pos, undefined, u.team);
+      this.addFloat("✕", u.pos.x, u.pos.y - 8, "#ff8866");
+      arena.respawns.push({
+        team: u.team,
+        rung: demoteRung(u.arenaRung ?? 0),
+        kills: u.arenaKills ?? 0,
+        at: s.time + ARENA_RESPAWN_DELAY,
+        isPlayer: wasPlayer,
+      });
+    }
+    s.units = living;
+    if (winnerId != null) {
+      const champ = living.find((u) => u.id === winnerId);
+      if (champ) {
+        const youWin = champ.id === arena.playerUnitId;
+        this.finishMatch(
+          youWin ? "Victory. Runner's kill." : "Defeat. A rival claimed the runner kill.",
+          youWin,
+        );
+      }
+    }
+  }
+
+  private tickArenaRespawns() {
+    const s = this.state;
+    const arena = s.arena;
+    if (!arena) return;
+    const ready = arena.respawns.filter((r) => r.at <= s.time);
+    arena.respawns = arena.respawns.filter((r) => r.at > s.time);
+    if (ready.length === 0) return;
+    const taken = s.units.map((u) => u.pos);
+    const ring = arenaSpawnPoints(1 + ARENA_BOT_COUNT);
+    for (const job of ready) {
+      let pos = ring[0];
+      let best = -1;
+      for (const cand of ring) {
+        const nearest = taken.reduce((m, p) => Math.min(m, dist(p, cand)), Infinity);
+        if (nearest > best) {
+          best = nearest;
+          pos = cand;
+        }
+      }
+      const u = this.spawnArenaFighter(job.team, job.rung, job.kills, pos, job.isPlayer);
+      taken.push(u.pos);
+      if (job.isPlayer) {
+        arena.playerUnitId = u.id;
+        this.tryPossess(u.id);
+      }
+    }
+  }
+
+  private tickArenaBots(dt: number) {
+    const s = this.state;
+    for (const u of s.units) {
+      if (u.hp <= 0) continue;
+      u.attackTimer -= dt;
+      if (u.id === s.possessedId) {
+        this.stepPossessed(u, dt);
+        continue;
+      }
+      const foes = s.units.filter((e) => e.id !== u.id && e.hp > 0);
+      if (foes.length === 0) continue;
+      foes.sort((a, b) => dist(a.pos, u.pos) - dist(b.pos, u.pos));
+      const target = foes[0];
+      const ranged = u.kind === "archer";
+      const reach = ranged ? ARCHER_RANGE : 20;
+      const gap = dist(u.pos, target.pos);
+      if (gap > reach * 0.85) {
+        moveTowards(u.pos, target.pos, u.speed, dt);
+        clampToArena(u.pos);
+      } else if (gap < reach * 0.45 && ranged) {
+        const dx = u.pos.x - target.pos.x;
+        const dy = u.pos.y - target.pos.y;
+        const d = Math.hypot(dx, dy) || 1;
+        u.pos.x += (dx / d) * u.speed * 0.7 * dt;
+        u.pos.y += (dy / d) * u.speed * 0.7 * dt;
+        clampToArena(u.pos);
+      }
+      if (gap <= reach && u.attackTimer <= 0) {
+        const dealt = this.strikeDamage(u, target);
+        target.hp -= dealt;
+        target.lastHitBy = u.id;
+        u.attackTimer = u.attackCooldown;
+        this.emitCombat(ranged ? "arrow" : "meleeHit", u.pos, target.pos, u.team);
+        this.addFloat(`-${Math.round(dealt)}`, target.pos.x, target.pos.y - 7, ranged ? "#e8d39a" : "#ffd1cc");
+      }
+    }
+  }
+
+  private tickArena(dt: number) {
+    this.tickArenaBots(dt);
+    this.cleanupArenaDeaths();
+    if (this.state.phase !== "running") return;
+    this.tickArenaRespawns();
+  }
+
+  private arenaStandingsUi() {
+    const s = this.state;
+    const arena = s.arena;
+    const rows = s.units
+      .filter((u) => u.hp > 0)
+      .map((u) => ({
+        id: u.id,
+        label: UNIT_DEFS[u.kind].label,
+        rung: (u.arenaRung ?? 0) + 1,
+        rungLabel: UNIT_DEFS[arenaRungKind(u.arenaRung ?? 0)].label,
+        kills: u.arenaKills ?? 0,
+        you: u.id === arena?.playerUnitId,
+        alive: true,
+      }));
+    rows.sort((a, b) => b.rung - a.rung || b.kills - a.kills);
+    return rows;
+  }
+
+
   private cleanupDeaths() {
+    if (this.matchMode === "arena") {
+      this.cleanupArenaDeaths();
+      return;
+    }
     const possessedId = this.state.possessedId;
     const survivors: Unit[] = [];
     for (const u of this.state.units) {
@@ -4975,7 +5250,7 @@ export class GameSim {
     s.phase = "ended";
     s.endReason = reason;
     s.won = won;
-    if (this.matchMode === "pvp") return;
+    if (this.matchMode === "pvp" || this.matchMode === "arena") return;
     notifyAiMatchEnd(won);
     this.freshHold = false;
     if (won === true && this.campaignMission) {
@@ -5034,6 +5309,12 @@ export class GameSim {
     if (s.phase !== "running" || s.paused) return;
 
     s.time += dt;
+
+    if (this.matchMode === "arena") {
+      this.tickArena(dt);
+      return;
+    }
+
     this.updateResourceRegen(dt);
 
     if (s.basilisk) {
@@ -6326,6 +6607,19 @@ export class GameSim {
             isKing: s.basilisk ? s.kingController[body.team] === "player" : s.kingId[body.team] === body.id,
           }
         : null,
+      arena: this.matchMode === "arena",
+      arenaRung: (() => {
+        if (body) return body.arenaRung ?? 0;
+        const pending = s.arena?.respawns.find((r) => r.isPlayer);
+        return pending?.rung ?? 0;
+      })(),
+      arenaRungMax: ARENA_LADDER.length,
+      arenaRungLabel: (() => {
+        const rung = body?.arenaRung ?? s.arena?.respawns.find((r) => r.isPlayer)?.rung ?? 0;
+        return UNIT_DEFS[arenaRungKind(rung)].label;
+      })(),
+      arenaKills: body?.arenaKills ?? s.arena?.respawns.find((r) => r.isPlayer)?.kills ?? 0,
+      arenaStandings: this.matchMode === "arena" ? this.arenaStandingsUi() : [],
       basilisk: s.basilisk
         ? {
             food: Math.floor(s.food[view]),

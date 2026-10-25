@@ -103,6 +103,12 @@ const defaultUi: UiSnapshot = {
   freshHold: false,
   possessed: null,
   basilisk: null,
+  arena: false,
+  arenaRung: 0,
+  arenaRungMax: 5,
+  arenaRungLabel: "Peon",
+  arenaKills: 0,
+  arenaStandings: [],
 };
 
 const LONG_PRESS_MS = 350;
@@ -805,6 +811,7 @@ export default function App() {
       }
       if (possessed && ev.key === "Escape") {
         ev.preventDefault();
+        if (sim.getMatchMode() === "arena") return;
         lockWantedRef.current = false;
         sim.releasePossess("esc");
         document.exitPointerLock();
@@ -1541,6 +1548,7 @@ export default function App() {
                     rendererRef.current?.kickSwing();
                   }}
                   onLeave={() => {
+                    if (ui.arena) return;
                     lockWantedRef.current = false;
                     sim.releasePossess("esc");
                     document.exitPointerLock();
@@ -1581,7 +1589,7 @@ export default function App() {
               {m.label && <em>{m.label}</em>}
             </span>
           ))}
-          {ui.selectedPeonCount > 0 && ui.phase === "running" && !sheetOpen && (!ui.basilisk || basiliskKing) && (
+          {ui.selectedPeonCount > 0 && ui.phase === "running" && !ui.arena && !sheetOpen && (!ui.basilisk || basiliskKing) && (
             <div className="unit-command-bar" role="toolbar" aria-label="Peon orders">
               {ui.selectedCanPossess && (
                 <button
@@ -1682,6 +1690,7 @@ export default function App() {
           <div className="sheet-dock">
             <div className="sheet-slot">
             {(!ui.basilisk || ui.basilisk.youAreKing) && (
+            {!ui.arena && (
             <DetailSheet
             ui={ui}
             onClose={() => {
@@ -1741,6 +1750,7 @@ export default function App() {
             }}
           />
             )}
+            )}
             </div>
           </div>
           <Overlays
@@ -1752,6 +1762,15 @@ export default function App() {
               sim.rerollMap();
               refreshUi();
               beep(440);
+            }}
+            onArena={() => {
+              if (skirmish.lobby.open || skirmish.lobby.live) return;
+              setCampaignOpen(false);
+              afterPortalBreak(() => {
+                sim.startArena();
+                refreshUi();
+                beep(520);
+              });
             }}
             onSkirmish={skirmish.openLobby}
             onCampaign={() => {
@@ -1923,7 +1942,7 @@ export default function App() {
           )}
         </div>
 
-        {ui.phase === "running" && (!ui.basilisk || ui.basilisk.youAreKing) && (
+        {ui.phase === "running" && !ui.arena && (!ui.basilisk || ui.basilisk.youAreKing) && (
         <BuildBar
           ui={ui}
           compact={compactBuild}

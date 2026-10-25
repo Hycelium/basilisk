@@ -54,6 +54,7 @@ interface OverlaysProps {
   hideTitle?: boolean;
   skirmishLive?: boolean;
   onStart: (clan: Team) => void;
+  onArena: () => void;
   onSkirmish: () => void;
   onCampaign: () => void;
   onRestart: (clan: Team) => void;
@@ -71,6 +72,7 @@ export function Overlays({
   hideTitle,
   skirmishLive,
   onStart,
+  onArena,
   onSkirmish,
   onRestart,
   onReturnToMap,
@@ -144,6 +146,9 @@ export function Overlays({
             <button type="button" className="cta" onClick={() => onStart(clan)}>
               Enter the valley
             </button>
+            <button type="button" className="ghost" onClick={onArena}>
+              Arena
+            </button>
             <button type="button" className="ghost" onClick={onSkirmish}>
               Skirmish
             </button>
@@ -213,7 +218,24 @@ export function Overlays({
           </div>
         )}
 
-      {ui.phase === "ended" && !skirmishLive && (
+      {ui.phase === "ended" && !skirmishLive && ui.arena && (
+        <div className="overlay">
+          <h2>{ui.endReason}</h2>
+          <p>
+            Kills: {ui.arenaKills} · Final rung: {ui.arenaRungLabel}
+          </p>
+          <div className="title-actions">
+            <button type="button" className="cta" onClick={onArena}>
+              Play again
+            </button>
+            <button type="button" className="ghost" onClick={() => onRestart(ui.localTeam)}>
+              Return
+            </button>
+          </div>
+        </div>
+      )}
+
+      {ui.phase === "ended" && !skirmishLive && !ui.arena && (
         <div className="overlay">
           <h2>{ui.endReason}</h2>
           <p>Slain: {ui.stats.slain}</p>

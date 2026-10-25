@@ -32,7 +32,71 @@ export function Hud({ ui, compact, quality, onQuality, onPause, onSpeed, onSound
   const kingView = !!(realm?.youAreKing && !ui.possessed);
   const peonView = !!(realm && !kingView);
 
-  return (
+  
+  if (ui.arena) {
+    const living = ui.arenaStandings.filter((r) => r.alive).length;
+    const qualityLabel =
+      quality.setting === "auto" ? `Auto · ${quality.tier}` : quality.setting[0].toUpperCase() + quality.setting.slice(1);
+    return (
+      <div className={compact ? "hud compact arena-hud" : "hud arena-hud"}>
+        <div className="hud-top">
+          <div className="stat">
+            <span className="label">YOU</span>
+            <span className="value">{ui.arenaRungLabel}</span>
+            <span className="phase-tag">
+              {ui.arenaRung + 1}/{ui.arenaRungMax}
+            </span>
+          </div>
+          <div className="stat">
+            <span className="label">KILLS</span>
+            <span className="value">{ui.arenaKills}</span>
+          </div>
+          <div className="stat">
+            <span className="label">ALIVE</span>
+            <span className="value">{living}</span>
+          </div>
+          <div className="stat intellect">
+            <span className="label">LADDER</span>
+            <span className="phase-tag muted">
+              {ui.arenaStandings
+                .slice(0, 4)
+                .map((r) => `${r.you ? "You" : r.rungLabel}${r.kills ? `·${r.kills}` : ""}`)
+                .join(" · ")}
+            </span>
+          </div>
+        </div>
+        <div className="hud-controls">
+          <button type="button" onClick={onPause} aria-label={ui.paused ? "Resume" : "Pause"} title="Space">
+            <span className="full">{ui.paused ? "Resume" : "Pause"}</span>
+            <span className="short" aria-hidden>
+              {ui.paused ? "▶" : "❚❚"}
+            </span>
+          </button>
+          <button type="button" onClick={onSound} aria-label={ui.soundOn ? "Sound on" : "Sound off"} aria-pressed={ui.soundOn}>
+            <span className="full">Sound: {ui.soundOn ? "On" : "Off"}</span>
+            <span className="short" aria-hidden>
+              {ui.soundOn ? "🔊" : "🔇"}
+            </span>
+          </button>
+          <label className="quality-pick" title={`Graphics quality · ${quality.fps} fps`}>
+            <span className="full">Quality</span>
+            <select
+              value={quality.setting}
+              onChange={(ev) => onQuality(ev.currentTarget.value as QualitySetting)}
+              aria-label={`Graphics quality, currently ${qualityLabel}`}
+            >
+              <option value="auto">Auto ({quality.tier})</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    );
+  }
+
+return (
     <div
       className={`${compact ? "hud compact" : "hud"}${kingView ? " king-view" : ""}${peonView ? " peon-view" : ""}`}
     >
