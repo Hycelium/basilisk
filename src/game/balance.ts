@@ -2,7 +2,7 @@ import type { BuildingKind, LaneCount, Team, TrainKind, UnitKind, WaveSpec } fro
 
 export const WORLD_W = 400;
 /** Tall field so the mid strip between keeps is a real no-man's-land. */
-export const WORLD_H = 900;
+export const WORLD_H = 1800;
 /** Keeps sit this far in from each end of the field. */
 export const KEEP_MARGIN = 56;
 export const ROAD_Y_MIN = 100;
@@ -284,35 +284,35 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
   levy: {
     hp: 58, speed: 34, damage: 8, cooldown: 0.65, bounty: 11,
     towerResist: 0.05, keepMult: 0.9, siegeGap: 0.25,
-    cost: 0, woodCost: 0, foodCost: 35, trainTime: 3.8,
+    cost: 45, woodCost: 0, foodCost: 0, trainTime: 3.8,
     label: "Levy", blurb: "Cheap line · bonus vs wards",
   },
   runner: {
     hp: 42, speed: 54, damage: 6, cooldown: 0.5, bounty: 13,
     towerResist: 0.72, keepMult: 0.7, siegeGap: 0.3,
-    cost: 38, woodCost: 0, foodCost: 48, trainTime: 3.2,
+    cost: 50, woodCost: 20, foodCost: 0, trainTime: 3.2,
     label: "Runner", blurb: "Charge · shrugs arrows, fears bolts",
   },
   archer: {
     hp: 44, speed: 29, damage: 7, cooldown: 1.05, bounty: 14,
     towerResist: 0.04, keepMult: 0.42, siegeGap: 0.5,
-    cost: 0, woodCost: 75, foodCost: 0, trainTime: 4.4,
+    cost: 40, woodCost: 40, foodCost: 0, trainTime: 4.4,
     label: "Archer", blurb: "Ranged · walks around barricades, weak vs wards",
   },
   ward: {
     hp: 150, speed: 22, damage: 5, cooldown: 0.75, bounty: 15,
     towerResist: 0.88, keepMult: 0.55, siegeGap: 0.4,
-    cost: 90, woodCost: 0, foodCost: 24, trainTime: 5.2,
+    cost: 75, woodCost: 15, foodCost: 0, trainTime: 5.2,
     label: "Ward", blurb: "Shield · shrugs arrows, fears bolts and levies",
   },
   rammer: {
     hp: 95, speed: 27, damage: 7, cooldown: 0.8, bounty: 18,
     towerResist: 0.3, keepMult: 2.4, siegeGap: 0.15,
-    cost: 54, woodCost: 60, trainTime: 5.8,
+    cost: 75, woodCost: 100, trainTime: 5.8,
     label: "Rammer", blurb: "Breaks gates and barricades",
   },
   trebuchet: {
-    hp: 42, speed: 9, damage: 0, cooldown: 5.8, bounty: 16,
+    hp: 42, speed: 6.75, damage: 0, cooldown: 5.8, bounty: 16,
     towerResist: 0.88, keepMult: 0, siegeGap: 1.2,
     cost: 150, woodCost: 200, trainTime: 9.6,
     label: "Trebuchet", blurb: "Costly timber · crawls · four shots wreck a tower",
@@ -320,7 +320,7 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
   spy: {
     hp: 28, speed: 46, damage: 0, cooldown: 1.6, bounty: 18,
     towerResist: 0.04, keepMult: 0, siegeGap: 5.5,
-    cost: 120, woodCost: 0, trainTime: 5.0,
+    cost: 150, woodCost: 0, trainTime: 5.0,
     label: "Spy", blurb: "Hunts trebuchets first · can wreck several · dies silencing a tower",
   },
 };

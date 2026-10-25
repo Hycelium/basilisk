@@ -21,7 +21,7 @@ function needsLandscapeGate() {
   return isPhoneViewport() && isPortrait();
 }
 
-async function tryLockLandscape() {
+export async function tryLockLandscape() {
   const orientation = (screen as Screen & { orientation?: OrientationLike }).orientation;
   if (!orientation?.lock) return;
   try {

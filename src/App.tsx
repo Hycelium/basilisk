@@ -16,7 +16,7 @@ import { RadialMenu, type RadialItem } from "./ui/RadialMenu";
 import { useHints } from "./ui/hints";
 import { useLayout } from "./ui/useLayout";
 import { TouchFpsPad } from "./ui/TouchFpsPad";
-import { LandscapeLock } from "./ui/LandscapeLock";
+import { LandscapeLock, tryLockLandscape } from "./ui/LandscapeLock";
 import { basiliskMap } from "./game/basiliskMap";
 import { useSkirmish } from "./net/useSkirmish";
 import { SkirmishEnd, SkirmishLobby } from "./ui/SkirmishLobby";
@@ -226,14 +226,22 @@ export default function App() {
 
   const requestFullscreen = useCallback(async () => {
     if (!fullscreenWantedRef.current || fullscreenElement() || fullscreenRequestRef.current) return;
-    const el = pageRef.current as FsElement | null;
-    if (!el) return;
+    const candidates = [pageRef.current, document.documentElement].filter(Boolean) as FsElement[];
+    if (!candidates.length) return;
     const task = (async () => {
-      try {
-        if (el.requestFullscreen) await el.requestFullscreen();
-        else await el.webkitRequestFullscreen?.();
-      } catch {
-        /* iOS Safari and some embedded browsers reject — the dvh layout already fills the screen */
+      for (const el of candidates) {
+        try {
+          if (el.requestFullscreen) {
+            await el.requestFullscreen();
+            return;
+          }
+          if (el.webkitRequestFullscreen) {
+            await el.webkitRequestFullscreen();
+            return;
+          }
+        } catch {
+          /* try next candidate — iOS Safari often rejects */
+        }
       }
     })();
     fullscreenRequestRef.current = task;
@@ -711,24 +719,34 @@ export default function App() {
   useEffect(() => {
     const onFullscreenChange = () => {
       const on = Boolean(fullscreenElement());
-      if (!on) fullscreenWantedRef.current = false;
       setIsFullscreen(on);
       requestAnimationFrame(() => rendererRef.current?.resize());
+      if (on) void tryLockLandscape();
     };
+    /** Stay fullscreen by default — re-enter on any gesture while still wanted (esp. phones). */
     const enter = () => {
-      if (fullscreenTriedRef.current) return;
+      if (!fullscreenWantedRef.current || fullscreenElement()) return;
       fullscreenTriedRef.current = true;
       void requestFullscreen();
+    };
+    const onOrient = () => {
+      const landscape = window.matchMedia?.("(orientation: landscape)")?.matches ?? window.innerWidth > window.innerHeight;
+      if (landscape) enter();
     };
     document.addEventListener("fullscreenchange", onFullscreenChange);
     document.addEventListener("webkitfullscreenchange", onFullscreenChange);
     window.addEventListener("pointerdown", enter, true);
     window.addEventListener("keydown", enter, true);
+    window.addEventListener("orientationchange", onOrient);
+    window.addEventListener("resize", onOrient);
+    onOrient();
     return () => {
       document.removeEventListener("fullscreenchange", onFullscreenChange);
       document.removeEventListener("webkitfullscreenchange", onFullscreenChange);
       window.removeEventListener("pointerdown", enter, true);
       window.removeEventListener("keydown", enter, true);
+      window.removeEventListener("orientationchange", onOrient);
+      window.removeEventListener("resize", onOrient);
     };
   }, [requestFullscreen]);
 
