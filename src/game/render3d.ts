@@ -561,8 +561,10 @@ export class GameRenderer {
     this.camLook.addScaledVector(right, -dx * scale);
     this.camLook.addScaledVector(forward, -dy * scale);
     const panX = this.mapWidth / 2 - 40;
+    // Reach the eco yard behind each keep on the tall field.
+    const panZ = WORLD_H / 2 + 80;
     this.camLook.x = THREE.MathUtils.clamp(this.camLook.x, -panX, panX);
-    this.camLook.z = THREE.MathUtils.clamp(this.camLook.z, -400, 400);
+    this.camLook.z = THREE.MathUtils.clamp(this.camLook.z, -panZ, panZ);
     this.applyCamera();
   }
 
