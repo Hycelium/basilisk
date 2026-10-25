@@ -23,6 +23,10 @@ interface TouchFpsPadProps {
   fireLabel: string;
   /** Vision unlocked — show look-out controls and allow pinch zoom. */
   canLookOut?: boolean;
+  /** Templar Rally control beside Fire. */
+  abilityLabel?: string;
+  abilityReady?: boolean;
+  onAbility?: () => void;
   onMove: (keys: StickKeys) => void;
   onLook: (dx: number, dy: number) => void;
   /** Positive = pull toward third person (PC scroll-wheel out). */
@@ -38,6 +42,9 @@ interface TouchFpsPadProps {
 export function TouchFpsPad({
   fireLabel,
   canLookOut = false,
+  abilityLabel,
+  abilityReady = false,
+  onAbility,
   onMove,
   onLook,
   onZoom,
@@ -237,6 +244,21 @@ export function TouchFpsPad({
             +
           </button>
         </div>
+      )}
+      {abilityLabel && onAbility && (
+        <button
+          type="button"
+          className={`touch-ability${abilityReady ? "" : " cooling"}`}
+          aria-label={abilityLabel}
+          disabled={!abilityReady}
+          onClick={(ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            onAbility();
+          }}
+        >
+          {abilityLabel}
+        </button>
       )}
       <button
         type="button"

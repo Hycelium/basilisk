@@ -137,6 +137,21 @@ export const TREB_POSSESS_FOV = 52;
 export const TREB_CHARGE_CLICK = 0.27;
 export const TREB_CHARGE_DECAY = 0.16;
 
+/** Templar possess ability: Rally (Q / mobile). */
+export const TEMPLAR_RALLY_COOLDOWN = 60;
+export const TEMPLAR_RALLY_DURATION = 10;
+export const TEMPLAR_RALLY_HEAL = 0.33;
+/** Attack-rate multiplier while Rally buff is up (25% faster). */
+export const TEMPLAR_RALLY_ATK_SPEED = 1.25;
+/** Radius grows with possess vision score the same way camera pull does. */
+export const TEMPLAR_RALLY_RADIUS_MIN = 55;
+export const TEMPLAR_RALLY_RADIUS_MAX = 140;
+
+export function templarRallyRadius(visionScore: number) {
+  const t = Math.max(0, Math.min(1, visionScore / POSSESS_VISION_SCORE));
+  return TEMPLAR_RALLY_RADIUS_MIN + t * (TEMPLAR_RALLY_RADIUS_MAX - TEMPLAR_RALLY_RADIUS_MIN);
+}
+
 /**
  * Levy melee versus a ward only. 1.25 is +25% of that levy's current attack.
  * Levy hits on every other target stay at the levy's normal damage.

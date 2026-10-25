@@ -48,6 +48,7 @@ export type RemoteOrder =
   | { t: "rush" }
   | { t: "drive"; team: Team; id: number; w: boolean; a: boolean; s: boolean; d: boolean; yaw: number }
   | { t: "strike"; team: Team }
+  | { t: "ability"; team: Team; kind: "rally"; vision?: number }
   | { t: "possess"; team: Team; id: number }
   | { t: "unpossess"; team: Team }
   | { t: "labor"; team: Team; kind: WorkKind; ids: number[] }
@@ -79,6 +80,8 @@ export interface SnapUnit {
   rallyY?: number;
   siegePhase?: SiegePhase;
   siegeTimer?: number;
+  rallyCooldown?: number;
+  rallyBuffTimer?: number;
   lifeStage?: LifeStage;
   npcKing?: boolean;
   workKind?: WorkKind;
@@ -245,6 +248,7 @@ const ORDER_TYPES = new Set<RemoteOrder["t"]>([
   "rush",
   "drive",
   "strike",
+  "ability",
   "possess",
   "unpossess",
   "labor",

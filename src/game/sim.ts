@@ -64,9 +64,14 @@ import {
   START_KEEP_HP,
   towerDamageFactor,
   STARTER_GUARD_RANGE,
+  TEMPLAR_RALLY_ATK_SPEED,
+  TEMPLAR_RALLY_COOLDOWN,
+  TEMPLAR_RALLY_DURATION,
+  TEMPLAR_RALLY_HEAL,
   TREBUCHET_PACK,
   TREBUCHET_RANGE,
   TREBUCHET_UNPACK,
+  templarRallyRadius,
   TRAIN_ORDER,
   UNIT_DEFS,
   ballistaHasDogs,
@@ -1426,6 +1431,42 @@ export class GameSim {
     if (Math.floor(s.possessVisionScore / 2) > before) {
       this.addToast("Vision widens — looking out.");
     }
+  }
+
+  /** Templar Rally (Q / mobile): haste + heal allies in a vision-scaled radius. */
+  possessRally() {
+    const s = this.state;
+    if (s.phase !== "running" || s.paused) return false;
+    const vision = s.possessVisionScore ?? 0;
+    if (this.redirect({ t: "ability", team: this.localTeam, kind: "rally", vision })) return true;
+    return this.applyTemplarRally(this.localTeam, s.possessedId, vision);
+  }
+
+  private applyTemplarRally(team: Team, bodyId: number | null, vision: number) {
+    const s = this.state;
+    const u = bodyId != null ? s.units.find((x) => x.id === bodyId && x.team === team) : undefined;
+    if (!u || u.hp <= 0 || u.kind !== "templar") return false;
+    if ((u.rallyCooldown ?? 0) > 0) {
+      if (team === this.localTeam) this.addToast(`Rally ready in ${Math.ceil(u.rallyCooldown!)}s.`);
+      return false;
+    }
+    const radius = templarRallyRadius(vision);
+    let hit = 0;
+    for (const ally of s.units) {
+      if (ally.team !== team || ally.hp <= 0 || !ally.fromBarracks) continue;
+      if (dist(ally.pos, u.pos) > radius) continue;
+      ally.hp = Math.min(ally.maxHp, ally.hp + ally.maxHp * TEMPLAR_RALLY_HEAL);
+      ally.rallyBuffTimer = TEMPLAR_RALLY_DURATION;
+      hit += 1;
+    }
+    u.rallyCooldown = TEMPLAR_RALLY_COOLDOWN;
+    this.state.commandMarkers.push({ id: this.next(), kind: "attack", pos: { ...u.pos }, life: 1.1 });
+    this.state.shake = Math.max(this.state.shake, 0.06);
+    if (team === this.localTeam) {
+      this.addToast(hit > 0 ? `Rally! ${hit} troop${hit === 1 ? "" : "s"} blessed.` : "Rally — no allies in range.");
+    }
+    this.tell(team, "Templar Rally!");
+    return true;
   }
 
   /** Mouse click while locked: swing, shoot, ram, or chip the keep. */
@@ -4304,7 +4345,10 @@ export class GameSim {
   private updateUnitMovementAndMelee(dt: number, team: Team) {
     const enemyTeam = this.enemy(team);
     for (const u of this.state.units.filter((x) => x.team === team)) {
-      u.attackTimer -= dt;
+      if ((u.rallyCooldown ?? 0) > 0) u.rallyCooldown = Math.max(0, u.rallyCooldown! - dt);
+      if ((u.rallyBuffTimer ?? 0) > 0) u.rallyBuffTimer = Math.max(0, u.rallyBuffTimer! - dt);
+      const haste = (u.rallyBuffTimer ?? 0) > 0 ? TEMPLAR_RALLY_ATK_SPEED : 1;
+      u.attackTimer -= dt * haste;
       if (u.id === this.state.possessedId) {
         this.stepPossessed(u, dt, this.possessKeys, this.possessYaw, true);
         continue;
@@ -5548,6 +5592,11 @@ export class GameSim {
         case "strike":
           this.remoteStrike = true;
           break;
+        case "ability":
+          if (order.kind === "rally") {
+            this.applyTemplarRally(team, this.remoteBody, order.vision ?? 0);
+          }
+          break;
         case "possess": {
           const body = this.state.units.find((u) => u.id === order.id);
           if (!body || !this.canPossess(body, team)) break;
@@ -5636,6 +5685,8 @@ export class GameSim {
         rallyY: u.rallyPoint?.y,
         siegePhase: u.siegePhase,
         siegeTimer: u.siegeTimer,
+        rallyCooldown: u.rallyCooldown,
+        rallyBuffTimer: u.rallyBuffTimer,
         lifeStage: u.lifeStage,
         npcKing: u.npcKing,
         workKind: u.workKind,
@@ -5927,6 +5978,8 @@ export class GameSim {
         rallyPoint: point(u.rallyX, u.rallyY),
         siegePhase: u.siegePhase ?? (u.kind === "trebuchet" ? "packed" : undefined),
         siegeTimer: u.siegeTimer,
+        rallyCooldown: u.rallyCooldown,
+        rallyBuffTimer: u.rallyBuffTimer,
         xp: u.xp ?? 0,
         lifeStage: u.lifeStage,
         npcKing: u.npcKing,
@@ -6265,6 +6318,9 @@ export class GameSim {
             visionMax: POSSESS_VISION_SCORE,
             charge: body.kind === "trebuchet" ? s.possessCharge ?? 0 : 0,
             aimLabel: this.possessAimLabel(s),
+            canRally: body.kind === "templar",
+            rallyReady: body.kind === "templar" && (body.rallyCooldown ?? 0) <= 0,
+            rallyCooldown: body.kind === "templar" ? Math.max(0, body.rallyCooldown ?? 0) : 0,
             job: body.job ?? null,
             xp: body.xp ?? 0,
             lifeStage: body.lifeStage ?? null,

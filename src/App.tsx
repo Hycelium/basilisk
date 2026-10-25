@@ -835,6 +835,11 @@ export default function App() {
           sim.togglePause();
           refreshUi();
         }
+        if (ev.key === "q" || ev.key === "Q") {
+          ev.preventDefault();
+          sim.possessRally();
+          refreshUi();
+        }
         return;
       }
       const slot = /^[1-9]$/.test(ev.key) ? Number(ev.key) : 0;
@@ -876,7 +881,7 @@ export default function App() {
         if (ev.key === "=" || ev.key === "+") r.zoomBy(0.9);
         if (ev.key === "-" || ev.key === "_") r.zoomBy(1.1);
         if (ev.key === "r" || ev.key === "R") r.resetCamera();
-        if (ev.key === "q" || ev.key === "Q") r.orbitBy(28, 0);
+        if ((ev.key === "q" || ev.key === "Q") && !possessed) r.orbitBy(28, 0);
         if (ev.key === "e" || ev.key === "E") r.orbitBy(-28, 0);
         if (ev.key === "ArrowLeft") r.panBy(40, 0);
         if (ev.key === "ArrowRight") r.panBy(-40, 0);
@@ -1494,6 +1499,11 @@ export default function App() {
                       : ui.possessed.visionScore <= 0
                         ? " · kill looks out"
                         : " · looking out · wheel adjusts"}
+                  {ui.possessed.canRally
+                    ? ui.possessed.rallyReady
+                      ? " · Q Rally"
+                      : ` · Rally ${Math.ceil(ui.possessed.rallyCooldown ?? 0)}s`
+                    : ""}
                   {ui.possessed.isKing ? " · KING" : ""}
                 </p>
                 )
@@ -1502,6 +1512,22 @@ export default function App() {
                 <TouchFpsPad
                   fireLabel={ui.possessed.kind === "trebuchet" ? (ui.possessed.charge >= 1 ? "Loose" : "Wind") : "Fire"}
                   canLookOut={ui.possessed.kind !== "trebuchet" && ui.possessed.visionScore > 0}
+                  abilityLabel={
+                    ui.possessed.canRally
+                      ? ui.possessed.rallyReady
+                        ? "Rally"
+                        : `Rally ${Math.ceil(ui.possessed.rallyCooldown ?? 0)}`
+                      : undefined
+                  }
+                  abilityReady={!!ui.possessed.rallyReady}
+                  onAbility={
+                    ui.possessed.canRally
+                      ? () => {
+                          sim.possessRally();
+                          refreshUi();
+                        }
+                      : undefined
+                  }
                   onMove={(keys) => sim.setPossessMove(keys)}
                   onLook={(dx, dy) => {
                     const r = rendererRef.current;
