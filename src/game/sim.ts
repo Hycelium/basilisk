@@ -41,6 +41,8 @@ import {
   trainResCost,
   YOU_SIEGE_Y,
   RATE_MULT,
+  ROAD_Y_MAX,
+  ROAD_Y_MIN,
   RUNNER_CHARGE_DAMAGE,
   RUSH_BONUS,
   openingStash,
@@ -1495,6 +1497,19 @@ export class GameSim {
       const dot = (dx * fx + dy * fy) / d;
       return { d, ok: dot >= 0.28 };
     };
+    let bestEngine: Unit | undefined;
+    let bestEngineD = Infinity;
+    for (const e of this.state.units) {
+      if (e.team === u.team || e.hp <= 0 || e.kind !== "trebuchet") continue;
+      const a = aimAt(e.pos, SPY_SABOTAGE_RANGE + 8);
+      if (!a.ok || a.d >= bestEngineD) continue;
+      bestEngine = e;
+      bestEngineD = a.d;
+    }
+    if (bestEngine) {
+      this.spyWreckTrebuchet(u, bestEngine);
+      return true;
+    }
     let best: Building | undefined;
     let bestD = Infinity;
     for (const b of this.state.buildings) {
@@ -2900,6 +2915,21 @@ export class GameSim {
     if (u.siegePhase === "ready" && u.attackTimer <= 0) this.fireTrebuchet(u, aim);
   }
 
+  private pickSpyTrebuchet(u: Unit): Unit | undefined {
+    let best: Unit | undefined;
+    let bestD = Infinity;
+    for (const e of this.state.units) {
+      if (e.team === u.team || e.hp <= 0 || e.kind !== "trebuchet") continue;
+      if (this.dogKillRange(e.pos, u.team)) continue;
+      const d = dist(u.pos, e.pos);
+      if (d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    return best;
+  }
+
   private pickSpyGun(u: Unit): Building | undefined {
     let best: Building | undefined;
     let bestD = Infinity;
@@ -2978,6 +3008,21 @@ export class GameSim {
     if (u.id === this.state.possessedId) this.notePossessVision(0.5);
   }
 
+  /** Wreck an enemy engine. The spy lives and can hit another trebuchet. */
+  private spyWreckTrebuchet(u: Unit, target: Unit) {
+    if (this.dogKillRange(u.pos, u.team) || this.dogKillRange(target.pos, u.team)) {
+      this.spyBurn(u, "dogs");
+      return;
+    }
+    target.hp = 0;
+    u.attackTimer = u.attackCooldown;
+    this.emitCombat("sabotage", u.pos, target.pos, u.team);
+    this.addFloat("SABOTAGE", target.pos.x, target.pos.y - 10, "#c8b8ff");
+    this.tell(u.team, "Spy wrecked a trebuchet.");
+    this.tell(target.team, "A spy sabotaged your trebuchet!");
+    if (u.id === this.state.possessedId) this.notePossessVision(1);
+  }
+
   private spySabotage(u: Unit, b: Building) {
     if (ballistaHasDogs(b)) {
       this.spyBurn(u, "dogs");
@@ -3038,6 +3083,15 @@ export class GameSim {
       return;
     }
     if (this.flankSpyBarricade(u, dt)) return;
+    const engine = this.pickSpyTrebuchet(u);
+    if (engine) {
+      if (dist(u.pos, engine.pos) <= SPY_SABOTAGE_RANGE) {
+        if (u.attackTimer <= 0) this.spyWreckTrebuchet(u, engine);
+        return;
+      }
+      moveTowards(u.pos, this.spyGoalAroundDogs(u, engine.pos), u.speed, dt);
+      return;
+    }
     const gun = this.pickSpyGun(u);
     if (gun) {
       if (dist(u.pos, gun.pos) <= SPY_SABOTAGE_RANGE) {
@@ -3303,7 +3357,7 @@ export class GameSim {
   private pickLane(team: Team): Lane {
     const laneCounts = [0, 0, 0];
     for (const u of this.state.units) {
-      if (u.team !== team && u.pos.y > 100 && u.pos.y < 620) laneCounts[u.lane] += 1;
+      if (u.team !== team && u.pos.y > ROAD_Y_MIN && u.pos.y < ROAD_Y_MAX) laneCounts[u.lane] += 1;
     }
     return topLane(mapLanes(this.activeMap.seed), (lane) => laneCounts[lane]);
   }

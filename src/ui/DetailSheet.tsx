@@ -232,7 +232,7 @@ export function DetailSheet({
       {isBarracks && !isEnemy && (
         <>
           <p className="detail-note">
-            Trains your army. Levies crack wards, rams break barricades, trebuchets wreck towers, spies wear the foe's peon cloth then die on the job, riders shrug arrows, and archers walk around road blocks.
+            Trains your army. Levies crack wards, rams break barricades, trebuchets need four shots to wreck a tower, spies prefer enemy trebuchets and can wreck several, riders shrug arrows, and archers walk around road blocks.
           </p>
 
           <div className="train-options">

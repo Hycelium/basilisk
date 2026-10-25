@@ -72,9 +72,9 @@ export function workSites(team: Team, kind: WorkKind): Vec2[] {
   if (kind === "farm") {
     return south
       ? [
-          { x: 132, y: 548 },
-          { x: 168, y: 572 },
-          { x: 108, y: 590 },
+          { x: 132, y: WORLD_H - 172 },
+          { x: 168, y: WORLD_H - 148 },
+          { x: 108, y: WORLD_H - 130 },
         ]
       : [
           { x: 268, y: 172 },
@@ -83,11 +83,11 @@ export function workSites(team: Team, kind: WorkKind): Vec2[] {
         ];
   }
   if (kind === "hunt") return deerSpots(team, currentValleySeed());
-  if (kind === "gold") return [south ? { x: 268, y: 600 } : { x: 132, y: 118 }];
+  if (kind === "gold") return [south ? { x: 268, y: WORLD_H - 120 } : { x: 132, y: 118 }];
   return south
     ? [
-        { x: 78, y: 520 },
-        { x: 322, y: 540 },
+        { x: 78, y: WORLD_H - 200 },
+        { x: 322, y: WORLD_H - 180 },
       ]
     : [
         { x: 78, y: 180 },

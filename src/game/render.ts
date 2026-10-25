@@ -1,4 +1,5 @@
 import { BUILD_RANGE, dogRange, ROAD_X, ROAD_Y_MAX, ROAD_Y_MIN, STARTER_GUARD_RANGE, WORLD_H, WORLD_W } from "./balance";
+import { laneYGate } from "./map";
 import { buildingName } from "./sim";
 import type { Building, GameState, Team, Unit, Villager } from "./types";
 
@@ -295,7 +296,7 @@ export class GameRenderer {
   }
 
   private drawYards(ctx: CanvasRenderingContext2D) {
-    for (const y of [96, 628]) {
+    for (const y of [laneYGate("you"), laneYGate("foe")]) {
       this.shadow(ctx, 200, y + 18, 82, 22, 0.3);
       const g = ctx.createRadialGradient(200, y + 16, 8, 200, y + 16, 90);
       g.addColorStop(0, "#6b5340");

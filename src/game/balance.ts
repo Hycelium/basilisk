@@ -1,9 +1,12 @@
 import type { BuildingKind, LaneCount, Team, TrainKind, UnitKind, WaveSpec } from "./types";
 
 export const WORLD_W = 400;
-export const WORLD_H = 720;
+/** Tall field so the mid strip between keeps is a real no-man's-land. */
+export const WORLD_H = 900;
+/** Keeps sit this far in from each end of the field. */
+export const KEEP_MARGIN = 56;
 export const ROAD_Y_MIN = 100;
-export const ROAD_Y_MAX = 620;
+export const ROAD_Y_MAX = WORLD_H - 100;
 export const ROAD_X = [112, 288] as const;
 export const LANE_OFFSET = { you: -13, foe: 13 } as const;
 
@@ -66,8 +69,8 @@ export const STARTER_GUARD_RANGE = 220;
  * Yard line: any enemy past this Y counts as sieging (both roads).
  * Distance-to-keep alone missed the east gate (~109px vs a tight circle).
  */
-export const YOU_SIEGE_Y = 560;
-export const FOE_SIEGE_Y = 160;
+export const YOU_SIEGE_Y = WORLD_H - KEEP_MARGIN - 104;
+export const FOE_SIEGE_Y = KEEP_MARGIN + 104;
 /** Soft fallow used for starter-tower “cover anyone at the gate” checks. */
 export const KEEP_THREAT_RADIUS = 140;
 export const PEON_MELEE_RANGE = 18;
@@ -144,7 +147,7 @@ export const ARCHER_VS_TREBUCHET = 0.28;
 export const MELEE_VS_TREBUCHET = 1.55;
 export const BARRICADE_HP = 36;
 
-/** Hit points so a trebuchet wrecks a structure in two shots. Houses are listed but not legal targets. */
+/** Hit points so a trebuchet wrecks a structure in four shots. Houses are listed but not legal targets. */
 export const BUILD_HP: Record<BuildingKind, number> = {
   watchtower: 40,
   ballista: 48,
@@ -158,9 +161,11 @@ export const BUILD_HP: Record<BuildingKind, number> = {
 export const TREBUCHET_RANGE = 190;
 export const TREBUCHET_UNPACK = 2.55;
 export const TREBUCHET_PACK = 1.55;
+/** Shots needed to knock down a full-HP legal building (or barricade / rival engine). */
+export const TREBUCHET_SHOTS_TO_KILL = 4;
 
 export function trebuchetShot(maxHp: number) {
-  return Math.max(1, Math.ceil(maxHp / 2));
+  return Math.max(1, Math.ceil(maxHp / TREBUCHET_SHOTS_TO_KILL));
 }
 
 /** Towers and halls only. Keeps and houses are off-limits. */
@@ -310,13 +315,13 @@ export const UNIT_DEFS: Record<UnitKind, UnitDef> = {
     hp: 42, speed: 9, damage: 0, cooldown: 5.8, bounty: 16,
     towerResist: 0.88, keepMult: 0, siegeGap: 1.2,
     cost: 84, woodCost: 155, trainTime: 9.6,
-    label: "Trebuchet", blurb: "Costly timber · crawls · two shots wreck a tower",
+    label: "Trebuchet", blurb: "Costly timber · crawls · four shots wreck a tower",
   },
   spy: {
     hp: 28, speed: 46, damage: 0, cooldown: 1.6, bounty: 18,
     towerResist: 0.04, keepMult: 0, siegeGap: 5.5,
     cost: 120, woodCost: 0, trainTime: 5.0,
-    label: "Spy", blurb: "Gold sink · one job, then dies. Sneak around dogged ballistae.",
+    label: "Spy", blurb: "Hunts trebuchets first · can wreck several · dies silencing a tower",
   },
 };
 

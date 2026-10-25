@@ -1,4 +1,4 @@
-import { COPPER_REGEN, PINE_REGEN, ROAD_X, WORLD_H, WORLD_W } from "./balance";
+import { COPPER_REGEN, KEEP_MARGIN, PINE_REGEN, ROAD_X, WORLD_H, WORLD_W } from "./balance";
 import { isBasiliskSeed, SPINE_Y } from "./basiliskMap";
 import type { Lane, LaneCount, MapDef, MapId, Pad, ResourceNode, ResourceKind, Team } from "./types";
 
@@ -219,14 +219,17 @@ export function generateMap(seed: number): MapDef {
   const centerSide = rng() < 0.5 ? -1 : 1;
   const centerX = (side: number) => (roads % 2 === 1 ? MAP_CX + side * 46 : MAP_CX);
 
+  // Pads hug your keep; the long midfield stays empty as no-man's-land.
+  const yourKeepY = WORLD_H - KEEP_MARGIN;
   // Always: keep-guard pad (starter). Its tower reaches every road at the gate.
-  const keepY = 548 + Math.floor(rng() * 20); // 548–567
+  const keepY = yourKeepY - 116 + Math.floor(rng() * 20);
   const guardX = centerX(centerSide);
   pads.push({ id: "keep-guard", x: guardX, y: keepY, laneCoverage: [...lanes] });
   placed.push({ x: guardX, y: keepY });
 
-  // Forward / choke center
-  const forwardY = bias === 1 ? 460 + Math.floor(rng() * 25) : 455 + Math.floor(rng() * 40);
+  // Forward / choke center — still on your half, not out in the mid strip.
+  const forwardY =
+    bias === 1 ? yourKeepY - 204 + Math.floor(rng() * 25) : yourKeepY - 209 + Math.floor(rng() * 40);
   const forwardX = centerX(-centerSide);
   if (!tooClose(forwardX, forwardY, placed, 36)) {
     pads.push({ id: "forward", x: forwardX, y: forwardY, laneCoverage: coverage(forwardX, forwardY) });
@@ -235,7 +238,7 @@ export function generateMap(seed: number): MapDef {
 
   const tryPad = (id: string, x: number, y: number) => {
     const px = clamp(x, minX + 30, maxX - 30);
-    const py = clamp(y, 450, 580);
+    const py = clamp(y, yourKeepY - 214, yourKeepY - 84);
     if (nearRoad(px, py, ROAD_CLEAR + 4)) return false;
     if (tooClose(px, py, placed, 34)) return false;
     pads.push({ id, x: px, y: py, laneCoverage: coverage(px, py) });
@@ -246,7 +249,7 @@ export function generateMap(seed: number): MapDef {
   for (const lane of lanes) {
     let made = 0;
     for (let attempt = 0; attempt < 40 && made < padsPerRoad; attempt++) {
-      const y = 470 + Math.floor(rng() * 100);
+      const y = yourKeepY - 194 + Math.floor(rng() * 100);
       const side = rng() < 0.5 ? -1 : 1;
       const x = roadCenterX(seed, lane, y) + side * (34 + Math.floor(rng() * 50));
       if (tryPad(`r${lane}-${made}`, x, y)) made++;
@@ -261,7 +264,7 @@ export function generateMap(seed: number): MapDef {
       const lo = preferEdge === "e" ? MAP_CX + 20 : minX + 28;
       const hi = preferEdge === "w" ? MAP_CX - 20 : maxX - 28;
       const x = lo + Math.floor(rng() * (hi - lo));
-      const yourY = 400 + Math.floor(rng() * 220); // 400–620
+      const yourY = yourKeepY - 264 + Math.floor(rng() * 220);
       // Keep resources off this map's actual curved road centers.
       if (nearRoad(x, yourY, 32)) continue;
       // Keep clickable resource nodes clear of build pads.
@@ -389,7 +392,7 @@ export function buildPads(map: MapDef): Pad[] {
   for (let k = 0; k < ecoCount; k++) {
     const offset = k - map.lanes / 2;
     const x = MAP_CX + offset * 52;
-    const y = 718 + Math.abs(offset) * 8;
+    const y = WORLD_H - KEEP_MARGIN + 54 + Math.abs(offset) * 8;
     pads.push({
       id: `you-eco-${k}`,
       team: "you",
@@ -440,20 +443,20 @@ export function buildNodes(map: MapDef): ResourceNode[] {
 }
 
 export function keepPos(team: Team) {
-  return team === "you" ? { x: 200, y: 664 } : { x: 200, y: 56 };
+  return team === "you" ? { x: 200, y: WORLD_H - KEEP_MARGIN } : { x: 200, y: KEEP_MARGIN };
 }
 
 export function villagerStart(team: Team, idx: number) {
-  if (team === "you") return { x: 170 + idx * 60, y: 630 };
-  return { x: 170 + idx * 60, y: 90 };
+  if (team === "you") return { x: 170 + idx * 60, y: WORLD_H - KEEP_MARGIN - 34 };
+  return { x: 170 + idx * 60, y: KEEP_MARGIN + 34 };
 }
 
 export function laneYGate(team: Team) {
-  return team === "you" ? 96 : 624;
+  return team === "you" ? KEEP_MARGIN + 40 : WORLD_H - KEEP_MARGIN - 40;
 }
 
 export function laneStartY(team: Team) {
-  return team === "you" ? 628 : 92;
+  return team === "you" ? WORLD_H - KEEP_MARGIN - 36 : KEEP_MARGIN + 36;
 }
 
 export function startPadId(map: MapDef, team: Team) {
