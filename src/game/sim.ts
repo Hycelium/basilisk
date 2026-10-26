@@ -863,11 +863,10 @@ export class GameSim {
   private applyArenaKind(u: Unit, rung: number) {
     const kind = arenaRungKind(rung);
     const def = UNIT_DEFS[kind];
-    const ratio = u.maxHp > 0 ? Math.max(0.15, u.hp / u.maxHp) : 1;
     u.kind = kind;
     u.arenaRung = rung;
     u.maxHp = def.hp;
-    u.hp = Math.min(def.hp, Math.max(1, def.hp * ratio));
+    u.hp = def.hp;
     u.speed = def.speed;
     u.damage = def.damage;
     u.attackCooldown = def.cooldown;
