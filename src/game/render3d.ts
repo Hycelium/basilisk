@@ -1746,10 +1746,8 @@ export class GameRenderer {
       const possessed = state.possessedId === u.id;
       selection.visible = state.selectedVillagerIds.includes(u.id) && !possessed;
       this.syncPossessMark(obj, u, possessed);
-      if (possessed) {
-        obj.rotation.y = Math.PI - this.fpsYaw;
-      } else {
-        obj.rotation.y = u.team === "you" ? Math.PI : 0;
+      this.faceUnitMesh(obj, u, possessed);
+      if (!possessed) {
         const head = this.findUnitHead(obj, u.kind);
         if (head) head.visible = true;
       }
@@ -1776,6 +1774,34 @@ export class GameRenderer {
   }
 
   /** Team ring, screen name, and a thin bar while this body is being driven. */
+  /**
+   * Possessed bodies turn with the FPS / stick camera. Everyone else faces
+   * the direction they are travelling (keeps walk cycles and attacks aligned).
+   */
+  private faceUnitMesh(obj: THREE.Object3D, u: Unit, possessed: boolean) {
+    if (possessed) {
+      obj.rotation.y = Math.PI - this.fpsYaw;
+      obj.userData.faceYaw = this.fpsYaw;
+      obj.userData.facePos = { x: u.pos.x, y: u.pos.y };
+      return;
+    }
+    this.faceTravelMesh(obj, u.pos.x, u.pos.y, u.team);
+  }
+
+  private faceTravelMesh(obj: THREE.Object3D, x: number, y: number, team: Team) {
+    const prev = obj.userData.facePos as { x: number; y: number } | undefined;
+    const dx = x - (prev?.x ?? x);
+    const dy = y - (prev?.y ?? y);
+    obj.userData.facePos = { x, y };
+    let yaw = obj.userData.faceYaw as number | undefined;
+    if (dx * dx + dy * dy > 0.08) {
+      yaw = Math.atan2(dx, -dy);
+      obj.userData.faceYaw = yaw;
+    }
+    if (yaw == null) yaw = team === "you" ? 0 : Math.PI;
+    obj.rotation.y = Math.PI - yaw;
+  }
+
   private syncPossessMark(obj: THREE.Object3D, u: Unit, on: boolean) {
     let plate = obj.userData.possessPlate as THREE.Group | undefined;
     if (!on) {
@@ -1902,7 +1928,7 @@ export class GameRenderer {
         return g;
       });
       setPos3(obj, v.pos.x, v.pos.y, 0);
-      obj.rotation.y = v.team === "you" ? Math.PI : 0;
+      this.faceTravelMesh(obj, v.pos.x, v.pos.y, v.team);
       obj.scale.setScalar(v.state === "defend" ? 1.08 : 1);
       let selection = obj.userData.selection as THREE.Mesh | null;
       if (!selection) {
