@@ -1904,6 +1904,12 @@ button:disabled {
   margin: 0;
 }
 
+/* Clear the FPS banner / charge strip while possessed (Arena). */
+.stage.possessed .toasts {
+  top: calc(max(10px, env(safe-area-inset-top, 0px)) + 52px);
+  z-index: 7;
+}
+
 .stage.sheet-open .toasts {
   right: auto;
 }

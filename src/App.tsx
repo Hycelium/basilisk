@@ -1510,7 +1510,10 @@ export default function App() {
           hud
         )}
 
-        <div className={sheetOpen ? "stage sheet-open" : "stage"} ref={stageRef}>
+        <div
+          className={`stage${sheetOpen ? " sheet-open" : ""}${ui.possessed ? " possessed" : ""}`}
+          ref={stageRef}
+        >
           <canvas ref={canvasRef} className={ui.possessed ? "battlefield possessed" : "battlefield"} />
           {ui.basilisk && ui.phase === "running" && <KeepTugBar ui={ui} />}
           {mapBanners}
